@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../FreshWorld/Backend/TrackedOperations.cs" Link="Production/TrackedOperations.cs" />
+    <Compile Include="../FreshWorld/Backend/MaintenancePipeline.cs" Link="Production/MaintenancePipeline.cs" />
+    <Compile Include="../FreshWorld/Backend/MaintenanceGate.cs" Link="Production/MaintenanceGate.cs" />
+    <Compile Include="../FreshWorld/Engine/Operations.cs" Link="Production/Operations.cs" />
+    <Compile Include="../FreshWorld/Runtime/GuardedCoroutine.cs" Link="Production/GuardedCoroutine.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../FreshWorld/FreshWorldPlugin.cs" Link="Production/FreshWorldPlugin.cs" />
+    <Compile Include="../FreshWorld/Configuration/FreshWorldConfig.cs" Link="Production/FreshWorldConfig.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigPresentation.cs" Link="Production/ConfigPresentation.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigChoice.cs" Link="Production/ConfigChoice.cs" />
+    <Compile Include="../FreshWorld.Core.Tests/ConfigMetadataShim.cs" Link="Boundary/ConfigMetadataShim.cs" />
+    <Compile Include="../FreshWorld.Core.Tests/ConfigPresentationGuiShim.cs" Link="Boundary/ConfigPresentationGuiShim.cs" />
+    <Compile Include="../FreshWorld/Runtime/GuardedCoroutine.cs" Link="Production/GuardedCoroutine.cs" />
+    <Compile Include="../FreshWorld/Backend/MaintenanceGate.cs" Link="Production/MaintenanceGate.cs" />
+    <Compile Include="../FreshWorld.Core/*.cs" Link="Production/Core/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

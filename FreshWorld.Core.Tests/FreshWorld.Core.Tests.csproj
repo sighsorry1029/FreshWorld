@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../FreshWorld.Core/FreshWorld.Core.csproj" />
+    <Compile Include="../FreshWorld/Configuration/FreshWorldConfig.cs" Link="Configuration/FreshWorldConfig.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigPresentation.cs" Link="Configuration/ConfigPresentation.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigChoice.cs" Link="Configuration/ConfigChoice.cs" />
+  </ItemGroup>
+</Project>

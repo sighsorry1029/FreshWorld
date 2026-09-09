@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Optional machine-local overrides; never commit game installation paths. -->
+  <Import Project="../FreshWorld.local.props" Condition="Exists('../FreshWorld.local.props')" />
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>FreshWorld</AssemblyName>
+    <RootNamespace>FreshWorld</RootNamespace>
+    <!-- Version and author metadata come from the plugin constants in Properties/AssemblyInfo.cs. -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <PackagePowerShell Condition="'$(PackagePowerShell)' == ''">pwsh</PackagePowerShell>
+    <GameDir Condition="'$(GameDir)' == '' and '$(ValheimDedicatedDir)' != ''">$(ValheimDedicatedDir)</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' and '$(OS)' == 'Windows_NT'">C:/Program Files (x86)/Steam/steamapps/common/Valheim</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.local/share/Steam/steamapps/common/Valheim</GameDir>
+    <BepInExDir Condition="'$(BepInExDir)' == ''">$(GameDir)/BepInEx/core</BepInExDir>
+    <ManagedDir Condition="'$(ManagedDir)' == '' and Exists('$(GameDir)/valheim_Data/Managed')">$(GameDir)/valheim_Data/Managed</ManagedDir>
+    <ManagedDir Condition="'$(ManagedDir)' == '' and Exists('$(GameDir)/valheim_server_Data/Managed')">$(GameDir)/valheim_server_Data/Managed</ManagedDir>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)/valheim_Data/Managed</ManagedDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Compile the reusable core into the plugin so users install one FreshWorld DLL. -->
+    <Compile Include="../FreshWorld.Core/*.cs" Link="Core/%(Filename)%(Extension)" />
+    <!-- The host provides these assemblies and resolves their own transitive runtime dependencies.
+         Keep original assemblies out of output and avoid resolving Unity's framework graph against
+         the SDK's .NET Standard reference graph. Compiler-required APIs are referenced explicitly. -->
+    <Reference Include="BepInEx" HintPath="$(BepInExDir)/BepInEx.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="0Harmony" HintPath="$(BepInExDir)/0Harmony.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="assembly_valheim" HintPath="$(ManagedDir)/assembly_valheim.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="assembly_utils" HintPath="$(ManagedDir)/assembly_utils.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="SoftReferenceableAssets" HintPath="$(ManagedDir)/SoftReferenceableAssets.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="UnityEngine" HintPath="$(ManagedDir)/UnityEngine.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(ManagedDir)/UnityEngine.CoreModule.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(ManagedDir)/UnityEngine.PhysicsModule.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="UnityEngine.InputLegacyModule" HintPath="$(ManagedDir)/UnityEngine.InputLegacyModule.dll" Private="false" ExternallyResolved="true" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(ManagedDir)/UnityEngine.IMGUIModule.dll" Private="false" ExternallyResolved="true" />
+  </ItemGroup>
+
+  <Target Name="ValidateLocalReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(ManagedDir)/assembly_valheim.dll')"
+           Text="Valheim assemblies were not found. Set GameDir, ValheimDedicatedDir, or ManagedDir to an original local game/server installation." />
+    <Error Condition="!Exists('$(BepInExDir)/BepInEx.dll') or !Exists('$(BepInExDir)/0Harmony.dll')"
+           Text="Install BepInExPack Valheim in GameDir, or set BepInExDir to its core directory." />
+  </Target>
+
+  <Target Name="DeployDebugToGame" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' and '$(DeployToGame)' == 'true' and '$(DesignTimeBuild)' != 'true'">
+    <MakeDir Directories="$(GameDir)/BepInEx/plugins" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(GameDir)/BepInEx/plugins/$(TargetFileName)" />
+    <Message Importance="high" Text="Deployed $(TargetFileName) to $(GameDir)/BepInEx/plugins." />
+  </Target>
+
+  <Target Name="PackageRelease" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="&quot;$(PackagePowerShell)&quot; -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../tools/package.ps1&quot; -SkipBuild -PluginPath &quot;$(TargetPath)&quot;" />
+  </Target>
+</Project>
+

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../FreshWorld/Engine/ResetVegetation.cs" Link="ResetVegetation.cs" />
+    <Compile Include="../FreshWorld/Engine/NativePlacement.cs" Link="NativePlacement.cs" />
+    <Compile Include="../FreshWorld/Engine/RegenerateLocations.cs" Link="RegenerateLocations.cs" />
+    <Compile Include="../FreshWorld/Engine/Operations.cs" Link="Operations.cs" />
+    <Compile Include="../FreshWorld/Backend/TrackedOperations.cs" Link="TrackedOperations.cs" />
+    <Compile Include="../FreshWorld/Runtime/GuardedCoroutine.cs" Link="GuardedCoroutine.cs" />
+  </ItemGroup>
+</Project>

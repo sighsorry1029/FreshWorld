@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../FreshWorld.local.props" Condition="Exists('../FreshWorld.local.props')" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Installed Harmony 2.9 requires .NET Framework remoting APIs even during discovery. -->
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GameDir Condition="'$(GameDir)' == '' and '$(ValheimDedicatedDir)' != ''">$(ValheimDedicatedDir)</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' and '$(OS)' == 'Windows_NT'">C:/Program Files (x86)/Steam/steamapps/common/Valheim</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.local/share/Steam/steamapps/common/Valheim</GameDir>
+    <BepInExDir Condition="'$(BepInExDir)' == ''">$(GameDir)/BepInEx/core</BepInExDir>
+    <ManagedDir Condition="'$(ManagedDir)' == '' and Exists('$(GameDir)/valheim_Data/Managed')">$(GameDir)/valheim_Data/Managed</ManagedDir>
+    <ManagedDir Condition="'$(ManagedDir)' == '' and Exists('$(GameDir)/valheim_server_Data/Managed')">$(GameDir)/valheim_server_Data/Managed</ManagedDir>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)/valheim_Data/Managed</ManagedDir>
+    <TerrainResetterSource Condition="'$(TerrainResetterSource)' == ''">../FreshWorld/Engine/TerrainResetter.cs</TerrainResetterSource>
+    <ConfigManagerAssemblyPath Condition="'$(ConfigManagerAssemblyPath)' == ''">$(APPDATA)/com.kesomannen.gale/valheim/profiles/modtest/BepInEx/plugins/sighsorry-ConfigManager/ConfigManager.dll</ConfigManagerAssemblyPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../FreshWorld/Engine/TerrainDataCodec.cs" Link="TerrainDataCodec.cs" />
+    <Compile Include="$(TerrainResetterSource)" Link="TerrainResetter.cs" />
+    <Compile Include="../FreshWorld/Commands/CommandSyntax.cs" Link="Commands/CommandSyntax.cs" />
+    <Compile Include="../FreshWorld/Commands/CommandRequestContext.cs" Link="Commands/CommandRequestContext.cs" />
+    <Compile Include="../FreshWorld/Commands/FreshWorldCommands.cs" Link="Commands/FreshWorldCommands.cs" />
+    <Compile Include="../FreshWorld/Configuration/FreshWorldConfig.cs" Link="Configuration/FreshWorldConfig.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigPresentation.cs" Link="Configuration/ConfigPresentation.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigChoice.cs" Link="Configuration/ConfigChoice.cs" />
+    <Compile Include="../FreshWorld.Core.Tests/ConfigPresentationGuiShim.cs" Link="Configuration/ConfigPresentationGuiShim.cs" />
+    <ProjectReference Include="../FreshWorld.Core/FreshWorld.Core.csproj" />
+    <!-- Exercise installed discovery and real command detours, never a no-op Harmony shim. -->
+    <Reference Include="0Harmony" HintPath="$(BepInExDir)/0Harmony.dll" Private="true" />
+    <Reference Include="MonoMod.Utils" HintPath="$(BepInExDir)/MonoMod.Utils.dll" Private="true" />
+    <Reference Include="MonoMod.RuntimeDetour" HintPath="$(BepInExDir)/MonoMod.RuntimeDetour.dll" Private="true" />
+    <Reference Include="Mono.Cecil" HintPath="$(BepInExDir)/Mono.Cecil.dll" Private="true" />
+    <Reference Include="BepInEx" HintPath="$(BepInExDir)/BepInEx.dll" Private="true" />
+    <!-- BepInEx's converter registers Unity types at runtime. Do not reference these at compile time:
+         the game-shaped terrain/command fixtures deliberately define their own minimal Unity API. -->
+    <None Include="$(ManagedDir)/UnityEngine.dll" Link="UnityEngine.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(ManagedDir)/UnityEngine.CoreModule.dll" Link="UnityEngine.CoreModule.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(ManagedDir)/UnityEngine.IMGUIModule.dll" Link="UnityEngine.IMGUIModule.dll" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Optional integration probe only: the production plugin has no ConfigManager dependency. -->
+    <None Include="$(ConfigManagerAssemblyPath)" Link="ConfigManager.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(ConfigManagerAssemblyPath)')" />
+  </ItemGroup>
+  <Target Name="ValidateHarmonyReference" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(BepInExDir)/0Harmony.dll')" Text="The startup regression requires the installed BepInEx 0Harmony.dll. Set GameDir or BepInExDir." />
+    <Error Condition="!Exists('$(BepInExDir)/BepInEx.dll')" Text="The file-backed config regression requires the installed BepInEx.dll. Set GameDir or BepInExDir." />
+  </Target>
+</Project>

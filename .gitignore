@@ -1,0 +1,19 @@
+# Downloaded dependencies and local build outputs
+lib/
+**/bin/
+**/obj/
+dist/
+Thunderstore/*.zip
+Thunderstore/.package-*/
+
+# Machine-local configuration and IDE state
+*.local.props
+*.local.targets
+*.user
+*.suo
+.vs/
+.idea/
+
+# Runtime state and local logs
+*.log
+*.tmp

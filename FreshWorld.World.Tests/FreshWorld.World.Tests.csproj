@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../FreshWorld.Core/FreshWorld.Core.csproj" />
+    <Compile Include="../FreshWorld/Engine/GameWorld.cs" Link="Production/GameWorld.cs" />
+    <Compile Include="../FreshWorld/Engine/ResetZones.cs" Link="Production/ResetZones.cs" />
+    <Compile Include="../FreshWorld/Engine/BaseProtection.cs" Link="Production/BaseProtection.cs" />
+    <Compile Include="../FreshWorld/Configuration/FreshWorldConfig.cs" Link="Production/FreshWorldConfig.cs" />
+    <Compile Include="../FreshWorld.Core.Tests/ConfigShim.cs" Link="Boundary/ConfigShim.cs" />
+    <Compile Include="../FreshWorld.Core.Tests/ConfigMetadataShim.cs" Link="Boundary/ConfigMetadataShim.cs" />
+    <Compile Include="../FreshWorld.Core.Tests/ConfigPresentationGuiShim.cs" Link="Boundary/ConfigPresentationGuiShim.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigPresentation.cs" Link="Production/ConfigPresentation.cs" />
+    <Compile Include="../FreshWorld/Configuration/ConfigChoice.cs" Link="Production/ConfigChoice.cs" />
+  </ItemGroup>
+</Project>
