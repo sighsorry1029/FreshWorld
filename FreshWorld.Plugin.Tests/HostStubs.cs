@@ -82,10 +82,11 @@ namespace HarmonyLib
         public void UnpatchSelf() { }
     }
     [AttributeUsage(AttributeTargets.Class)]
-    public sealed class HarmonyPatch(Type type, string name) : Attribute
+    public sealed class HarmonyPatch(Type type, string name, params Type[] argumentTypes) : Attribute
     {
         public Type Type { get; } = type;
         public string Name { get; } = name;
+        public Type[] ArgumentTypes { get; } = argumentTypes;
     }
     [AttributeUsage(AttributeTargets.Method)] public sealed class HarmonyPrefix : Attribute { }
 }

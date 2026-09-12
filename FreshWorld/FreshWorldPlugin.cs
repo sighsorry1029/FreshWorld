@@ -492,13 +492,13 @@ namespace FreshWorld
         }
     }
 
-    [HarmonyPatch(typeof(ZNet), nameof(ZNet.Shutdown))]
+    [HarmonyPatch(typeof(ZNet), nameof(ZNet.Shutdown), new[] { typeof(bool) })]
     internal static class ShutdownPatch
     {
         [HarmonyPrefix] private static void Prefix() => FreshWorldPlugin.Instance?.StopSession();
     }
 
-    [HarmonyPatch(typeof(ZNet), nameof(ZNet.ShutdownWithoutSave))]
+    [HarmonyPatch(typeof(ZNet), nameof(ZNet.ShutdownWithoutSave), new[] { typeof(bool) })]
     internal static class ShutdownWithoutSavePatch
     {
         [HarmonyPrefix] private static void Prefix() => FreshWorldPlugin.Instance?.StopSession();
