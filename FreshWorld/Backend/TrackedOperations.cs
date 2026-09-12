@@ -109,6 +109,7 @@ internal sealed class OperationTracker
 
     public IEnumerator Execute(Vector2s[] zones, Func<Vector2s, bool> execute, Action failed)
     {
+        Result.Started = true;
         var frame = Stopwatch.StartNew();
         var attempts = 0;
         for (var index = 0; index < zones.Length; index++)
@@ -221,11 +222,7 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
         return success;
     }
 
-    protected override IEnumerator OnExecute()
-    {
-        Result.Started = true;
-        return _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
-    }
+    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
 
     protected override void OnEnd()
     {
@@ -317,11 +314,7 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
         }
     }
 
-    protected override IEnumerator OnExecute()
-    {
-        Result.Started = true;
-        return _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
-    }
+    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
 
     protected override void OnEnd()
     {
@@ -416,11 +409,7 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         return changed;
     }
 
-    protected override IEnumerator OnExecute()
-    {
-        Result.Started = true;
-        return _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
-    }
+    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
 
     protected override void OnEnd()
     {
