@@ -1,6 +1,8 @@
-# FreshWorld 1.0.0
+# FreshWorld 1.0.2
 
 FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. The cfg has **15 options in three sections** and defaults to automatic restoration every **24 game days**.
+
+This source targets Valheim 1.0.7. Builds made for 0.221.x must be replaced on both the host and any administrator clients using FreshWorld commands.
 
 ![](https://i.ibb.co/WS2DPzB/freshzones.gif) <br>
 player buildings are protected while vegetations would refresh <br>
@@ -163,6 +165,8 @@ Manual requests do not wait for the automatic schedule polling interval. They st
 
 An existing pending or active request is not overwritten. Each requester is limited to one command per second; repeated commands within that second, including status, are silently ignored. The requester receives acceptance, waiting reasons, and completion or failure messages.
 
-The person hosting a world inside their own game process can run commands without an administrator entry. Every remote requester must be an administrator verified by the server's adminlist.txt. This includes a separate game client connected to a dedicated server on the same PC. Client administrator flags, claimed Steam IDs, and matching IP addresses are not trusted as authorization.
+The person hosting a world inside their own game process can run commands without an administrator entry. A dedicated server's own console can also run them without a connected player. This includes authenticated RCON tools that execute the registered command inside the server process without a Valheim player connection. The RCON provider controls its own authentication; FreshWorld receives no RCON identity and continues to validate the active server, world, session, and run state.
+
+Every requester connected as a game client must be an administrator verified by the server's adminlist.txt. This includes a separate game client connected to a dedicated server on the same PC. Client administrator flags, claimed Steam IDs, and matching IP addresses are not trusted as authorization.
 
 Manual requests belong to the current world, connection, and verified authority. Disconnecting, losing administrator permission, or changing worlds cancels queued or active manual work. Changes already made are not rolled back or automatically retried. The command cannot override the captured IDs or protection values. A request from an earlier session must be submitted again after reconnecting or restarting.

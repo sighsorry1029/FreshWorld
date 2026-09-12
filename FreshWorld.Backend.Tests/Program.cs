@@ -227,8 +227,8 @@ static void SkippedOperationResults()
         Drain(runner);
         operation.Cleanup();
         Sequence([true], completed);
-        Sequence([new Vector2i(0, 0)], operation.Result.SelectedZones);
-        Sequence([new Vector2i(0, 0)], operation.Result.SkippedZones);
+        Sequence([new Vector2s(0, 0)], operation.Result.SelectedZones);
+        Sequence([new Vector2s(0, 0)], operation.Result.SkippedZones);
         Equal(0, operation.Result.CompletedZones.Count);
         Equal(0, operation.Result.ChangedZones.Count);
         Equal(0, operation.Result.FailedZones.Count);
@@ -641,7 +641,7 @@ static void CleanupRefresh()
 static void CandidateRestriction()
 {
     Fake.AddZone(0); Fake.AddZone(1); Fake.AddZone(2, marker: true);
-    var candidates = new HashSet<Vector2i>([new(1, 0), new(2, 0), new(3, 0)]);
+    var candidates = new HashSet<Vector2s>([new(1, 0), new(2, 0), new(3, 0)]);
     var operation = new TrackedResetZones(_ => { }, Parameters(1), candidates);
     // Planning owns its constructor-time snapshot, even if streaming or the caller changes before Init.
     Fake.AddZone(3);
@@ -649,7 +649,7 @@ static void CandidateRestriction()
     candidates.Add(new(0, 0));
     operation.Init();
     Equal(2, operation.Result.CandidateZones.Count);
-    Sequence([new Vector2i(1, 0)], operation.Result.SelectedZones);
+    Sequence([new Vector2s(1, 0)], operation.Result.SelectedZones);
 }
 
 static void SaveFailure()

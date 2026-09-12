@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-public readonly record struct Vector2i(int x, int y);
+public readonly record struct Vector2s(short x, short y) { public Vector2s(int x, int y) : this((short)x, (short)y) { } }
 public class Terminal
 {
     public class ConsoleEventArgs(string line, Terminal context)
@@ -58,13 +58,13 @@ public readonly record struct LocationPrefab(string Name) { public bool IsValid 
 public class ZoneSystem
 {
     public static ZoneSystem instance = new();
-    public HashSet<Vector2i> m_generatedZones = new();
-    public HashSet<Vector2i> Loaded = new();
+    public HashSet<Vector2s> m_generatedZones = new();
+    public HashSet<Vector2s> Loaded = new();
     public List<ZoneVegetation> m_vegetation = new();
     public List<ZoneLocation> m_locations = new();
-    public Dictionary<Vector2i, LocationInstance> m_locationInstances = new();
+    public Dictionary<Vector2s, LocationInstance> m_locationInstances = new();
     public List<UnityEngine.GameObject> m_tempSpawnedObjects = new();
-    public bool IsZoneLoaded(Vector2i zone) => Loaded.Contains(zone);
+    public bool IsZoneLoaded(Vector2s zone) => Loaded.Contains(zone);
     public bool SkipSaving() => false;
     public class ZoneVegetation(string id) { public Prefab m_prefab = new(id); }
     public class ZoneLocation(string id) { public LocationPrefab m_prefab = new(id); }
@@ -84,8 +84,8 @@ internal static class Fake
     public static List<string> Calls = new();
     public static List<VegetationPass> VegetationPasses = new();
     public static Dictionary<string, FreshWorld.Engine.OperationParameters> Arguments = new();
-    public static HashSet<Vector2i> MarkerZones = new();
-    public static HashSet<Vector2i> PlayerZones = new();
+    public static HashSet<Vector2s> MarkerZones = new();
+    public static HashSet<Vector2s> PlayerZones = new();
     public static Action<string>? OnStart;
     public static string? ThrowOnZone;
     public static string? ThrowOnStart;
@@ -95,7 +95,7 @@ internal static class Fake
     public static string? SaveError;
     public static int BorderRepairs;
     public static int LoadReleases;
-    public static HashSet<Vector2i> ReleaseFailures = new();
+    public static HashSet<Vector2s> ReleaseFailures = new();
     public static List<Exception> UnexpectedErrors = new();
     public static HashSet<UnityEngine.GameObject> DestroyedGhosts = new();
 
@@ -122,7 +122,7 @@ internal static class Fake
 
     public static void AddZone(int x, bool marker = false, string? location = "cave")
     {
-        var zone = new Vector2i(x, 0);
+        var zone = new Vector2s(x, 0);
         ZoneSystem.instance.m_generatedZones.Add(zone);
         if (marker) MarkerZones.Add(zone);
         if (location == null) return;
@@ -172,7 +172,7 @@ namespace HarmonyLib
         public static FieldRef<T, F> FieldRefAccess<T, F>(string name)
         {
             if (name == "m_generatedZones")
-                return (T instance) => ref Unsafe.As<HashSet<Vector2i>, F>(ref ((ZoneSystem)(object)instance!).m_generatedZones);
+                return (T instance) => ref Unsafe.As<HashSet<Vector2s>, F>(ref ((ZoneSystem)(object)instance!).m_generatedZones);
             if (name == "m_tempSpawnedObjects")
                 return (T instance) => ref Unsafe.As<List<UnityEngine.GameObject>, F>(ref ((ZoneSystem)(object)instance!).m_tempSpawnedObjects);
             throw new MissingFieldException(name);
@@ -216,19 +216,19 @@ namespace FreshWorld.Engine
     }
     public static class GameWorld
     {
-        public static readonly HashSet<Vector2i> Pending = new();
-        public static Vector2i[] GeneratedSnapshot(HashSet<Vector2i>? candidates = null) =>
+        public static readonly HashSet<Vector2s> Pending = new();
+        public static Vector2s[] GeneratedSnapshot(HashSet<Vector2s>? candidates = null) =>
             ZoneSystem.instance.m_generatedZones.Where(zone => candidates == null || candidates.Contains(zone)).OrderBy(z => z.x).ToArray();
-        public static HashSet<Vector2i> GeneratedSetSnapshot() => new(ZoneSystem.instance.m_generatedZones);
-        public static void CollectPlayerZones(HashSet<Vector2i> zones) => zones.UnionWith(Fake.PlayerZones);
-        public static bool IsGenerated(Vector2i zone) => ZoneSystem.instance.m_generatedZones.Contains(zone);
+        public static HashSet<Vector2s> GeneratedSetSnapshot() => new(ZoneSystem.instance.m_generatedZones);
+        public static void CollectPlayerZones(HashSet<Vector2s> zones) => zones.UnionWith(Fake.PlayerZones);
+        public static bool IsGenerated(Vector2s zone) => ZoneSystem.instance.m_generatedZones.Contains(zone);
         public static void RecalculateTerrain() => Fake.Calls.Add("terrain.refresh");
-        public static void PokeZone(Vector2i zone)
+        public static void PokeZone(Vector2s zone)
         {
             Pending.Add(zone);
             if (Fake.LoadOnPoke) ZoneSystem.instance.Loaded.Add(zone);
         }
-        public static void ReleaseZone(Vector2i zone)
+        public static void ReleaseZone(Vector2s zone)
         {
             if (!Pending.Remove(zone)) return;
             ZoneSystem.instance.Loaded.Remove(zone);
@@ -240,7 +240,7 @@ namespace FreshWorld.Engine
     {
         public static void Configure(IEnumerable<string> placed, IEnumerable<string> always) { }
         public static void InvalidateCache() { }
-        public static HashSet<Vector2i> GetExcluded(int size) => size > 0 ? new(Fake.MarkerZones) : new();
+        public static HashSet<Vector2s> GetExcluded(int size) => size > 0 ? new(Fake.MarkerZones) : new();
     }
     public static class TerrainResetter
     {
@@ -251,7 +251,7 @@ namespace FreshWorld.Engine
     {
         protected readonly string Kind;
         protected HashSet<string>? LocationIds;
-        protected FakeZoneOperation(string kind, Action<string> log, OperationParameters args, HashSet<Vector2i>? candidates) : base(log, args, candidates)
+        protected FakeZoneOperation(string kind, Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates) : base(log, args, candidates)
         {
             Kind = kind;
             Fake.Arguments[kind] = args;
@@ -272,9 +272,9 @@ namespace FreshWorld.Engine
         }
         protected override void OnEnd() => Fake.Calls.Add(Kind + ".end");
     }
-    internal class ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2i>? candidates = null) : FakeZoneOperation("zones", log, args, candidates)
+    internal class ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) : FakeZoneOperation("zones", log, args, candidates)
     {
-        protected override bool ExecuteZone(Vector2i zone)
+        protected override bool ExecuteZone(Vector2s zone)
         {
             if (Fake.ThrowOnZone == Kind) throw new InvalidOperationException("injected reset failure");
             Fake.Calls.Add($"zones.change:{zone.x}");
@@ -287,14 +287,14 @@ namespace FreshWorld.Engine
     {
         public HashSet<string> VegetationIds;
         private readonly Fake.VegetationPass pass;
-        public ResetVegetation(Action<string> log, HashSet<string> ids, OperationParameters args, HashSet<Vector2i>? candidates = null) : base("vegetation", log, args, candidates)
+        public ResetVegetation(Action<string> log, HashSet<string> ids, OperationParameters args, HashSet<Vector2s>? candidates = null) : base("vegetation", log, args, candidates)
         {
             VegetationIds = ids;
             pass = new(ids.OrderBy(id => id).ToArray(), args);
             Fake.VegetationPasses.Add(pass);
             Fake.Calls.Add("vegetation.ids:" + string.Join(",", pass.Ids));
         }
-        protected override bool ExecuteZone(Vector2i zone)
+        protected override bool ExecuteZone(Vector2s zone)
         {
             if (!ZoneSystem.instance.IsZoneLoaded(zone)) { GameWorld.PokeZone(zone); return false; }
             if (Fake.ThrowOnZone == Kind)
@@ -313,16 +313,16 @@ namespace FreshWorld.Engine
     }
     internal class RegenerateLocations : FakeZoneOperation
     {
-        public RegenerateLocations(Action<string> log, HashSet<string> ids, OperationParameters args, HashSet<Vector2i>? candidates = null) : base("locations", log, args, candidates)
+        public RegenerateLocations(Action<string> log, HashSet<string> ids, OperationParameters args, HashSet<Vector2s>? candidates = null) : base("locations", log, args, candidates)
         { LocationIds = ids; }
-        protected override bool ExecuteZone(Vector2i zone)
+        protected override bool ExecuteZone(Vector2s zone)
         {
             if (!ZoneSystem.instance.IsZoneLoaded(zone)) { GameWorld.PokeZone(zone); return false; }
             if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out var location)) ExecuteLocation(zone, location);
             GameWorld.ReleaseZone(zone);
             return true;
         }
-        protected virtual bool ExecuteLocation(Vector2i zone, ZoneSystem.LocationInstance location)
+        protected virtual bool ExecuteLocation(Vector2s zone, ZoneSystem.LocationInstance location)
         {
             if (Fake.ThrowOnZone == Kind)
             {

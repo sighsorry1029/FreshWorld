@@ -17,7 +17,7 @@ internal static class Program
             ("Harmony intercept targets exact native signature", PatchContract),
             ("verified local host works without administrator entry", LocalHost),
             ("missing or mismatched local character cannot gain host privilege", InvalidLocalCharacter),
-            ("headless server has no local player privilege", DedicatedLocal),
+            ("dedicated server console and RCON-style execution have process-local authority", DedicatedConsole),
             ("remote administrator runs and gets targeted replies", RemoteAdmin),
             ("same PC and claimed client flags cannot grant remote admin", SpoofedClient),
             ("remote nonadmin on a listen host cannot inherit host privilege", ListenHostRemote),
@@ -36,6 +36,7 @@ internal static class Program
             ("local player replacement invalidates pending requests", LocalReplacement),
             ("stopped and client worlds cannot dispatch", NonHostSession),
             ("remote alternate interpreter cannot inherit listen-host privilege", IndirectRemote),
+            ("remote alternate interpreter cannot inherit dedicated-console privilege", DedicatedIndirectRemote),
             ("nested remote scopes and exceptions restore provenance", NestedProvenance),
         };
         var failed = 0;
@@ -97,7 +98,7 @@ internal static class Program
 
     private static void Registration()
     {
-        Check(Command.OnlyServer && Command.RemoteCommand && !Command.IsCheat);
+        Check(Command.OnlyServer && Command.RemoteCommand && !Command.IsCheat && !Command.HideBehindDevCommands);
         Check(Command.GetTabOptions()!.SequenceEqual(new[] { "status" }));
         Command.GetTabOptions()!.Add("force");
         Check(!Command.GetTabOptions()!.Contains("force"));
@@ -161,11 +162,20 @@ internal static class Program
         SendLocal(); Check(Received.Count == 0);
     }
 
-    private static void DedicatedLocal()
+    private static void DedicatedConsole()
     {
-        Net.Dedicated = true; HostPlayer(); SendLocal(); Check(Received.Count == 0);
+        Net.Dedicated = true; SendLocal();
+        Check(Received.Count == 1 && Received[0].Context.Actor == "dedicated server console");
+        Check(Received[0].Context.IsAuthorizedNow && Net.AdminChecks == 0);
+        Received[0].Context.Reply("accepted");
+        Check(Console.instance!.Output.Single().Contains("accepted"));
+
+        Reset(); Net.Dedicated = true;
         Check(!FreshWorldCommands.HandleInternalCommand(Net, null, "freshworld"));
-        Check(Received.Count == 0);
+        Check(Received.Count == 1 && Received[0].Context.IsAuthorizedNow);
+        var context = Received[0].Context;
+        Net.Dedicated = false;
+        Check(!context.IsAuthorizedNow);
     }
 
     private static void RemoteAdmin()
@@ -377,5 +387,24 @@ internal static class Program
         catch (IOException) { }
         finally { InvokeFinalizer(outer.State); }
         SendLocal(); Check(Received.Count == 1, "Exception finalizer must restore true local context");
+    }
+
+    private static void DedicatedIndirectRemote()
+    {
+        Net.Dedicated = true;
+        var peer = Peer();
+        var outer = InvokePrefix(peer.m_rpc, "some_other_command");
+        Check(outer.RunOriginal);
+        try
+        {
+            SendLocal();
+            Check(Received.Count == 0, "A remote command must not become a dedicated-console command");
+            var inner = InvokePrefix(null, "freshworld");
+            try { Check(!inner.RunOriginal && Received.Count == 0); }
+            finally { InvokeFinalizer(inner.State); }
+        }
+        finally { InvokeFinalizer(outer.State); }
+        SendLocal();
+        Check(Received.Count == 1 && Received[0].Context.Actor == "dedicated server console");
     }
 }

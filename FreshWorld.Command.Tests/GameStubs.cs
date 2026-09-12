@@ -96,16 +96,20 @@ public class Terminal
         public readonly bool IsCheat;
         public readonly bool OnlyServer;
         public readonly bool RemoteCommand;
+        public readonly bool HideBehindDevCommands;
         private readonly ConsoleOptionsFetcher? fetch;
         public ConsoleCommand(string command, string description, ConsoleEvent action,
-            bool isCheat = false, bool onlyServer = false, ConsoleOptionsFetcher? optionsFetcher = null,
-            bool remoteCommand = false)
+            bool isCheat = false, bool isNetwork = false, bool onlyServer = false,
+            bool isSecret = false, bool allowInDevBuild = false, bool hideBehindDevCommands = false,
+            ConsoleOptionsFetcher? optionsFetcher = null, bool alwaysRefreshTabOptions = false,
+            bool remoteCommand = false, bool onlyAdmin = false)
         {
             commands[command] = this;
             Action = action;
             IsCheat = isCheat;
             OnlyServer = onlyServer;
             RemoteCommand = remoteCommand;
+            HideBehindDevCommands = hideBehindDevCommands;
             fetch = optionsFetcher;
         }
         public List<string>? GetTabOptions() => fetch?.Invoke();

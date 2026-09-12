@@ -11,24 +11,24 @@ internal class ResetZones : ZoneOperation
 {
     private static readonly Action<Minimap, float> UpdateLocationPins =
         AccessTools.MethodDelegate<Action<Minimap, float>>(AccessTools.Method(typeof(Minimap), "UpdateLocationPins"));
-    private readonly Dictionary<Vector2i, BorderDirection> _borders = new();
+    private readonly Dictionary<Vector2s, BorderDirection> _borders = new();
     private int _reset;
 
-    public ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2i>? candidates = null) : base(log, args, candidates) { }
+    public ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) : base(log, args, candidates) { }
 
-    protected override bool ExecuteZone(Vector2i zone)
+    protected override bool ExecuteZone(Vector2s zone)
     {
         var world = ZoneSystem.instance;
         // Deleting a TerrainCompiler may already change terrain before a later deletion/mod hook
         // fails. Record neighbors before the first destructive call so partial cleanup repairs them.
-        AddBorder(new(zone.x, zone.y - 1), BorderDirection.North);
-        AddBorder(new(zone.x - 1, zone.y), BorderDirection.East);
-        AddBorder(new(zone.x, zone.y + 1), BorderDirection.South);
-        AddBorder(new(zone.x + 1, zone.y), BorderDirection.West);
-        AddBorder(new(zone.x + 1, zone.y - 1), BorderDirection.NorthWest);
-        AddBorder(new(zone.x - 1, zone.y - 1), BorderDirection.NorthEast);
-        AddBorder(new(zone.x + 1, zone.y + 1), BorderDirection.SouthWest);
-        AddBorder(new(zone.x - 1, zone.y + 1), BorderDirection.SouthEast);
+        AddBorder(zone.x, zone.y - 1, BorderDirection.North);
+        AddBorder(zone.x - 1, zone.y, BorderDirection.East);
+        AddBorder(zone.x, zone.y + 1, BorderDirection.South);
+        AddBorder(zone.x + 1, zone.y, BorderDirection.West);
+        AddBorder(zone.x + 1, zone.y - 1, BorderDirection.NorthWest);
+        AddBorder(zone.x - 1, zone.y - 1, BorderDirection.NorthEast);
+        AddBorder(zone.x + 1, zone.y + 1, BorderDirection.SouthWest);
+        AddBorder(zone.x - 1, zone.y + 1, BorderDirection.SouthEast);
 
         foreach (var zdo in GameWorld.GetZDOs(zone))
         {
@@ -50,8 +50,10 @@ internal class ResetZones : ZoneOperation
         return true;
     }
 
-    private void AddBorder(Vector2i zone, BorderDirection direction)
+    private void AddBorder(int x, int y, BorderDirection direction)
     {
+        if (x < short.MinValue || x > short.MaxValue || y < short.MinValue || y > short.MaxValue) return;
+        var zone = new Vector2s(x, y);
         if (_borders.TryGetValue(zone, out var existing)) direction |= existing;
         _borders[zone] = direction;
     }

@@ -114,8 +114,8 @@ public sealed class ZNet
     public long GetWorldUID() => Uid;
     public string GetWorldName() => "Fixture world";
     public double GetTimeSeconds() => Seconds;
-    public void Shutdown() { }
-    public void ShutdownWithoutSave() { }
+    public void Shutdown(bool save = true) { }
+    public void ShutdownWithoutSave(bool suspending) { }
 }
 public sealed class ZoneSystem
 {

@@ -7,6 +7,8 @@ using UnityEngine;
 var tests = new (string Name, Action Body)[]
 {
     ("sector and world enumeration return snapshots", Snapshots),
+    ("native sector query includes portals and isolates shared out-of-map buckets", SectorPortals),
+    ("short coordinate edges do not wrap occupied or protected zones and repair borders", CoordinateEdges),
     ("restricted generated snapshots preserve distance ties and remain independent of live sets", GeneratedSnapshots),
     ("player prefab and registered character IDs are protected", PlayerProtection),
     ("player-zone collection uses the local transform and native zone boundaries", LocalPlayerZones),
@@ -67,11 +69,56 @@ static void Snapshots()
     Equal(1, center.Count); Equal(1, outside.Count); Equal(2, all.Count());
 }
 
+static void SectorPortals()
+{
+    var rock = new ZDO(1, "stone", new(300 * 64, 0, 0));
+    var portal = new ZDO(2, "portal", new(300 * 64, 0, 0));
+    var other = new ZDO(3, "stone", new(301 * 64, 0, 0));
+    var otherPortal = new ZDO(4, "portal", new(301 * 64, 0, 0));
+    var corner = new ZDO(5, "tree", new(-256 * 64, 0, -256 * 64));
+    ZDOMan.instance.Add(rock); ZDOMan.instance.Add(portal, portal: true);
+    ZDOMan.instance.Add(other); ZDOMan.instance.Add(otherPortal, portal: true);
+    ZDOMan.instance.Add(corner);
+    True(GameWorld.GetZDOs(new(300, 0)).ToHashSet().SetEquals([rock, portal]));
+    True(new ProbeReset().Run(new(300, 0)));
+    True(!rock.Valid && !portal.Valid && other.Valid && otherPortal.Valid && corner.Valid);
+}
+
+static void CoordinateEdges()
+{
+    var zones = new HashSet<Vector2s>();
+    Player.m_localPlayer = new();
+    foreach (var position in new[] { 32768 * 64 - 32f, -32768 * 64 - 33f })
+    {
+        Player.m_localPlayer.transform.position = new(position, 0, 0);
+        GameWorld.CollectPlayerZones(zones);
+    }
+    Equal(0, zones.Count);
+    Player.m_localPlayer.transform.position = new(32767 * 64 + 16f, 0, 0);
+    GameWorld.CollectPlayerZones(zones);
+    True(zones.SetEquals([new((int)short.MaxValue, 0)]));
+    Player.m_localPlayer = null;
+
+    BaseProtection.Configure([], ["Player_tombstone"]);
+    ZDOMan.instance.Add(new(1, "Player_tombstone", new(short.MaxValue * 64, 0, short.MaxValue * 64)));
+    var protectedZones = BaseProtection.GetExcluded(2);
+    Equal(4, protectedZones.Count);
+    True(protectedZones.All(zone => zone.x > 0 && zone.y > 0));
+
+    for (var x = -1; x <= 1; x++)
+        for (var y = -1; y <= 1; y++) ZoneSystem.instance.AddGenerated(new(short.MaxValue + x, short.MaxValue + y));
+    var operation = new ProbeReset();
+    operation.Run(new(short.MaxValue, short.MaxValue));
+    operation.Finish();
+    Equal(3, TerrainResetter.Borders!.Count);
+    True(TerrainResetter.Borders.Keys.All(zone => zone.x > 0 && zone.y > 0));
+}
+
 static void GeneratedSnapshots()
 {
-    Vector2i[] inserted = [new(10, 0), new(0, -1), new(-1, 0), new(0, 0), new(1, 0), new(0, 1), new(-2, -2)];
+    Vector2s[] inserted = [new(10, 0), new(0, -1), new(-1, 0), new(0, 0), new(1, 0), new(0, 1), new(-2, -2)];
     foreach (var zone in inserted) ZoneSystem.instance.AddGenerated(zone);
-    var candidates = new HashSet<Vector2i>([new(0, 1), new(-2, -2), new(-1, 0), new(0, -1), new(100, 0)]);
+    var candidates = new HashSet<Vector2s>([new(0, 1), new(-2, -2), new(-1, 0), new(0, -1), new(100, 0)]);
     var expected = inserted.OrderBy(zone => (long)zone.x * zone.x + (long)zone.y * zone.y)
         .Where(candidates.Contains).ToArray();
     var restricted = GameWorld.GeneratedSnapshot(candidates);
@@ -107,7 +154,7 @@ static void PlayerProtection()
 static void LocalPlayerZones()
 {
     Player.m_localPlayer = new() { transform = new() { position = new(-32, 70, 96) } };
-    var zones = new HashSet<Vector2i> { new(99, 99) };
+    var zones = new HashSet<Vector2s> { new(99, 99) };
     GameWorld.CollectPlayerZones(zones);
     True(zones.SetEquals([new(99, 99), new(0, 2)]));
     // No character ZDO is required for the host's current transform, including a real origin.
@@ -130,7 +177,7 @@ static void RemotePlayerZones()
     var stale = new ZDO(22, "Player", new(384, 0, 0));
     ZDOMan.instance.Add(stale);
     ZNet.instance.Players.Add(new() { m_characterID = stale.m_uid, m_position = new(448, 0, 0) });
-    var zones = new HashSet<Vector2i>();
+    var zones = new HashSet<Vector2s>();
     GameWorld.CollectPlayerZones(zones);
     True(zones.SetEquals([new(2, -1)]));
 }
@@ -142,7 +189,7 @@ static void MovingPlayerZones()
     ZDOMan.instance.Add(remote);
     var peer = new ZNetPeer { m_characterID = remote.m_uid, m_refPos = new(640, 0, 0) };
     ZNet.instance.Peers.Add(peer);
-    var zones = new HashSet<Vector2i>();
+    var zones = new HashSet<Vector2s>();
     GameWorld.CollectPlayerZones(zones);
     Player.m_localPlayer.transform.position = new(192, 0, 0);
     remote.SetPosition(new(256, 0, 0));
@@ -154,7 +201,7 @@ static void MovingPlayerZones()
     Player.m_localPlayer = null;
     GameWorld.CollectPlayerZones(zones);
     True(zones.SetEquals([new(1, 0), new(2, 0), new(3, 0), new(4, 0)]));
-    var nextRun = new HashSet<Vector2i>();
+    var nextRun = new HashSet<Vector2s>();
     GameWorld.CollectPlayerZones(nextRun);
     Equal(0, nextRun.Count);
 
@@ -175,7 +222,7 @@ static void PlayerZoneFallback()
     ZDOMan.instance.Add(malformed, new(20, 0));
     ZNet.instance.Peers.Add(new() { m_characterID = invalid.m_uid, m_refPos = new(192, 0, 0) });
     ZNet.instance.Peers.Add(new() { m_characterID = malformed.m_uid, m_refPos = new(256, 0, 0) });
-    var zones = new HashSet<Vector2i>();
+    var zones = new HashSet<Vector2s>();
     GameWorld.CollectPlayerZones(zones);
     True(zones.SetEquals([new(1, 0), new(2, 0), new(3, 0), new(4, 0)]));
 
@@ -200,7 +247,7 @@ static void InvalidPlayerZones()
         new Vector3(0, 0, float.NegativeInfinity), new Vector3(float.MaxValue, 0, 0),
         new Vector3(0, 0, float.MinValue)
     };
-    var zones = new HashSet<Vector2i> { new(99, 99) };
+    var zones = new HashSet<Vector2s> { new(99, 99) };
     foreach (var position in invalidPositions)
     {
         Player.m_localPlayer = new() { transform = new() { position = position } };
@@ -214,7 +261,7 @@ static void PlayerZonesRequireHost()
 {
     Player.m_localPlayer = new() { transform = new() { position = new(64, 0, 0) } };
     ZNet.instance.Peers.Add(new() { m_refPos = new(128, 0, 0) });
-    var zones = new HashSet<Vector2i> { new(99, 99) };
+    var zones = new HashSet<Vector2s> { new(99, 99) };
     ZNet.instance.Server = false;
     GameWorld.CollectPlayerZones(zones);
     ZNet.instance.Server = true;
@@ -251,7 +298,7 @@ static void LoadedDeletion()
 
 static void OwnedRelease()
 {
-    var zone = new Vector2i(0, 0);
+    var zone = new Vector2s(0, 0);
     GameWorld.PokeZone(zone);
     True(GameWorld.TryGetRoot(zone, out var root));
     var zdo = new ZDO(1, "ore", new());
@@ -266,7 +313,7 @@ static void OwnedRelease()
 
 static void ExistingLoad()
 {
-    var zone = new Vector2i(0, 0);
+    var zone = new Vector2s(0, 0);
     var root = ZoneSystem.instance.AddRoot(zone, loaded: false);
     GameWorld.PokeZone(zone); GameWorld.ReleaseZone(zone);
     True(!root.Destroyed && ZoneSystem.instance.HasRoot(zone));
@@ -274,7 +321,7 @@ static void ExistingLoad()
 
 static void DeferredReleaseLoading()
 {
-    var zone = new Vector2i(0, 0);
+    var zone = new Vector2s(0, 0);
     GameWorld.PokeZone(zone);
     var proxy = new ZDO(1, "LocationProxy", new());
     var view = new ZNetView(proxy);
@@ -293,7 +340,7 @@ static void DeferredReleaseLoading()
 
 static void DeferredResetLoading()
 {
-    var zone = new Vector2i(0, 0);
+    var zone = new Vector2s(0, 0);
     ZoneSystem.instance.AddGenerated(zone);
     ZoneSystem.instance.AddRoot(zone);
     var oldProxy = new ZDO(1, "LocationProxy", new());
@@ -316,7 +363,7 @@ static void DeferredResetLoading()
 
 static void PlayerEnters()
 {
-    var zone = new Vector2i(0, 0);
+    var zone = new Vector2s(0, 0);
     GameWorld.PokeZone(zone);
     ZDOMan.instance.Add(new(1, "Player", new()));
     GameWorld.ReleaseZone(zone);
@@ -325,7 +372,7 @@ static void PlayerEnters()
 
 static void ResetZoneAndBorders()
 {
-    var zone = new Vector2i(0, 0);
+    var zone = new Vector2s(0, 0);
     for (var x = -1; x <= 1; x++)
         for (var y = -1; y <= 1; y++) ZoneSystem.instance.AddGenerated(new(x, y));
     var root = ZoneSystem.instance.AddRoot(zone, loaded: false);
@@ -342,7 +389,7 @@ static void ResetZoneAndBorders()
     Equal(false, ZoneSystem.instance.m_locationInstances[zone].m_placed);
     Equal(77f, ZoneSystem.instance.m_locationInstances[zone].m_position.y);
     Equal(8, GameWorld.GeneratedSnapshot().Length);
-    var expected = new Dictionary<Vector2i, BorderDirection>
+    var expected = new Dictionary<Vector2s, BorderDirection>
     {
         [new(0, -1)] = BorderDirection.North, [new(-1, 0)] = BorderDirection.East,
         [new(0, 1)] = BorderDirection.South, [new(1, 0)] = BorderDirection.West,
@@ -359,11 +406,12 @@ static void TerrainRebuild()
     var map = Heightmap.Add();
     GameWorld.RecalculateTerrain();
     True(!map.HasBuildData); Equal(1, map.Pokes);
+    Equal(1, map.LastDelay); Equal(false, map.LastPaintOnly);
 }
 
 static void PartialDeletionBorders()
 {
-    var zone = new Vector2i(0, 0);
+    var zone = new Vector2s(0, 0);
     for (var x = -1; x <= 1; x++)
         for (var y = -1; y <= 1; y++) ZoneSystem.instance.AddGenerated(new(x, y));
     var compiler = new ZDO(1, "_TerrainCompiler", new());
@@ -560,6 +608,6 @@ static void Throws<T>(Action action) where T : Exception
 }
 sealed class ProbeReset() : ResetZones(_ => { }, new())
 {
-    public bool Run(Vector2i zone) => ExecuteZone(zone);
+    public bool Run(Vector2s zone) => ExecuteZone(zone);
     public void Finish() => OnEnd();
 }

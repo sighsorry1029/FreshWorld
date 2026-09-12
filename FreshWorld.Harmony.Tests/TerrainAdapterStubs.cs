@@ -3,10 +3,10 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-public readonly struct Vector2i(int x, int y)
+public readonly struct Vector2s(int x, int y)
 {
-    public readonly int x = x;
-    public readonly int y = y;
+    public readonly short x = (short)x;
+    public readonly short y = (short)y;
 }
 public static class HashExtensions
 {
@@ -30,8 +30,8 @@ public sealed class ZDOMan
 public sealed class ZoneSystem
 {
     public static ZoneSystem? instance;
-    public static Vector2i GetZone(Vector3 p) => new((int)Math.Floor((p.x + 32) / 64), (int)Math.Floor((p.z + 32) / 64));
-    public static Vector3 GetZonePos(Vector2i zone) => new(zone.x * 64, 0, zone.y * 64);
+    public static Vector2s GetZone(Vector3 p) => new((int)Math.Floor((p.x + 32) / 64), (int)Math.Floor((p.z + 32) / 64));
+    public static Vector3 GetZonePos(Vector2s zone) => new(zone.x * 64, 0, zone.y * 64);
     public void GetGroundData(ref Vector3 p, out Vector3 normal, out Heightmap.Biome biome, out Heightmap.BiomeArea biomeArea, out Heightmap hmap)
     { normal = default; biome = default; biomeArea = default; hmap = null!; }
     public float GetGroundHeight(Vector3 p) => p.y;

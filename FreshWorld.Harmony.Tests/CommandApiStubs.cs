@@ -90,7 +90,7 @@ public class Terminal
     {
         internal readonly ConsoleEvent Action;
         public ConsoleCommand(string command, string description, ConsoleEvent action, bool isCheat,
-            bool onlyServer, Func<List<string>> optionsFetcher, bool remoteCommand)
+            bool onlyServer, bool hideBehindDevCommands, Func<List<string>> optionsFetcher, bool remoteCommand)
         {
             Action = action;
             commands.Add(command, this);

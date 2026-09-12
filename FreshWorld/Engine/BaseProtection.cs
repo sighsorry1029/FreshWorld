@@ -9,7 +9,7 @@ internal static class BaseProtection
 {
     private static HashSet<int> playerObjects = new();
     private static HashSet<int> unconditionalObjects = new();
-    private static HashSet<Vector2i> excluded = new();
+    private static HashSet<Vector2s> excluded = new();
     private static DateTime calculatedAt = DateTime.MinValue;
     private static int lastSize = -1;
 
@@ -20,11 +20,11 @@ internal static class BaseProtection
         InvalidateCache();
     }
 
-    public static HashSet<Vector2i> GetExcluded(int size)
+    public static HashSet<Vector2s> GetExcluded(int size)
     {
         if (size < 0) throw new ArgumentOutOfRangeException(nameof(size));
         if (lastSize == size && DateTime.UtcNow - calculatedAt < TimeSpan.FromSeconds(10)) return excluded;
-        var next = new HashSet<Vector2i>();
+        var next = new HashSet<Vector2s>();
         if (size > 0)
         {
             var adjacent = size - 1;
@@ -34,9 +34,9 @@ internal static class BaseProtection
                 if (!unconditionalObjects.Contains(prefab) &&
                     !(playerObjects.Contains(prefab) && zdo.GetLong(ZDOVars.s_creator) != 0L)) continue;
                 var zone = ZoneSystem.GetZone(zdo.GetPosition());
-                for (var x = -adjacent; x <= adjacent; x++)
-                    for (var y = -adjacent; y <= adjacent; y++)
-                        next.Add(new Vector2i(zone.x + x, zone.y + y));
+                for (var x = Math.Max(short.MinValue, zone.x - adjacent); x <= Math.Min(short.MaxValue, zone.x + adjacent); x++)
+                    for (var y = Math.Max(short.MinValue, zone.y - adjacent); y <= Math.Min(short.MaxValue, zone.y + adjacent); y++)
+                        next.Add(new Vector2s(x, y));
             }
         }
         excluded = next;
@@ -49,6 +49,6 @@ internal static class BaseProtection
     {
         calculatedAt = DateTime.MinValue;
         lastSize = -1;
-        excluded = new HashSet<Vector2i>();
+        excluded = new HashSet<Vector2s>();
     }
 }

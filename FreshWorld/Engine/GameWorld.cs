@@ -11,20 +11,14 @@ namespace FreshWorld.Engine;
 /// <summary>Small game boundary shared by the native reset operations. No publicized game DLL is required.</summary>
 internal static class GameWorld
 {
-    private static readonly AccessTools.FieldRef<ZoneSystem, HashSet<Vector2i>> GeneratedZones =
-        AccessTools.FieldRefAccess<ZoneSystem, HashSet<Vector2i>>("m_generatedZones");
+    private static readonly AccessTools.FieldRef<ZoneSystem, HashSet<Vector2s>> GeneratedZones =
+        AccessTools.FieldRefAccess<ZoneSystem, HashSet<Vector2s>>("m_generatedZones");
     private static readonly AccessTools.FieldRef<ZDOMan, Dictionary<ZDOID, ZDO>> ObjectsById =
         AccessTools.FieldRefAccess<ZDOMan, Dictionary<ZDOID, ZDO>>("m_objectsByID");
-    private static readonly AccessTools.FieldRef<ZDOMan, List<ZDO>[]> ObjectsBySector =
-        AccessTools.FieldRefAccess<ZDOMan, List<ZDO>[]>("m_objectsBySector");
-    private static readonly AccessTools.FieldRef<ZDOMan, Dictionary<Vector2i, List<ZDO>>> OutsideSectors =
-        AccessTools.FieldRefAccess<ZDOMan, Dictionary<Vector2i, List<ZDO>>>("m_objectsByOutsideSector");
     private static readonly AccessTools.FieldRef<ZNetScene, Dictionary<ZDO, ZNetView>> SceneInstances =
         AccessTools.FieldRefAccess<ZNetScene, Dictionary<ZDO, ZNetView>>("m_instances");
-    private static readonly Func<ZDOMan, Vector2i, int> SectorIndex =
-        AccessTools.MethodDelegate<Func<ZDOMan, Vector2i, int>>(AccessTools.Method(typeof(ZDOMan), "SectorToIndex"));
-    private static readonly Func<ZoneSystem, Vector2i, bool> PokeLocalZone =
-        AccessTools.MethodDelegate<Func<ZoneSystem, Vector2i, bool>>(AccessTools.Method(typeof(ZoneSystem), "PokeLocalZone"));
+    private static readonly Func<ZoneSystem, Vector2s, bool> PokeLocalZone =
+        AccessTools.MethodDelegate<Func<ZoneSystem, Vector2s, bool>>(AccessTools.Method(typeof(ZoneSystem), "PokeLocalZone"));
 
     // ZoneData is a private nested game type; retain that boundary behind non-generic dictionary access.
     private static readonly FieldInfo ZoneRoots = AccessTools.Field(typeof(ZoneSystem), "m_zones")
@@ -36,36 +30,36 @@ internal static class GameWorld
     private static readonly FieldInfo HeightmapBuildData = AccessTools.Field(typeof(Heightmap), "m_buildData")
         ?? throw new MissingFieldException(typeof(Heightmap).FullName, "m_buildData");
     private static readonly int PlayerPrefab = "Player".GetStableHashCode();
-    private static readonly HashSet<Vector2i> OwnedLoads = new();
+    private static readonly HashSet<Vector2s> OwnedLoads = new();
     private static ZoneSystem? _loadWorld;
 
-    public static Vector2i[] GeneratedSnapshot(HashSet<Vector2i>? candidates = null)
+    public static Vector2s[] GeneratedSnapshot(HashSet<Vector2s>? candidates = null)
     {
-        IEnumerable<Vector2i> zones = GeneratedZones(ZoneSystem.instance);
+        IEnumerable<Vector2s> zones = GeneratedZones(ZoneSystem.instance);
         if (candidates != null) zones = zones.Where(candidates.Contains);
         // Filter the native enumeration before its stable sort to preserve equal-distance ordering.
         return zones.OrderBy(zone => (long)zone.x * zone.x + (long)zone.y * zone.y).ToArray();
     }
 
-    public static HashSet<Vector2i> GeneratedSetSnapshot() => new(GeneratedZones(ZoneSystem.instance));
+    public static HashSet<Vector2s> GeneratedSetSnapshot() => new(GeneratedZones(ZoneSystem.instance));
 
-    public static bool IsGenerated(Vector2i zone) => GeneratedZones(ZoneSystem.instance).Contains(zone);
+    public static bool IsGenerated(Vector2s zone) => GeneratedZones(ZoneSystem.instance).Contains(zone);
 
     /// <summary>Returns a copy: deletion must not invalidate the live sector enumeration.</summary>
-    public static List<ZDO> GetZDOs(Vector2i zone)
+    public static List<ZDO> GetZDOs(Vector2s zone)
     {
-        var manager = ZDOMan.instance;
-        var index = SectorIndex(manager, zone);
-        var sectors = ObjectsBySector(manager);
-        if (index >= 0 && index < sectors.Length)
-            return sectors[index] == null ? new() : new(sectors[index]);
-        return OutsideSectors(manager).TryGetValue(zone, out var objects) ? new(objects) : new();
+        var objects = new List<ZDO>();
+        // 1.0 stores portals separately and shares sector 0 between out-of-map coordinates.
+        // The public API includes both registries; filter its snapshot to the requested zone.
+        ZDOMan.instance.FindSectorObjects(zone, new SimulationDistance(0, 0), objects);
+        objects.RemoveAll(zdo => zdo == null || !zdo.IsValid() || ZoneSystem.GetZone(zdo.GetPosition()) != zone);
+        return objects;
     }
 
     public static IEnumerable<ZDO> AllZDOs() => ObjectsById(ZDOMan.instance).Values.ToArray();
 
     /// <summary>Appends occupied host-world zones; the caller owns their lifetime for one maintenance run.</summary>
-    public static void CollectPlayerZones(HashSet<Vector2i> zones)
+    public static void CollectPlayerZones(HashSet<Vector2s> zones)
     {
         if (zones == null) throw new ArgumentNullException(nameof(zones));
         var network = ZNet.instance;
@@ -89,17 +83,17 @@ internal static class GameWorld
         }
     }
 
-    private static bool TryAddPlayerZone(HashSet<Vector2i> zones, Vector3 position)
+    private static bool TryAddPlayerZone(HashSet<Vector2s> zones, Vector3 position)
     {
         if (float.IsNaN(position.x) || float.IsInfinity(position.x) ||
             float.IsNaN(position.y) || float.IsInfinity(position.y) ||
             float.IsNaN(position.z) || float.IsInfinity(position.z)) return false;
-        // Match the native coordinate conversion's float intermediate before its integer floor.
+        // Match the native coordinate conversion's float intermediate before its short conversion.
         // Invalid or overflowing coordinates must never turn into an invented origin/edge zone.
         var x = (float)(((double)position.x + 32.0) / 64.0);
         var z = (float)(((double)position.z + 32.0) / 64.0);
-        if ((double)x < int.MinValue || (double)x > int.MaxValue ||
-            (double)z < int.MinValue || (double)z > int.MaxValue) return false;
+        if (Math.Floor(x) < short.MinValue || Math.Floor(x) > short.MaxValue ||
+            Math.Floor(z) < short.MinValue || Math.Floor(z) > short.MaxValue) return false;
         zones.Add(ZoneSystem.GetZone(position));
         return true;
     }
@@ -146,7 +140,7 @@ internal static class GameWorld
         _loadWorld = current;
     }
 
-    public static void PokeZone(Vector2i zone)
+    public static void PokeZone(Vector2s zone)
     {
         EnsureLoadWorld();
         var world = ZoneSystem.instance;
@@ -156,7 +150,7 @@ internal static class GameWorld
         PokeLocalZone(world, zone);
     }
 
-    public static void ReleaseZone(Vector2i zone)
+    public static void ReleaseZone(Vector2s zone)
     {
         EnsureLoadWorld();
         if (!OwnedLoads.Remove(zone)) return;
@@ -180,7 +174,7 @@ internal static class GameWorld
         RemoveRoot(zone);
     }
 
-    public static bool TryGetRoot(Vector2i zone, out GameObject root)
+    public static bool TryGetRoot(Vector2s zone, out GameObject root)
     {
         var roots = (IDictionary)(ZoneRoots.GetValue(ZoneSystem.instance)
             ?? throw new InvalidOperationException("The zone root registry is not ready."));
@@ -193,7 +187,7 @@ internal static class GameWorld
         return false;
     }
 
-    public static void RemoveGeneratedZone(Vector2i zone)
+    public static void RemoveGeneratedZone(Vector2s zone)
     {
         EnsureLoadWorld();
         GeneratedZones(ZoneSystem.instance).Remove(zone);
@@ -201,7 +195,7 @@ internal static class GameWorld
         RemoveRoot(zone);
     }
 
-    private static void RemoveRoot(Vector2i zone)
+    private static void RemoveRoot(Vector2s zone)
     {
         var world = ZoneSystem.instance;
         var roots = (IDictionary)(ZoneRoots.GetValue(world)
@@ -220,7 +214,7 @@ internal static class GameWorld
         {
             if (map == null) continue;
             HeightmapBuildData.SetValue(map, null);
-            map.Poke(true);
+            map.Poke(1, false);
         }
     }
 

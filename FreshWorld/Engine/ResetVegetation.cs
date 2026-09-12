@@ -20,7 +20,7 @@ internal class ResetVegetation : ZoneOperation
     private bool _terrainTouched;
 
     public ResetVegetation(Action<string> log, HashSet<string> ids, OperationParameters args,
-        HashSet<Vector2i>? candidates = null) : base(log, args, candidates)
+        HashSet<Vector2s>? candidates = null) : base(log, args, candidates)
     {
         _ids = NativePlacement.RequireIds(ids);
         _hashes = new HashSet<int>(_ids.Select(id => id.GetStableHashCode()));
@@ -44,7 +44,7 @@ internal class ResetVegetation : ZoneOperation
         }).ToList();
     }
 
-    protected override bool ExecuteZone(Vector2i zone)
+    protected override bool ExecuteZone(Vector2s zone)
     {
         if (!ZoneSystem.instance.IsZoneLoaded(zone) || !GameWorld.TryGetRoot(zone, out var root))
         {
@@ -92,7 +92,7 @@ internal class ResetVegetation : ZoneOperation
         return true;
     }
 
-    private static IList GetClearAreas(Vector2i zone)
+    private static IList GetClearAreas(Vector2s zone)
     {
         var areas = NativePlacement.CreateClearAreas();
         if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out var location) &&

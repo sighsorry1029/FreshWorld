@@ -30,7 +30,7 @@ foreach (var test in tests)
 Console.WriteLine($"{tests.Length - failures}/{tests.Length} native generation regression checks passed.");
 return failures == 0 ? 0 : 1;
 
-static Vector2i Zone() => new(0, 0);
+static Vector2s Zone() => new(0, 0);
 static void Reset()
 {
     ZoneSystem.instance = new(); ZNet.instance = new(); ZNet.World = new();

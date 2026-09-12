@@ -47,11 +47,11 @@ internal static class NativePlacement
     public static bool CanSpawnLocation(ZoneSystem zones, ZoneSystem.ZoneLocation location) =>
         PokeLocation(zones, location, true);
 
-    public static void PlaceVegetation(ZoneSystem zones, Vector2i zone, Transform parent, Heightmap heightmap,
+    public static void PlaceVegetation(ZoneSystem zones, Vector2s zone, Transform parent, Heightmap heightmap,
         IList clearAreas, List<GameObject> objects) =>
         Run(() => Vegetation.Invoke(zones, new object[] { zone, ZoneSystem.GetZonePos(zone), parent, heightmap, clearAreas, ZoneSystem.SpawnMode.Ghost, objects }));
 
-    public static void PlaceLocations(ZoneSystem zones, Vector2i zone, Transform parent, Heightmap heightmap,
+    public static void PlaceLocations(ZoneSystem zones, Vector2s zone, Transform parent, Heightmap heightmap,
         IList clearAreas, List<GameObject> objects)
     {
         var template = LocationTemplateState.Capture(zones, zone);
@@ -98,7 +98,7 @@ internal static class NativePlacement
             _transforms = prefab.GetComponentsInChildren<Transform>(true).Select(transform => new TemplateTransform(transform)).ToArray();
         }
 
-        public static LocationTemplateState? Capture(ZoneSystem zones, Vector2i zone)
+        public static LocationTemplateState? Capture(ZoneSystem zones, Vector2s zone)
         {
             if (!zones.m_locationInstances.TryGetValue(zone, out var location) || location.m_location == null) return null;
             var reference = location.m_location.m_prefab;

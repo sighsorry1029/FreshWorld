@@ -6,7 +6,7 @@ using System.Reflection.Emit;
 using FreshWorld.Engine;
 using UnityEngine;
 
-public readonly record struct Vector2i(int x, int y);
+public readonly record struct Vector2s(short x, short y) { public Vector2s(int x, int y) : this((short)x, (short)y) { } }
 public static class StableHash
 {
     public static int GetStableHashCode(this string value)
@@ -84,28 +84,28 @@ public sealed class ZoneSystem
     }
 
     public static ZoneSystem instance = new();
-    private HashSet<Vector2i> m_generatedZones = new();
+    private HashSet<Vector2s> m_generatedZones = new();
     private List<GameObject> m_tempSpawnedObjects = new();
-    public readonly HashSet<Vector2i> Loaded = new();
-    public readonly Dictionary<Vector2i, GameObject> Roots = new();
-    public readonly Dictionary<Vector2i, LocationInstance> m_locationInstances = new();
+    public readonly HashSet<Vector2s> Loaded = new();
+    public readonly Dictionary<Vector2s, GameObject> Roots = new();
+    public readonly Dictionary<Vector2s, LocationInstance> m_locationInstances = new();
     public List<ZoneVegetation> m_vegetation = new();
-    public HashSet<Vector2i> Generated => m_generatedZones;
+    public HashSet<Vector2s> Generated => m_generatedZones;
     public List<GameObject> Temporary => m_tempSpawnedObjects;
     public Action<IList, List<GameObject>>? VegetationPlacement;
     public Action<IList, List<GameObject>>? LocationPlacement;
     public bool AssetReady = true;
     public int VegetationCalls, LocationCalls, AssetChecks;
-    public bool IsZoneLoaded(Vector2i zone) => Loaded.Contains(zone);
-    public static Vector3 GetZonePos(Vector2i zone) => new(zone.x * 64, 0, zone.y * 64);
+    public bool IsZoneLoaded(Vector2s zone) => Loaded.Contains(zone);
+    public static Vector3 GetZonePos(Vector2s zone) => new(zone.x * 64, 0, zone.y * 64);
     private bool PokeCanSpawnLocation(ZoneLocation location, bool firstSpawn) { AssetChecks++; return AssetReady; }
-    private void PlaceVegetation(Vector2i zone, Vector3 center, Transform parent, Heightmap heightmap,
+    private void PlaceVegetation(Vector2s zone, Vector3 center, Transform parent, Heightmap heightmap,
         List<ClearArea> clearAreas, SpawnMode mode, List<GameObject> spawned)
     {
         VegetationCalls++;
         VegetationPlacement?.Invoke(clearAreas, spawned);
     }
-    private void PlaceLocations(Vector2i zone, Vector3 center, Transform parent, Heightmap heightmap,
+    private void PlaceLocations(Vector2s zone, Vector3 center, Transform parent, Heightmap heightmap,
         List<ClearArea> clearAreas, SpawnMode mode, List<GameObject> spawned)
     {
         LocationCalls++;
@@ -182,22 +182,22 @@ namespace FreshWorld.Engine
 {
     internal static class GameWorld
     {
-        public static readonly Dictionary<Vector2i, List<ZDO>> Objects = new();
+        public static readonly Dictionary<Vector2s, List<ZDO>> Objects = new();
         public static readonly List<ZDO> Removed = new();
         public static int Pokes, Releases, Recalculations;
-        public static Vector2i[] GeneratedSnapshot(HashSet<Vector2i>? candidates = null) =>
+        public static Vector2s[] GeneratedSnapshot(HashSet<Vector2s>? candidates = null) =>
             ZoneSystem.instance.Generated.Where(zone => candidates == null || candidates.Contains(zone)).ToArray();
-        public static bool IsGenerated(Vector2i zone) => ZoneSystem.instance.Generated.Contains(zone);
-        public static List<ZDO> GetZDOs(Vector2i zone) => Objects.TryGetValue(zone, out var entries) ? new(entries) : new();
+        public static bool IsGenerated(Vector2s zone) => ZoneSystem.instance.Generated.Contains(zone);
+        public static List<ZDO> GetZDOs(Vector2s zone) => Objects.TryGetValue(zone, out var entries) ? new(entries) : new();
         public static void RemoveZDO(ZDO zdo) => Removed.Add(zdo);
-        public static bool TryGetRoot(Vector2i zone, out GameObject root) => ZoneSystem.instance.Roots.TryGetValue(zone, out root!);
-        public static void PokeZone(Vector2i zone) => Pokes++;
-        public static void ReleaseZone(Vector2i zone) => Releases++;
+        public static bool TryGetRoot(Vector2s zone, out GameObject root) => ZoneSystem.instance.Roots.TryGetValue(zone, out root!);
+        public static void PokeZone(Vector2s zone) => Pokes++;
+        public static void ReleaseZone(Vector2s zone) => Releases++;
         public static void RecalculateTerrain() => Recalculations++;
     }
     internal static class BaseProtection
     {
-        public static HashSet<Vector2i> GetExcluded(int size) => new();
+        public static HashSet<Vector2s> GetExcluded(int size) => new();
     }
     internal static class TerrainResetter
     {
@@ -205,8 +205,8 @@ namespace FreshWorld.Engine
         public static readonly List<Vector3> Restored = new();
         public static void Execute(Vector3 position, float radius) => Restored.Add(position);
     }
-    internal class ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2i>? candidates = null) : ZoneOperation(log, args, candidates)
+    internal class ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) : ZoneOperation(log, args, candidates)
     {
-        protected override bool ExecuteZone(Vector2i zone) => true;
+        protected override bool ExecuteZone(Vector2s zone) => true;
     }
 }

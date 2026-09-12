@@ -24,7 +24,7 @@ internal static class CommandPatchRegression
             ("direct remote administrator dispatch bypasses the native interpreter", DirectRemote),
             ("removed run and help aliases are rejected without native fallback", RemovedAliases),
             ("direct nonadministrator command is intercepted and denied", DeniedRemote),
-            ("direct null-RPC command requires the actual local host", DirectLocal),
+            ("direct null-RPC command accepts the dedicated console and actual local host", DirectLocal),
             ("nested remote to null-RPC dispatch cannot inherit local authority", NestedRemote),
             ("nested and outer native exceptions restore their respective scopes", NativeExceptions),
             ("an earlier skipping prefix leaves default state without clearing outer provenance", SkippingPrefix),
@@ -85,12 +85,16 @@ internal static class CommandPatchRegression
         using var fixture = new Fixture();
         fixture.Network.Dedicated = true;
         fixture.Network.InvokeInternalCommand(null, "freshworld");
-        Require(fixture.Requests.Count == 0, "A null-RPC command on a dedicated server acquired local authority.");
-        fixture.Network.Dedicated = false;
-        fixture.Network.InvokeInternalCommand(null, "freshworld");
         Require(fixture.Requests.Count == 1 && fixture.Requests[0].Action == FreshWorldCommandAction.Run &&
-            fixture.Requests[0].Context.Actor == "local host", "The verified listen host could not dispatch directly.");
+            fixture.Requests[0].Context.Actor == "dedicated server console",
+            "The dedicated server console could not dispatch directly.");
         Require(fixture.Network.OriginalCalls.Count == 0, "FreshWorld direct commands reached the original method.");
+
+        using var listenFixture = new Fixture();
+        listenFixture.Network.InvokeInternalCommand(null, "freshworld");
+        Require(listenFixture.Requests.Count == 1 && listenFixture.Requests[0].Action == FreshWorldCommandAction.Run &&
+            listenFixture.Requests[0].Context.Actor == "local host", "The verified listen host could not dispatch directly.");
+        Require(listenFixture.Network.OriginalCalls.Count == 0, "FreshWorld direct commands reached the original method.");
     }
 
     private static void NestedRemote()

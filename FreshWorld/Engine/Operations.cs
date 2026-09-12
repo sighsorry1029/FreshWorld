@@ -36,8 +36,8 @@ internal abstract class ExecutedOperation
 internal abstract class ZoneOperation : ExecutedOperation
 {
     protected readonly OperationParameters Args;
-    protected Vector2i[] ZonesToUpgrade;
-    protected ZoneOperation(Action<string> log, OperationParameters args, HashSet<Vector2i>? candidates = null) : base(log)
+    protected Vector2s[] ZonesToUpgrade;
+    protected ZoneOperation(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) : base(log)
     {
         Args = args;
         ZonesToUpgrade = GameWorld.GeneratedSnapshot(candidates);
@@ -48,7 +48,7 @@ internal abstract class ZoneOperation : ExecutedOperation
         ZonesToUpgrade = ZonesToUpgrade.Where(zone => !protectedZones.Contains(zone)).ToArray();
         return GetType().Name + ": " + ZonesToUpgrade.Length + " zones selected.";
     }
-    protected abstract bool ExecuteZone(Vector2i zone);
+    protected abstract bool ExecuteZone(Vector2s zone);
     protected override IEnumerator OnExecute()
     {
         // Production subclasses are dispatched through OperationTracker's bounded retry loop.

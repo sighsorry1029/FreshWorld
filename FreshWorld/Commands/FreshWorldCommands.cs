@@ -44,7 +44,7 @@ internal static class FreshWorldCommands
         // Valheim forwards a remote command from a client to the server even though OnlyServer
         // prevents the local client action. No client cheat or administrator flag grants access.
         owned = new Terminal.ConsoleCommand(CommandSyntax.Name, CommandSyntax.Usage,
-            (Terminal.ConsoleEvent)HandleLocal, isCheat: false, onlyServer: true,
+            (Terminal.ConsoleEvent)HandleLocal, isCheat: false, onlyServer: true, hideBehindDevCommands: false,
             optionsFetcher: () => new List<string> { "status" }, remoteCommand: true);
         ClearAutocomplete();
     }
@@ -89,6 +89,21 @@ internal static class FreshWorldCommands
             ReferenceEquals(Player.m_localPlayer, player) && player != null &&
             player.GetZDOID() == character && network.LocalPlayerCharacterID == character;
         return new CommandRequestContext(network, uid, "local host", () => true, Current,
+            message => { if (terminal != null) terminal.AddString(message); });
+    }
+
+    private static CommandRequestContext? DedicatedConsoleContext(ZNet? network, Terminal? terminal)
+    {
+        if (network == null || !ReferenceEquals(network, ZNet.instance) || !network.IsServer() ||
+            !network.IsDedicated() || network.HaveStopped || ZNet.World == null) return null;
+        var world = ZNet.World;
+        var uid = network.GetWorldUID();
+        var epoch = generation;
+        bool Current() => CurrentWorld(network, world, uid, epoch) && network.IsDedicated();
+        // RCON providers execute authenticated commands inside the dedicated server process but
+        // normally do not expose their remote identity as a Valheim player ZRpc. Authentication
+        // remains the provider's responsibility; FreshWorld retains its world/session validation.
+        return new CommandRequestContext(network, uid, "dedicated server console", () => true, Current,
             message => { if (terminal != null) terminal.AddString(message); });
     }
 
@@ -181,10 +196,13 @@ internal static class FreshWorldCommands
                 args.Context.AddString("[FreshWorld] Indirect remote execution rejected. Send freshworld directly.");
                 return;
             }
-            var context = LocalContext(ZNet.instance, args.Context);
+            var network = ZNet.instance;
+            var context = network != null && network.IsDedicated()
+                ? DedicatedConsoleContext(network, args.Context)
+                : LocalContext(network, args.Context);
             if (context == null)
             {
-                args.Context.AddString("[FreshWorld] A verified local world host is required. On dedicated servers, connect with a server administrator account.");
+                args.Context.AddString("[FreshWorld] A verified local world host or active dedicated server console is required. Connected players must be server administrators.");
                 return;
             }
             Dispatch(args.FullLine, context, null);
@@ -204,10 +222,12 @@ internal static class FreshWorldCommands
         {
             if (rpc == null)
             {
-                // Native RemoteCommand invoked inside a host process carries no remote identity.
-                // Still require the actual local player; a headless server is not a local player.
+                // Native server-console and RCON execution carries no Valheim player identity.
+                // A remote player command cannot enter this path while its outer RPC scope is active.
                 if (remoteExecutionDepth != 0) return false;
-                var local = LocalContext(network, Console.instance);
+                var local = network.IsDedicated()
+                    ? DedicatedConsoleContext(network, Console.instance)
+                    : LocalContext(network, Console.instance);
                 if (local != null) Dispatch(line, local, null);
             }
             else

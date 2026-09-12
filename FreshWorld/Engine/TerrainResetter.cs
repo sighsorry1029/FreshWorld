@@ -13,7 +13,7 @@ namespace FreshWorld.Engine
     internal static class TerrainResetter
     {
         private static readonly int TerrainCompilerHash = "_TerrainCompiler".GetStableHashCode();
-        private static ILookup<Vector2i, ZDO>? cache;
+        private static ILookup<Vector2s, ZDO>? cache;
         private static ZDOMan? cacheManager;
         private static ZoneSystem? cacheZones;
         private static DateTime cacheTime;
@@ -51,7 +51,7 @@ namespace FreshWorld.Engine
             if (distance > int.MaxValue / 4) throw new ArgumentOutOfRangeException(nameof(radius));
             var range = (int)distance;
             var pending = new List<KeyValuePair<ZDO, byte[]>>();
-            void PrepareZone(Vector2i zone)
+            void PrepareZone(Vector2s zone)
             {
                 var tile = ZoneSystem.GetZonePos(zone);
                 foreach (var zdo in records[zone])
@@ -60,9 +60,9 @@ namespace FreshWorld.Engine
             if (range <= 8)
             {
                 // Ordinary resource restoration looks up nine nearby buckets, not every world compiler.
-                for (var x = Math.Max(int.MinValue, (long)center.x - range); x <= Math.Min(int.MaxValue, (long)center.x + range); x++)
-                    for (var z = Math.Max(int.MinValue, (long)center.y - range); z <= Math.Min(int.MaxValue, (long)center.y + range); z++)
-                        PrepareZone(new Vector2i((int)x, (int)z));
+                for (var x = Math.Max(short.MinValue, (long)center.x - range); x <= Math.Min(short.MaxValue, (long)center.x + range); x++)
+                    for (var z = Math.Max(short.MinValue, (long)center.y - range); z <= Math.Min(short.MaxValue, (long)center.y + range); z++)
+                        PrepareZone(new Vector2s((int)x, (int)z));
             }
             else
             {
@@ -74,7 +74,7 @@ namespace FreshWorld.Engine
             Apply(pending);
         }
 
-        public static void ResetBorders(IReadOnlyDictionary<Vector2i, BorderDirection> directions)
+        public static void ResetBorders(IReadOnlyDictionary<Vector2s, BorderDirection> directions)
         {
             if (directions == null) throw new ArgumentNullException(nameof(directions));
             if (directions.Count == 0) return;
@@ -96,7 +96,7 @@ namespace FreshWorld.Engine
             cache = null; cacheManager = null; cacheZones = null; cacheTime = DateTime.MinValue;
         }
 
-        private static ILookup<Vector2i, ZDO> TerrainRecords()
+        private static ILookup<Vector2s, ZDO> TerrainRecords()
         {
             if (cache == null || !ReferenceEquals(cacheManager, ZDOMan.instance) || !ReferenceEquals(cacheZones, ZoneSystem.instance)
                 || DateTime.UtcNow - cacheTime > TimeSpan.FromSeconds(10))

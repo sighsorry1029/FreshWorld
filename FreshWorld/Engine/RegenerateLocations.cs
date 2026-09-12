@@ -18,7 +18,7 @@ internal class RegenerateLocations : ZoneOperation
     private bool _terrainTouched;
 
     public RegenerateLocations(Action<string> log, HashSet<string> ids, OperationParameters args,
-        HashSet<Vector2i>? candidates = null) : base(log, args, candidates) =>
+        HashSet<Vector2s>? candidates = null) : base(log, args, candidates) =>
         _ids = NativePlacement.RequireIds(ids);
 
     protected override string OnInit()
@@ -32,7 +32,7 @@ internal class RegenerateLocations : ZoneOperation
         location.m_placed && NativePlacement.IsValidLocationPrefab(location.m_location) &&
         _ids.Contains(location.m_location.m_prefab.Name);
 
-    protected override bool ExecuteZone(Vector2i zone)
+    protected override bool ExecuteZone(Vector2s zone)
     {
         var zones = ZoneSystem.instance;
         if (!zones.m_locationInstances.TryGetValue(zone, out var location) || !IsSelected(location)) return true;
@@ -46,7 +46,7 @@ internal class RegenerateLocations : ZoneOperation
         return true;
     }
 
-    protected virtual bool ExecuteLocation(Vector2i zone, ZoneSystem.LocationInstance location)
+    protected virtual bool ExecuteLocation(Vector2s zone, ZoneSystem.LocationInstance location)
     {
         if (!IsSelected(location)) return false;
         if (!GameWorld.TryGetRoot(zone, out var root))
@@ -82,7 +82,7 @@ internal class RegenerateLocations : ZoneOperation
         return true;
     }
 
-    private static void ClearLocationObjects(Vector2i zone, Vector3 center, float radius)
+    private static void ClearLocationObjects(Vector2s zone, Vector3 center, float radius)
     {
         if (radius <= 0) return;
         var squaredRadius = radius * radius;

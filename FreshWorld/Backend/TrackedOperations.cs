@@ -11,12 +11,12 @@ namespace FreshWorld.Backend;
 /// <summary>Results refer to exact zone coordinates, so a later phase can avoid repeating successful resets.</summary>
 internal sealed class OperationResult
 {
-    public HashSet<Vector2i> CandidateZones { get; } = new();
-    public HashSet<Vector2i> SelectedZones { get; } = new();
-    public HashSet<Vector2i> CompletedZones { get; } = new();
-    public HashSet<Vector2i> ChangedZones { get; } = new();
-    public HashSet<Vector2i> SkippedZones { get; } = new();
-    public HashSet<Vector2i> FailedZones { get; } = new();
+    public HashSet<Vector2s> CandidateZones { get; } = new();
+    public HashSet<Vector2s> SelectedZones { get; } = new();
+    public HashSet<Vector2s> CompletedZones { get; } = new();
+    public HashSet<Vector2s> ChangedZones { get; } = new();
+    public HashSet<Vector2s> SkippedZones { get; } = new();
+    public HashSet<Vector2s> FailedZones { get; } = new();
     public int FailedCount { get; internal set; }
     public bool Started { get; internal set; }
     public bool Finished { get; internal set; }
@@ -37,10 +37,10 @@ internal sealed class OperationTracker
 {
     private static readonly AccessTools.FieldRef<ZoneSystem, List<UnityEngine.GameObject>> TemporaryObjects =
         AccessTools.FieldRefAccess<ZoneSystem, List<UnityEngine.GameObject>>("m_tempSpawnedObjects");
-    private readonly HashSet<Vector2i>? _candidates;
-    private readonly Func<Vector2i, bool>? _canProcess;
+    private readonly HashSet<Vector2s>? _candidates;
+    private readonly Func<Vector2s, bool>? _canProcess;
     private readonly Action<OperationResult>? _completed;
-    private readonly HashSet<Vector2i> _pendingLoads = new();
+    private readonly HashSet<Vector2s> _pendingLoads = new();
     private readonly int _maxZonesPerFrame;
     private readonly double _frameBudgetMilliseconds;
     private readonly ZNet _worldNet;
@@ -48,13 +48,13 @@ internal sealed class OperationTracker
     private readonly long _worldUid;
     public OperationResult Result { get; } = new();
 
-    public OperationTracker(HashSet<Vector2i>? candidates, Func<Vector2i, bool>? canProcess,
+    public OperationTracker(HashSet<Vector2s>? candidates, Func<Vector2s, bool>? canProcess,
         Action<OperationResult>? completed, int maxZonesPerFrame, double frameBudgetMilliseconds)
     {
         if (maxZonesPerFrame < 1) throw new ArgumentOutOfRangeException(nameof(maxZonesPerFrame));
         if (frameBudgetMilliseconds <= 0 || double.IsNaN(frameBudgetMilliseconds) || double.IsInfinity(frameBudgetMilliseconds))
             throw new ArgumentOutOfRangeException(nameof(frameBudgetMilliseconds));
-        _candidates = candidates == null ? null : new HashSet<Vector2i>(candidates);
+        _candidates = candidates == null ? null : new HashSet<Vector2s>(candidates);
         _canProcess = canProcess;
         _completed = completed;
         _maxZonesPerFrame = maxZonesPerFrame;
@@ -86,37 +86,37 @@ internal sealed class OperationTracker
         ReferenceEquals(ZoneSystem.instance, _worldZones) && ZNet.World != null &&
         ZNet.World.m_uid == _worldUid && _worldNet != null && _worldZones != null;
 
-    public Vector2i[] Restrict(Vector2i[] zones)
+    public Vector2s[] Restrict(Vector2s[] zones)
     {
         var result = _candidates == null ? zones : zones.Where(_candidates.Contains).ToArray();
         Result.CandidateZones.UnionWith(result);
         return result;
     }
 
-    public void Selected(Vector2i[] zones) => Result.SelectedZones.UnionWith(zones);
+    public void Selected(Vector2s[] zones) => Result.SelectedZones.UnionWith(zones);
 
-    public bool CanProcess(Vector2i zone)
+    public bool CanProcess(Vector2s zone)
     {
         if (_canProcess == null || _canProcess(zone)) return true;
         Skip(zone);
         return false;
     }
 
-    public void Skip(Vector2i zone)
+    public void Skip(Vector2s zone)
     {
         Result.SkippedZones.Add(zone);
         Release(zone);
     }
 
     // Called immediately before an generation operation may poke this zone, never for a zone already loaded.
-    public void MayLoad(Vector2i zone)
+    public void MayLoad(Vector2s zone)
     {
         if (!ZoneSystem.instance.IsZoneLoaded(zone)) _pendingLoads.Add(zone);
     }
 
-    public void Changed(Vector2i zone) => Result.ChangedZones.Add(zone);
+    public void Changed(Vector2s zone) => Result.ChangedZones.Add(zone);
 
-    public IEnumerator Execute(Vector2i[] zones, Func<Vector2i, bool> execute, Action failed)
+    public IEnumerator Execute(Vector2s[] zones, Func<Vector2s, bool> execute, Action failed)
     {
         var frame = Stopwatch.StartNew();
         var attempts = 0;
@@ -173,7 +173,7 @@ internal sealed class OperationTracker
         _completed?.Invoke(Result);
     }
 
-    private void Release(Vector2i zone)
+    private void Release(Vector2s zone)
     {
         if (!_pendingLoads.Remove(zone)) return;
         if (IsSameWorld && ZNetScene.instance != null && ZDOMan.instance != null)
@@ -201,7 +201,7 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
     public OperationResult Result => _tracker.Result;
 
     public TrackedResetZones(Action<string> log, OperationParameters args,
-        HashSet<Vector2i>? candidates = null, Func<Vector2i, bool>? canProcess = null,
+        HashSet<Vector2s>? candidates = null, Func<Vector2s, bool>? canProcess = null,
         Action<OperationResult>? completed = null, int maxZonesPerFrame = 64,
         double frameBudgetMilliseconds = 8) : base(log, args, candidates)
     {
@@ -216,7 +216,7 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
         return text;
     }
 
-    protected override bool ExecuteZone(Vector2i zone)
+    protected override bool ExecuteZone(Vector2s zone)
     {
         if (!_tracker.CanProcess(zone)) return true;
         // It may have disappeared since planning; do not count that as a FreshWorld reset.
@@ -269,7 +269,7 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
     public OperationResult Result => _tracker.Result;
 
     public TrackedResetVegetation(Action<string> log, HashSet<string> ids, OperationParameters args,
-        HashSet<Vector2i>? candidates = null, Func<Vector2i, bool>? canProcess = null,
+        HashSet<Vector2s>? candidates = null, Func<Vector2s, bool>? canProcess = null,
         Action<OperationResult>? completed = null, int maxZonesPerFrame = 64,
         double frameBudgetMilliseconds = 8) : base(log, RequireIds(ids), args, candidates)
     {
@@ -292,7 +292,7 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
         return text;
     }
 
-    protected override bool ExecuteZone(Vector2i zone)
+    protected override bool ExecuteZone(Vector2s zone)
     {
         if (!_tracker.CanProcess(zone)) return true;
         if (!GameWorld.IsGenerated(zone))
@@ -347,12 +347,12 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
 {
     private readonly OperationTracker _tracker;
     private readonly HashSet<string> _ids;
-    private readonly Dictionary<Vector2i, string> _selectedIds = new();
+    private readonly Dictionary<Vector2s, string> _selectedIds = new();
     public ExecutedOperation Executable => this;
     public OperationResult Result => _tracker.Result;
 
     public TrackedRegenerateLocations(Action<string> log, HashSet<string> ids, OperationParameters args,
-        HashSet<Vector2i>? candidates = null, Func<Vector2i, bool>? canProcess = null,
+        HashSet<Vector2s>? candidates = null, Func<Vector2s, bool>? canProcess = null,
         Action<OperationResult>? completed = null, int maxZonesPerFrame = 64,
         double frameBudgetMilliseconds = 8) : base(log, RequireIds(ids), args, candidates)
     {
@@ -383,12 +383,12 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         return text;
     }
 
-    private bool IsStillSelected(Vector2i zone, ZoneSystem.LocationInstance location) =>
+    private bool IsStillSelected(Vector2s zone, ZoneSystem.LocationInstance location) =>
         location.m_placed && location.m_location?.m_prefab != null &&
         _selectedIds.TryGetValue(zone, out var expected) &&
         string.Equals(expected, location.m_location.m_prefab.Name, StringComparison.Ordinal);
 
-    protected override bool ExecuteZone(Vector2i zone)
+    protected override bool ExecuteZone(Vector2s zone)
     {
         if (!_tracker.CanProcess(zone)) return true;
         if (!GameWorld.IsGenerated(zone) ||
@@ -416,7 +416,7 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         }
     }
 
-    protected override bool ExecuteLocation(Vector2i zone, ZoneSystem.LocationInstance location)
+    protected override bool ExecuteLocation(Vector2s zone, ZoneSystem.LocationInstance location)
     {
         if (!IsStillSelected(zone, location))
         {

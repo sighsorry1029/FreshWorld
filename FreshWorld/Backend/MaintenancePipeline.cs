@@ -23,7 +23,7 @@ internal sealed class MaintenancePipeline
     private readonly ZNet _network;
     private readonly ZoneSystem _zones;
     private readonly long _worldUid;
-    private readonly HashSet<Vector2i> _playerZones = new();
+    private readonly HashSet<Vector2s> _playerZones = new();
     private ITrackedOperation? _activeOperation;
 
     public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn)
@@ -125,7 +125,7 @@ internal sealed class MaintenancePipeline
     }
 
     private IEnumerator ResetVegetationGroup(string name, HashSet<string> ids, float terrainRadius,
-        HashSet<Vector2i> protectedZones)
+        HashSet<Vector2s> protectedZones)
     {
         if (ids.Count == 0) yield break;
         yield return WaitUntilUnpaused();
@@ -180,7 +180,7 @@ internal sealed class MaintenancePipeline
         }
     }
 
-    private HashSet<Vector2i> SupplementCandidates(HashSet<Vector2i> protectedZones)
+    private HashSet<Vector2s> SupplementCandidates(HashSet<Vector2s> protectedZones)
     {
         var current = GameWorld.GeneratedSetSnapshot();
         // After zone reset, supplement only the initially protected zones that still exist.
@@ -190,15 +190,15 @@ internal sealed class MaintenancePipeline
         return current;
     }
 
-    private static HashSet<Vector2i> ProtectedSnapshot(int size, HashSet<Vector2i> generated)
+    private static HashSet<Vector2s> ProtectedSnapshot(int size, HashSet<Vector2s> generated)
     {
         BaseProtection.InvalidateCache();
-        var protectedZones = new HashSet<Vector2i>(BaseProtection.GetExcluded(size));
+        var protectedZones = new HashSet<Vector2s>(BaseProtection.GetExcluded(size));
         protectedZones.IntersectWith(generated);
         return protectedZones;
     }
 
-    private bool CanResetZone(Vector2i zone, int safeZones, HashSet<Vector2i>? initialProtection = null)
+    private bool CanResetZone(Vector2s zone, int safeZones, HashSet<Vector2s>? initialProtection = null)
     {
         RequireWorld();
         // Called before every attempt, including retries after loading. Once observed, a player's
