@@ -23,7 +23,8 @@ internal sealed class OperationResult
 
 internal interface ITrackedOperation
 {
-    ExecutedOperation Executable { get; }
+    void Init();
+    IEnumerator Execute();
     OperationResult Result { get; }
     void Cleanup();
 }
@@ -187,7 +188,6 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
     private readonly OperationTracker _tracker;
     private bool _endAttempted;
     private bool _mutationAttempted;
-    public ExecutedOperation Executable => this;
     public OperationResult Result => _tracker.Result;
 
     public TrackedResetZones(Action<string> log, OperationParameters args,
@@ -255,7 +255,6 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
 internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperation
 {
     private readonly OperationTracker _tracker;
-    public ExecutedOperation Executable => this;
     public OperationResult Result => _tracker.Result;
 
     public TrackedResetVegetation(Action<string> log, HashSet<string> ids, OperationParameters args,
@@ -338,7 +337,6 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
     private readonly OperationTracker _tracker;
     private readonly HashSet<string> _ids;
     private readonly Dictionary<Vector2s, string> _selectedIds = new();
-    public ExecutedOperation Executable => this;
     public OperationResult Result => _tracker.Result;
 
     public TrackedRegenerateLocations(Action<string> log, HashSet<string> ids, OperationParameters args,

@@ -219,8 +219,8 @@ static void SkippedOperationResults()
         var operation = create();
         System.Collections.IEnumerator Execute()
         {
-            operation.Executable.Init();
-            yield return operation.Executable.Execute();
+            operation.Init();
+            yield return operation.Execute();
         }
         var completed = new List<bool>();
         using var runner = new GuardedCoroutine(Execute(), () => true, Fake.UnexpectedErrors.Add, completed.Add);

@@ -65,8 +65,8 @@ static GuardedCoroutine Start(ITrackedOperation operation, List<Exception> error
     {
         try
         {
-            operation.Executable.Init();
-            yield return operation.Executable.Execute();
+            operation.Init();
+            yield return operation.Execute();
         }
         finally { operation.Cleanup(); }
     }

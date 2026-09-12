@@ -149,9 +149,9 @@ internal sealed class MaintenancePipeline
         var elapsed = Stopwatch.StartNew();
         try
         {
-            operation.Executable.Init();
+            operation.Init();
             _log($"{name}: selected {operation.Result.SelectedZones.Count} zones.");
-            yield return operation.Executable.Execute();
+            yield return operation.Execute();
             var result = operation.Result;
             if (!result.Finished || result.FailedCount > 0)
                 throw new InvalidOperationException($"{name} did not finish successfully ({result.FailedCount} failed zones).");
