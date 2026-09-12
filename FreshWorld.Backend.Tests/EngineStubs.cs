@@ -213,6 +213,7 @@ namespace FreshWorld.Engine
     public static class NativePlacement
     {
         public static bool IsValidLocationPrefab(ZoneSystem.ZoneLocation location) => location.m_prefab.IsValid;
+        public static List<UnityEngine.GameObject> TemporaryObjects(ZoneSystem zones) => zones.m_tempSpawnedObjects;
     }
     public static class GameWorld
     {

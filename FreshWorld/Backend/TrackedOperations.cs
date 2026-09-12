@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using HarmonyLib;
 using FreshWorld.Engine;
 
 namespace FreshWorld.Backend;
@@ -35,8 +34,6 @@ internal interface ITrackedOperation
 /// </summary>
 internal sealed class OperationTracker
 {
-    private static readonly AccessTools.FieldRef<ZoneSystem, List<UnityEngine.GameObject>> TemporaryObjects =
-        AccessTools.FieldRefAccess<ZoneSystem, List<UnityEngine.GameObject>>("m_tempSpawnedObjects");
     private readonly HashSet<Vector2s>? _candidates;
     private readonly Func<Vector2s, bool>? _canProcess;
     private readonly Action<OperationResult>? _completed;
@@ -65,11 +62,11 @@ internal sealed class OperationTracker
     }
 
     public static HashSet<UnityEngine.GameObject> SnapshotTemporaryObjects(ZoneSystem zones) =>
-        new(TemporaryObjects(zones));
+        new(NativePlacement.TemporaryObjects(zones));
 
     public static void CleanupNewTemporaryObjects(ZoneSystem zones, HashSet<UnityEngine.GameObject> original)
     {
-        var temporary = TemporaryObjects(zones);
+        var temporary = NativePlacement.TemporaryObjects(zones);
         List<Exception>? errors = null;
         foreach (var obj in temporary.Where(obj => !original.Contains(obj)).ToArray())
         {
