@@ -2,7 +2,6 @@
 
 FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. The cfg has **15 options in three sections** and defaults to automatic restoration every **24 game days**.
 
-This source targets Valheim 1.0.7. Builds made for 0.221.x must be replaced on both the host and any administrator clients using FreshWorld commands.
 
 ![](https://i.ibb.co/WS2DPzB/freshzones.gif) <br>
 player buildings are protected while vegetations would refresh <br>
