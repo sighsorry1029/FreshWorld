@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- Simplified reset tracking and removed redundant candidate and state handling.
+- Reduced allocations during large zone and world-object resets.
+- Hardened plugin shutdown cleanup and pinned Harmony shutdown overloads.
+
 ## 1.0.2
 
 - Added `freshworld` command support for dedicated server consoles and authenticated RCON tools.
