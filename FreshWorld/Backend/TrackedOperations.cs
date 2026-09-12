@@ -34,7 +34,6 @@ internal interface ITrackedOperation
 /// </summary>
 internal sealed class OperationTracker
 {
-    private readonly HashSet<Vector2s>? _candidates;
     private readonly Func<Vector2s, bool>? _canProcess;
     private readonly Action<OperationResult>? _completed;
     private readonly HashSet<Vector2s> _pendingLoads = new();
@@ -45,13 +44,12 @@ internal sealed class OperationTracker
     private readonly long _worldUid;
     public OperationResult Result { get; } = new();
 
-    public OperationTracker(HashSet<Vector2s>? candidates, Func<Vector2s, bool>? canProcess,
+    public OperationTracker(Func<Vector2s, bool>? canProcess,
         Action<OperationResult>? completed, int maxZonesPerFrame, double frameBudgetMilliseconds)
     {
         if (maxZonesPerFrame < 1) throw new ArgumentOutOfRangeException(nameof(maxZonesPerFrame));
         if (frameBudgetMilliseconds <= 0 || double.IsNaN(frameBudgetMilliseconds) || double.IsInfinity(frameBudgetMilliseconds))
             throw new ArgumentOutOfRangeException(nameof(frameBudgetMilliseconds));
-        _candidates = candidates == null ? null : new HashSet<Vector2s>(candidates);
         _canProcess = canProcess;
         _completed = completed;
         _maxZonesPerFrame = maxZonesPerFrame;
@@ -83,12 +81,7 @@ internal sealed class OperationTracker
         ReferenceEquals(ZoneSystem.instance, _worldZones) && ZNet.World != null &&
         ZNet.World.m_uid == _worldUid && _worldNet != null && _worldZones != null;
 
-    public Vector2s[] Restrict(Vector2s[] zones)
-    {
-        var result = _candidates == null ? zones : zones.Where(_candidates.Contains).ToArray();
-        Result.CandidateZones.UnionWith(result);
-        return result;
-    }
+    public void RecordCandidates(Vector2s[] zones) => Result.CandidateZones.UnionWith(zones);
 
     public void Selected(Vector2s[] zones) => Result.SelectedZones.UnionWith(zones);
 
@@ -202,12 +195,12 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
         Action<OperationResult>? completed = null, int maxZonesPerFrame = 64,
         double frameBudgetMilliseconds = 8) : base(log, args, candidates)
     {
-        _tracker = new OperationTracker(candidates, canProcess, completed, maxZonesPerFrame, frameBudgetMilliseconds);
+        _tracker = new OperationTracker(canProcess, completed, maxZonesPerFrame, frameBudgetMilliseconds);
     }
 
     protected override string OnInit()
     {
-        ZonesToUpgrade = _tracker.Restrict(ZonesToUpgrade);
+        _tracker.RecordCandidates(ZonesToUpgrade);
         var text = base.OnInit();
         _tracker.Selected(ZonesToUpgrade);
         return text;
@@ -270,7 +263,7 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
         Action<OperationResult>? completed = null, int maxZonesPerFrame = 64,
         double frameBudgetMilliseconds = 8) : base(log, RequireIds(ids), args, candidates)
     {
-        _tracker = new OperationTracker(candidates, canProcess, completed, maxZonesPerFrame, frameBudgetMilliseconds);
+        _tracker = new OperationTracker(canProcess, completed, maxZonesPerFrame, frameBudgetMilliseconds);
     }
 
     private static HashSet<string> RequireIds(HashSet<string> ids)
@@ -283,7 +276,7 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
 
     protected override string OnInit()
     {
-        ZonesToUpgrade = _tracker.Restrict(ZonesToUpgrade);
+        _tracker.RecordCandidates(ZonesToUpgrade);
         var text = base.OnInit();
         _tracker.Selected(ZonesToUpgrade);
         return text;
@@ -354,7 +347,7 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         double frameBudgetMilliseconds = 8) : base(log, RequireIds(ids), args, candidates)
     {
         _ids = new HashSet<string>(ids);
-        _tracker = new OperationTracker(candidates, canProcess, completed, maxZonesPerFrame, frameBudgetMilliseconds);
+        _tracker = new OperationTracker(canProcess, completed, maxZonesPerFrame, frameBudgetMilliseconds);
     }
 
     private static HashSet<string> RequireIds(HashSet<string> ids)
@@ -366,7 +359,7 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
 
     protected override string OnInit()
     {
-        ZonesToUpgrade = _tracker.Restrict(ZonesToUpgrade);
+        _tracker.RecordCandidates(ZonesToUpgrade);
         var text = base.OnInit();
         _tracker.Selected(ZonesToUpgrade);
         foreach (var zone in ZonesToUpgrade)

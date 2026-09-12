@@ -604,7 +604,7 @@ static void CancelZones()
 static void CleanupAll()
 {
     Fake.AddZone(0); Fake.AddZone(1);
-    var tracker = new OperationTracker(null, null, null, 64, 8);
+    var tracker = new OperationTracker(null, null, 64, 8);
     foreach (var zone in ZoneSystem.instance.m_generatedZones)
     {
         tracker.MayLoad(zone);
