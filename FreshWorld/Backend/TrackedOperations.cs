@@ -111,11 +111,12 @@ internal sealed class OperationTracker
     {
         Result.Started = true;
         var frame = Stopwatch.StartNew();
+        var waiting = new Stopwatch();
         var attempts = 0;
         for (var index = 0; index < zones.Length; index++)
         {
             var zone = zones[index];
-            var waiting = Stopwatch.StartNew();
+            waiting.Restart();
             while (true)
             {
                 while (UnityEngine.Time.timeScale <= 0f)
