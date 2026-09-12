@@ -128,8 +128,12 @@ internal static class GameWorld
         if (local != null && local.GetZDOID() == zdo.m_uid) return true;
         var network = ZNet.instance;
         if (network == null) return false;
-        return network.GetPlayerList().Any(player => player.m_characterID == zdo.m_uid) ||
-            network.GetPeers().Any(peer => peer.m_characterID == zdo.m_uid);
+        var id = zdo.m_uid;
+        foreach (var player in network.GetPlayerList())
+            if (player.m_characterID == id) return true;
+        foreach (var peer in network.GetPeers())
+            if (peer.m_characterID == id) return true;
+        return false;
     }
 
     private static void EnsureLoadWorld()
