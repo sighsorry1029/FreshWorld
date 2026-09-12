@@ -228,7 +228,7 @@ namespace FreshWorld
             // A persisted command has no authenticated requester after restart/reload. Unlike scheduled
             // jobs, it must be explicitly submitted again in the new session (also covers legacy RunNow).
             var orphan = scheduler.PendingRun;
-            if (orphan?.Slot == "Manual")
+            if (orphan?.IsManual == true)
             {
                 scheduler.CancelPendingManualRun(orphan.Id, lastClock, "The manual request belonged to an earlier host session.");
                 Logger.LogWarning("Cancelled an earlier session's unstarted manual request: " + orphan.Id);
@@ -311,9 +311,9 @@ namespace FreshWorld
         private void TryDispatch(ScheduledRun run, RunOptions options)
         {
             if (runner != null || settings == null || sessionFaulted) return;
-            if (run.Slot != "Manual" && !settings.AutomaticEnabled) return;
+            if (!run.IsManual && !settings.AutomaticEnabled) return;
             var request = pendingManual;
-            if (run.Slot == "Manual")
+            if (run.IsManual)
             {
                 if (request == null || request.Run.Id != run.Id || !IsCurrentRequest(request.Context))
                 {

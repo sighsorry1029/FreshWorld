@@ -8,12 +8,14 @@ namespace FreshWorld.Core
     [DataContract]
     public sealed class ScheduledRun
     {
+        internal const string ManualSlot = "Manual";
         [DataMember(Order = 1)] public string Id { get; private set; } = "";
         [DataMember(Order = 2)] private long dueUtcTicks;
         [DataMember(Order = 3)] public double GameDay { get; private set; }
         [DataMember(Order = 4)] public string Slot { get; private set; } = "";
         [DataMember(Order = 5)] public bool IncludeVegetation { get; private set; }
         public DateTimeOffset DueUtc => new DateTimeOffset(dueUtcTicks, TimeSpan.Zero);
+        internal bool IsManual => string.Equals(Slot, ManualSlot, StringComparison.Ordinal);
         internal ScheduledRun(string id, DateTimeOffset dueUtc, double gameDay, string slot, bool vegetation)
         { Id = id; dueUtcTicks = dueUtc.UtcDateTime.Ticks; GameDay = gameDay; Slot = slot; IncludeVegetation = vegetation; }
         internal bool Valid => !string.IsNullOrWhiteSpace(Id) && dueUtcTicks > 0 && dueUtcTicks <= DateTime.MaxValue.Ticks

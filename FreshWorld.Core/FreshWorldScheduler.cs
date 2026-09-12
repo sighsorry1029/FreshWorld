@@ -41,7 +41,7 @@ namespace FreshWorld.Core
                     else if (!settings.RunMissedOnWorldStart)
                         Advance(state, now); // A pending run observed during an earlier session remains pending.
                 }
-                if (!settings.AutomaticEnabled && state.Pending?.Slot != "Manual") state.Pending = null;
+                if (!settings.AutomaticEnabled && state.Pending?.IsManual != true) state.Pending = null;
                 lease.Write(state);
                 return new FreshWorldScheduler(settings, lease, state);
             }
@@ -57,7 +57,7 @@ namespace FreshWorld.Core
                 EnsureUsable();
                 var next = state.Copy();
                 if (next.Fingerprint != nextSettings.Fingerprint) ResetAutomaticSchedule(next, nextSettings, now);
-                if (!nextSettings.AutomaticEnabled && next.Pending?.Slot != "Manual") next.Pending = null;
+                if (!nextSettings.AutomaticEnabled && next.Pending?.IsManual != true) next.Pending = null;
                 if (next.Fingerprint != state.Fingerprint || next.Pending?.Id != state.Pending?.Id)
                     Persist(next);
                 // Publishing settings after persistence keeps a failed update from exposing an uncommitted schedule.
@@ -73,11 +73,11 @@ namespace FreshWorld.Core
                 var next = state.Copy();
                 var candidate = !settings.AutomaticEnabled ? null : settings.Mode == ScheduleMode.DailyTimes ? LatestDaily(next, now)
                     : LatestGameDay(next, now);
-                if (!settings.AutomaticEnabled && next.Pending?.Slot != "Manual") next.Pending = null;
+                if (!settings.AutomaticEnabled && next.Pending?.IsManual != true) next.Pending = null;
                 Advance(next, now);
                 // A user's manual request retains its policy while awaiting backend readiness.
                 // Automatic deadlines observed meanwhile are covered by that pending maintenance.
-                if (candidate != null && next.Pending?.Slot != "Manual" && !next.Attempts.Any(a => a.Run.Id == candidate.Id))
+                if (candidate != null && next.Pending?.IsManual != true && !next.Attempts.Any(a => a.Run.Id == candidate.Id))
                     next.Pending = candidate;
                 if (next.Pending?.Id != state.Pending?.Id) Persist(next);
                 else state = next;
@@ -112,7 +112,7 @@ namespace FreshWorld.Core
                 if (state.Pending != null)
                     throw new InvalidOperationException("A FreshWorld run is already pending; a manual request cannot replace it.");
                 var next = state.Copy();
-                var run = new ScheduledRun("manual:" + Guid.NewGuid().ToString("N"), now.UtcNow, now.GameDay, "Manual", includeVegetation);
+                var run = new ScheduledRun("manual:" + Guid.NewGuid().ToString("N"), now.UtcNow, now.GameDay, ScheduledRun.ManualSlot, includeVegetation);
                 next.Pending = run;
                 Persist(next);
                 return run;
@@ -128,7 +128,7 @@ namespace FreshWorld.Core
             lock (gate)
             {
                 EnsureUsable();
-                if (state.Pending == null || state.Pending.Id != runId || state.Pending.Slot != "Manual") return false;
+                if (state.Pending == null || state.Pending.Id != runId || !state.Pending.IsManual) return false;
                 var next = state.Copy();
                 var cancelled = new RunRecord(next.Pending!, now.UtcNow);
                 cancelled.Finish(RunStatus.Interrupted, now.UtcNow, reason);
@@ -215,7 +215,7 @@ namespace FreshWorld.Core
         private static void ResetAutomaticSchedule(WorldState target, ScheduleSettings settings, ScheduleClock now)
         {
             target.Fingerprint = settings.Fingerprint;
-            if (target.Pending?.Slot != "Manual") target.Pending = null;
+            if (target.Pending?.IsManual != true) target.Pending = null;
             target.GameDayAnchor = now.GameDay;
             target.CursorGameDay = now.GameDay;
             target.CursorUtcTicks = now.UtcNow.UtcDateTime.Ticks;
