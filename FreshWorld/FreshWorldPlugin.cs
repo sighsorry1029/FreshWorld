@@ -77,9 +77,7 @@ namespace FreshWorld
             }
             catch (Exception error)
             {
-                supported = false;
-                FreshWorldCommands.Unregister();
-                harmony?.UnpatchSelf();
+                CleanupPlugin();
                 Logger.LogError("FreshWorld initialization failed; maintenance is disabled. " + error);
             }
         }
@@ -460,12 +458,37 @@ namespace FreshWorld
 
         private void OnDestroy()
         {
+            CleanupPlugin();
+        }
+
+        private void CleanupPlugin()
+        {
             supported = false;
-            watcher?.Dispose();
-            StopSession();
-            FreshWorldCommands.Unregister();
-            harmony?.UnpatchSelf();
-            Instance = null;
+            try
+            {
+                TryCleanup(DisposeWatcher, "Could not stop configuration watching.");
+                TryCleanup(StopSession, "Could not stop the active world session.");
+                TryCleanup(FreshWorldCommands.Unregister, "Could not unregister the console command.");
+                TryCleanup(() => harmony?.UnpatchSelf(), "Could not remove Harmony patches.");
+            }
+            finally { Instance = null; }
+        }
+
+        private void DisposeWatcher()
+        {
+            var closing = watcher;
+            watcher = null;
+            if (closing == null) return;
+            closing.Changed -= OnConfigChanged;
+            closing.Created -= OnConfigChanged;
+            closing.Renamed -= OnConfigChanged;
+            closing.Dispose();
+        }
+
+        private void TryCleanup(Action cleanup, string message)
+        {
+            try { cleanup(); }
+            catch (Exception error) { Logger.LogError(message + " " + error); }
         }
     }
 

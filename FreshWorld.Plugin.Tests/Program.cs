@@ -48,6 +48,7 @@ internal static class Program
             Test("backend failure is persisted and reported without retry", FailureNotification);
             Test("status reports idle policy and the last result without reserving or dispatching maintenance", ReadOnlyStatus);
             Test("plugin shutdown unregisters command and releases backend lease", ShutdownCleansUp);
+            Test("plugin shutdown continues after configuration watcher disposal fails", ShutdownSurvivesWatcherFailure);
             System.Console.WriteLine($"Plugin/controller tests passed: {passed}");
             return 0;
         }
@@ -661,6 +662,23 @@ internal static class Program
         Equal(RunStatus.Failed, scheduler.Attempts.Single().Status, "interrupted active run persisted as failure");
     }
 
+    private static void ShutdownSurvivesWatcherFailure()
+    {
+        var f = new Fixture();
+        MaintenancePipeline.HoldFrames = 5;
+        f.Run(); f.Tick();
+        var watcherField = typeof(FreshWorldPlugin).GetField("watcher", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        ((FileSystemWatcher)watcherField.GetValue(f.Plugin)!).Dispose();
+        watcherField.SetValue(f.Plugin, new ThrowingWatcher());
+        f.Dispose();
+        True(FreshWorldCommands.Handler == null, "watcher failure left the command registered");
+        True(MaintenanceGate.IsAvailable, "watcher failure left the backend lease held");
+        Equal(1, MaintenancePipeline.Disposals, "watcher failure skipped active coroutine cleanup");
+        True(FreshWorldPlugin.Instance == null, "watcher failure retained the destroyed plugin instance");
+        True(f.Plugin.Logger.Messages.Any(message => message.Contains("Could not stop configuration watching.")),
+            "watcher disposal failure was not logged");
+    }
+
     private static void HasReply(CommandRequestContext request, string text) =>
         True(request.Replies.Any(message => message.Contains(text, StringComparison.OrdinalIgnoreCase)),
             "missing reply containing '" + text + "': " + string.Join(" | ", request.Replies));
@@ -668,6 +686,11 @@ internal static class Program
     { if (!value) throw new InvalidOperationException(reason); }
     private static void Equal<T>(T expected, T actual, string reason)
     { if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new InvalidOperationException($"{reason}: expected {expected}, got {actual}"); }
+
+    private sealed class ThrowingWatcher : FileSystemWatcher
+    {
+        protected override void Dispose(bool disposing) => throw new InvalidOperationException("injected watcher disposal failure");
+    }
 
     private sealed class Fixture : IDisposable
     {
