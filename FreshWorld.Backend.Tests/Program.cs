@@ -9,11 +9,13 @@ var tests = new (string Name, Action Body)[]
     ("retained scope excludes newly skipped zones", RetainedScope),
     ("disabling zone reset supplements all generated zones", WithoutZoneReset),
     ("occupied zones remain intact at SafeZones zero and are eligible on the next run", OccupiedZoneAndNextRun),
+    ("all stages protect the player's 3x3 area including diagonals at SafeZones zero", PlayerNeighborhood),
+    ("player neighborhood protection clips native coordinate edges without wrapping", PlayerNeighborhoodEdges),
     ("the initial player snapshot uses positions after the world save finishes", PostSavePlayerSnapshot),
     ("both resource passes and locations retain player protection after departure with zones disabled", PlayerSnapshotSupplements),
-    ("player movement after a zone yield protects the next target", MovementAfterZoneYield),
-    ("a ready player arriving during a vegetation load retry skips mutation and releases the load", PlayerArrivalDuringVegetationLoad),
-    ("a ready player arriving during a location load retry skips mutation and releases the load", PlayerArrivalDuringLocationLoad),
+    ("player movement after a zone yield protects an adjacent next target", MovementAfterZoneYield),
+    ("a ready player arriving nearby during a vegetation load retry skips mutation and releases the load", PlayerArrivalDuringVegetationLoad),
+    ("a ready player arriving nearby during a location load retry skips mutation and releases the load", PlayerArrivalDuringLocationLoad),
     ("a base-filtered resource stage still records players for the later location stage", BaseFilteredStageSnapshot),
     ("skipped targets are neither completed, changed nor failed in every tracking wrapper", SkippedOperationResults),
     ("each supplemental operation is created after the prior phase completes", SequentialStages),
@@ -84,26 +86,81 @@ static void WithoutZoneReset()
 
 static void OccupiedZoneAndNextRun()
 {
-    Fake.AddZone(0); Fake.AddZone(1);
+    Fake.AddZone(-1); Fake.AddZone(0); Fake.AddZone(1); Fake.AddZone(2);
     Fake.PlayerZones.Add(new(0, 0));
     // Departure after planning must not expose the initially occupied zone during this run.
     Fake.OnStart = kind => { if (kind == "zones") Fake.PlayerZones.Clear(); };
     var options = new RunOptions { ZoneSafeZones = 0 };
     True(Run(options).Success);
-    Sequence(["zones.change:1"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
-    True(ZoneSystem.instance.m_generatedZones.Contains(new(0, 0)));
+    Sequence(["zones.change:2"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
+    True(ZoneSystem.instance.m_generatedZones.SetEquals([new(-1, 0), new(0, 0), new(1, 0)]));
     // Player-only skips must not expand the existing base-marker retained scope.
     True(!Fake.Calls.Any(IsSupplementChange));
 
     Fake.Calls.Clear();
     True(Run(options).Success);
-    Sequence(["zones.change:0"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
-    True(!ZoneSystem.instance.m_generatedZones.Contains(new(0, 0)));
+    Sequence(["zones.change:-1", "zones.change:0", "zones.change:1"],
+        Fake.Calls.Where(call => call.StartsWith("zones.change:")));
+    Equal(0, ZoneSystem.instance.m_generatedZones.Count);
+}
+
+static void PlayerNeighborhood()
+{
+    (Vector2s PlayerZone, bool Protected)[] cases =
+    [
+        (new(-1, -1), true), (new(0, -1), true), (new(1, -1), true),
+        (new(-1, 0), true), (new(0, 0), true), (new(1, 0), true),
+        (new(-1, 1), true), (new(0, 1), true), (new(1, 1), true),
+        (new(-2, 0), false), (new(2, 0), false), (new(0, -2), false), (new(0, 2), false),
+        (new(-2, -2), false), (new(2, 2), false)
+    ];
+    foreach (var (playerZone, protectedTarget) in cases)
+        foreach (var zonesEnabled in new[] { true, false })
+        {
+            Fake.Reset();
+            Fake.AddZone(0);
+            ZoneSystem.instance.m_vegetation.Add(new("copper"));
+            ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+            Fake.PlayerZones.Add(playerZone);
+            True(Run(new()
+            {
+                ZonesEnabled = zonesEnabled, ZoneSafeZones = 0,
+                VegetationIds = ["raspberry"], VegetationSafeZones = 0, LocationSafeZones = 0
+            }).Success);
+            if (protectedTarget)
+                True(!Fake.Calls.Any(call => call.StartsWith("zones.change:") || IsSupplementChange(call)),
+                    $"Protected target reset with player at {playerZone}, zones={zonesEnabled}.");
+            else if (zonesEnabled)
+                Sequence(["zones.change:0"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
+            else
+                Sequence(["vegetation.change:0", "vegetation.change:0", "locations.change:0"], Fake.Calls.Where(IsSupplementChange));
+        }
+}
+
+static void PlayerNeighborhoodEdges()
+{
+    (Vector2s Target, Vector2s PlayerZone, bool Protected)[] cases =
+    [
+        (new(short.MaxValue, short.MaxValue), new(short.MinValue, short.MaxValue), false),
+        (new(short.MaxValue, short.MaxValue), new(short.MaxValue, short.MinValue), false),
+        (new(short.MaxValue, short.MaxValue), new(short.MaxValue - 1, short.MaxValue - 1), true),
+        (new(short.MinValue, short.MinValue), new(short.MaxValue, short.MinValue), false),
+        (new(short.MinValue, short.MinValue), new(short.MinValue, short.MaxValue), false),
+        (new(short.MinValue, short.MinValue), new(short.MinValue + 1, short.MinValue + 1), true)
+    ];
+    foreach (var (target, playerZone, protectedTarget) in cases)
+    {
+        Fake.Reset();
+        ZoneSystem.instance.m_generatedZones.Add(target);
+        Fake.PlayerZones.Add(playerZone);
+        True(Run(new() { ZoneSafeZones = 0, VegetationEnabled = false, LocationsEnabled = false }).Success);
+        Equal(protectedTarget, ZoneSystem.instance.m_generatedZones.Contains(target));
+    }
 }
 
 static void PostSavePlayerSnapshot()
 {
-    Fake.AddZone(0); Fake.AddZone(1);
+    Fake.AddZone(0); Fake.AddZone(2);
     Fake.PlayerZones.Add(new(0, 0));
     Fake.HoldSave = true;
     using var lease = MaintenanceGate.Acquire();
@@ -113,24 +170,24 @@ static void PostSavePlayerSnapshot()
     True(runner.MoveNext());
     True(ZNet.instance.Saving && !Fake.Calls.Contains("zones.create"));
     Fake.PlayerZones.Clear();
-    Fake.PlayerZones.Add(new(1, 0));
+    Fake.PlayerZones.Add(new(2, 0));
     ZNet.instance.Saving = false;
     Drain(runner);
     Sequence([true], completed);
     Sequence(["zones.change:0"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
-    True(ZoneSystem.instance.m_generatedZones.Contains(new(1, 0)));
+    True(ZoneSystem.instance.m_generatedZones.Contains(new(2, 0)));
 }
 
 static void PlayerSnapshotSupplements()
 {
-    Fake.AddZone(0); Fake.AddZone(1);
+    Fake.AddZone(0); Fake.AddZone(1); Fake.AddZone(2);
     ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
     Fake.PlayerZones.Add(new(0, 0));
     Fake.OnStart = kind => { if (kind == "vegetation") Fake.PlayerZones.Clear(); };
     True(Run(new() { ZonesEnabled = false, VegetationIds = ["raspberry"] }).Success);
     Equal(2, Fake.VegetationPasses.Count);
-    True(Fake.VegetationPasses.All(pass => pass.Arguments.SafeZones == 0 && pass.ChangedZones.SequenceEqual([1])));
-    Sequence(["locations.change:1"], Fake.Calls.Where(call => call.StartsWith("locations.change:")));
+    True(Fake.VegetationPasses.All(pass => pass.Arguments.SafeZones == 0 && pass.ChangedZones.SequenceEqual([2])));
+    Sequence(["locations.change:2"], Fake.Calls.Where(call => call.StartsWith("locations.change:")));
     True(!Fake.Calls.Contains("zones.create"));
 }
 
@@ -142,7 +199,7 @@ static void MovementAfterZoneYield()
     using var runner = NewRunner(new() { ZoneSafeZones = 0, VegetationEnabled = false, LocationsEnabled = false }, completed);
     True(runner.MoveNext());
     Sequence(["zones.change:0"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
-    Fake.PlayerZones.Add(new(1, 0));
+    Fake.PlayerZones.Add(new(2, 0));
     Drain(runner);
     Sequence([true], completed);
     Sequence(["zones.change:0"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
@@ -164,9 +221,9 @@ static void PlayerArrivalDuringLoad(bool vegetation)
     True(runner.MoveNext());
     Equal(1, GameWorld.Pending.Count);
     True(!Fake.Calls.Any(IsSupplementChange));
-    // The target is ready on the next retry, but now has a player: readiness cannot bypass protection.
+    // The target is ready on the next retry, but a player is now nearby: readiness cannot bypass protection.
     ZoneSystem.instance.Loaded.Add(new(0, 0));
-    Fake.PlayerZones.Add(new(0, 0));
+    Fake.PlayerZones.Add(new(1, 0));
     Drain(runner);
     Sequence([true], completed);
     True(!Fake.Calls.Any(IsSupplementChange));

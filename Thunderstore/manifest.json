@@ -1,6 +1,6 @@
 {
   "name": "FreshWorld",
-  "version_number": "1.0.3",
+  "version_number": "1.0.4",
   "website_url": "",
   "description": "Restore zones, resources, terrain, and locations in your Valheim world on a schedule or with one command. Choose what to reset and protect bases with simple settings. Supports single-player, local hosts, and dedicated servers. Requires only BepInEx.",
   "dependencies": [

@@ -53,7 +53,7 @@ internal sealed class MaintenancePipeline
             GameWorld.CollectPlayerZones(_playerZones);
             var generated = GameWorld.GeneratedSetSnapshot();
             var protectedZones = ProtectedSnapshot(_options.ZoneSafeZones, generated);
-            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} player zones excluded from direct resets.");
+            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection.");
 
             if (_options.ZonesEnabled)
             {
@@ -202,9 +202,13 @@ internal sealed class MaintenancePipeline
     {
         RequireWorld();
         // Called before every attempt, including retries after loading. Once observed, a player's
-        // zone stays excluded for this run even if they move before a later restoration stage.
+        // zone and its eight neighbors stay excluded for this run, even after the player moves.
         GameWorld.CollectPlayerZones(_playerZones);
-        if (_playerZones.Contains(zone)) return false;
+        // Keep recorded positions separate from this fixed protection policy. Probe at most nine
+        // coordinates without allocating a larger set, and never wrap the native short boundaries.
+        for (var x = Math.Max(short.MinValue, zone.x - 1); x <= Math.Min(short.MaxValue, zone.x + 1); x++)
+            for (var y = Math.Max(short.MinValue, zone.y - 1); y <= Math.Min(short.MaxValue, zone.y + 1); y++)
+                if (_playerZones.Contains(new Vector2s(x, y))) return false;
         if (initialProtection != null && initialProtection.Contains(zone)) return false;
         if (safeZones <= 0) return true;
         // Cache the world scan for ten seconds rather than scanning all objects for each zone.

@@ -63,7 +63,7 @@ namespace FreshWorld.Configuration
     public sealed class FreshWorldConfig
     {
         // Initial marker defaults from Upgrade World 1.80 (Unlicense). Config is owned by FreshWorld.
-        public const string DefaultProtectedPlayerObjects = "blastfurnace,bonfire,charcoal_kiln,fermenter,fire_pit,forge,guard_stone,hearth,piece_artisanstation,piece_bed02,piece_beehive,piece_brazierceiling01,piece_groundtorch,piece_groundtorch_blue,piece_groundtorch_green,piece_groundtorch_wood,piece_oven,piece_spinningwheel,piece_stonecutter,piece_walltorch,piece_workbench,portal,portal_wood,smelter,windmill,piece_chest,piece_chest_blackmetal,piece_chest_private,piece_chest_treasure,piece_chest_wood";
+        public const string DefaultProtectedPlayerObjects = "blastfurnace,bonfire,charcoal_kiln,fermenter,fire_pit,forge,guard_stone,hearth,piece_artisanstation,piece_bed02,piece_beehive,piece_brazierceiling01,piece_groundtorch,piece_groundtorch_blue,piece_groundtorch_green,piece_groundtorch_wood,piece_oven,piece_spinningwheel,piece_stonecutter,piece_walltorch,piece_workbench,portal,portal_wood,smelter,windmill,piece_chest,piece_chest_blackmetal,piece_chest_private,piece_chest_treasure,piece_chest_wood,Raft,Karve,VikingShip,VikingShip_Ashlands";
         public const string DefaultLocations = "Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress";
         private static readonly Regex ExactId = new Regex(@"^[A-Za-z0-9_]+(?::[A-Za-z0-9_]+)*$", RegexOptions.CultureInvariant);
         // Preserve raw scalar text: BepInEx's bool/enum deserializers can silently retain/default invalid input.
@@ -115,13 +115,13 @@ namespace FreshWorld.Configuration
                 100);
 
             zoneSafeZones = Bind("Protection", "ZoneSafeZones", new ConfigChoice<SafeZoneRange>("1"),
-                "Zone reset marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 can allow player structures to be deleted. Occupied player zones are always excluded from direct resets for the rest of the run; neighboring terrain and border edits can still affect them.",
+                "Zone reset marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 can allow player structures to be deleted. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain and border edits from outside this area can still affect it.",
                 400, choices: ConfigPresentation.SafeZoneChoices);
             vegetationSafeZones = Bind("Protection", "ResourceSafeZones", new ConfigChoice<SafeZoneRange>("0"),
-                "Marker protection for both resource groups: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 permits resource and terrain restoration inside base zones. Occupied player zones are always excluded from direct resets for the rest of the run; terrain restoration from neighboring targets can still affect them.",
+                "Marker protection for both resource groups: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 permits resource and terrain restoration inside base zones. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 300, choices: ConfigPresentation.SafeZoneChoices);
             locationSafeZones = Bind("Protection", "LocationSafeZones", new ConfigChoice<SafeZoneRange>("0"),
-                "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 bypasses base protection and can delete player pieces inside locations. Occupied player zones are always excluded from direct resets for the rest of the run; terrain restoration from neighboring targets can still affect them.",
+                "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 bypasses base protection and can delete player pieces inside locations. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 200, choices: ConfigPresentation.SafeZoneChoices);
             playerPlacedObjects = Bind("Protection", "PlayerPlacedObjects", DefaultProtectedPlayerObjects,
                 "Complete editable list of exact prefab IDs used as base markers when placed by a player (creator != 0); empty disables these markers. Player_tombstone remains a separate marker without the creator requirement. All markers require the stage's SafeZones > 0; unmarked structures are not automatically protected.",

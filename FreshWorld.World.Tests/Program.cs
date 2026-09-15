@@ -32,6 +32,7 @@ var tests = new (string Name, Action Body)[]
     ("safe zone sizes zero one and two have the expected protection radius", MarkerRadius),
     ("changing marker configuration invalidates the cached protection", MarkerReconfigure),
     ("new cfg defaults protect crafted chests and tombstones without protecting every piece", DefaultProtection),
+    ("default ship markers require creator metadata and follow safe zone ranges", DefaultShipProtection),
     ("editable cfg marker list applies additions and removals while requiring player creators", EditableConfiguredProtection),
     ("empty player marker list preserves creator-independent tombstones only when safe zones are enabled", EmptyConfiguredProtection),
     ("overlapping and duplicate markers in outside sectors deduplicate their zones", OutsideMarkers),
@@ -504,6 +505,26 @@ static void DefaultProtection()
     Equal(2, protectedZones.Count);
     True(protectedZones.Contains(new(1, 0)) && protectedZones.Contains(new(2, 0)));
     True(!protectedZones.Contains(new(0, 0)) && !protectedZones.Contains(new(3, 0)));
+}
+
+static void DefaultShipProtection()
+{
+    var options = new FreshWorldConfig(new ConfigFile()).Capture().Options;
+    string[] ships = ["Raft", "Karve", "VikingShip", "VikingShip_Ashlands"];
+    BaseProtection.Configure(options.ProtectedPlayerObjects, options.ProtectedObjects);
+    for (var i = 0; i < ships.Length; i++)
+    {
+        True(options.ProtectedPlayerObjects.Contains(ships[i]));
+        ZDOMan.instance.Add(new ZDO(i * 2 + 1, ships[i], new(i * 512, 0, 0)) { Creator = 77 });
+        ZDOMan.instance.Add(new(i * 2 + 2, ships[i], new(i * 512 + 256, 0, 0)));
+    }
+    Equal(0, BaseProtection.GetExcluded(0).Count);
+    True(BaseProtection.GetExcluded(1).SetEquals([new(0, 0), new(8, 0), new(16, 0), new(24, 0)]));
+    var protectedZones = BaseProtection.GetExcluded(2);
+    Equal(36, protectedZones.Count);
+    True(protectedZones.Contains(new(-1, -1)) && protectedZones.Contains(new(25, 1)));
+    True(!protectedZones.Contains(new(4, 0)) && !protectedZones.Contains(new(12, 0)) &&
+        !protectedZones.Contains(new(20, 0)) && !protectedZones.Contains(new(28, 0)));
 }
 
 static void EditableConfiguredProtection()

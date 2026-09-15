@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.4
+
+- Protected each player's zone and its eight neighbors from direct resets for the rest of a run.
+- Added `Raft`, `Karve`, `VikingShip`, and `VikingShip_Ashlands` to the default `PlayerPlacedObjects` list.
+
 ## 1.0.3
 
 - Simplified reset tracking and removed redundant candidate and state handling.

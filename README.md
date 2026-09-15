@@ -1,4 +1,4 @@
-# FreshWorld 1.0.2
+# FreshWorld 1.0.4
 
 FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. The cfg has **15 options in three sections** and defaults to automatic restoration every **24 game days**.
 
@@ -109,25 +109,25 @@ With Zones=true, resource and location supplements use only zones protected by b
 
 With Zones=false, supplements consider all currently generated zones, then apply their own ID and protection filters. This scope is fixed and has no cfg selector.
 
-All stages also exclude player-occupied target zones using the run's player protection described below. This exclusion does not expand the supplemental candidate set.
+All stages also exclude player-protected target zones using the run's player protection described below. This exclusion does not expand the supplemental candidate set.
 
 Resources=false and Locations=false disable only their supplemental stages. They do not exclude resources or locations from the earlier zone reset. Likewise, the resource and location ID lists do not restrict the zone stage's targets.
 
 ## Protection: players, base markers, and stage boundaries
 
-**Player-occupied target zones are always protected, including when SafeZones=0.** After the initial save finishes, FreshWorld records the zones of active players known to the hosting server. It adds their current zones again immediately before each target attempt or retry. Once observed, a zone stays excluded from direct zone resets, resource-and-terrain resets, resource-only resets, and location resets for the remainder of that run, even if the player leaves. The next run starts with a fresh set. This works in single-player, local-host, and dedicated-server worlds and adds no cfg option or location-visit tracking.
+**Each player's zone and its eight neighbors (3 x 3 zones) are always protected, including when SafeZones=0.** After the initial save finishes, FreshWorld records the zones of active players known to the hosting server. It adds their current zones again immediately before each target attempt or retry. Each recorded zone protects its surrounding 3 x 3 area from direct zone resets, resource-and-terrain resets, resource-only resets, and location resets for the remainder of that run, even if the player leaves. Moving players can therefore protect additional areas during the run. The next run starts with a fresh set. This fixed protection works in single-player, local-host, and dedicated-server worlds and adds no cfg option or location-visit tracking.
 
-This protection skips direct targets; it does not protect terrain across zone boundaries. A resource or location terrain radius from a neighboring target can still reach an occupied zone, and a neighboring zone reset can still repair shared terrain borders there. SafeZones marker protection has the same boundary limitation.
+This protection skips direct targets; it does not clip terrain edits to the protected area. A resource or location terrain radius from a target outside the protected area can still reach protected terrain, and a zone reset outside it can still repair shared terrain borders. SafeZones marker protection has the same boundary limitation.
 
 ~~~ini
 [Protection]
 ZoneSafeZones = 1
 ResourceSafeZones = 0
 LocationSafeZones = 0
-PlayerPlacedObjects = blastfurnace,bonfire,charcoal_kiln,fermenter,fire_pit,forge,guard_stone,hearth,piece_artisanstation,piece_bed02,piece_beehive,piece_brazierceiling01,piece_groundtorch,piece_groundtorch_blue,piece_groundtorch_green,piece_groundtorch_wood,piece_oven,piece_spinningwheel,piece_stonecutter,piece_walltorch,piece_workbench,portal,portal_wood,smelter,windmill,piece_chest,piece_chest_blackmetal,piece_chest_private,piece_chest_treasure,piece_chest_wood
+PlayerPlacedObjects = blastfurnace,bonfire,charcoal_kiln,fermenter,fire_pit,forge,guard_stone,hearth,piece_artisanstation,piece_bed02,piece_beehive,piece_brazierceiling01,piece_groundtorch,piece_groundtorch_blue,piece_groundtorch_green,piece_groundtorch_wood,piece_oven,piece_spinningwheel,piece_stonecutter,piece_walltorch,piece_workbench,portal,portal_wood,smelter,windmill,piece_chest,piece_chest_blackmetal,piece_chest_private,piece_chest_treasure,piece_chest_wood,Raft,Karve,VikingShip,VikingShip_Ashlands
 ~~~
 
-The three SafeZones settings independently control additional base-marker protection and accept only these values. They do not disable player-occupied target protection:
+The three SafeZones settings independently control additional base-marker protection and accept only these values. They do not change the fixed 3 x 3 player protection:
 
 | Value | Protection for that stage |
 |---|---|
@@ -143,7 +143,9 @@ ResourceSafeZones=0 allows the selected resource supplements in retained base zo
 
 If you choose ZoneSafeZones=1 and LocationSafeZones=1, zero location supplements can be normal: the zone stage already covers unprotected locations, and the remaining base zones are also protected from location restoration. FreshWorld does not automatically lower protection to increase the result count.
 
-PlayerPlacedObjects is the **complete editable list** of prefabs that act as markers when they have player-creator metadata. Its 30 default entries are shown above so you can see which workbenches, portals, chests, beds, fires, beehives, and processing stations block zone resets. Add or remove IDs directly. An empty value disables these creator-qualified markers. Removed entries are not silently restored from a built-in list.
+PlayerPlacedObjects is the **complete editable list** of prefabs that act as markers when they have player-creator metadata. Its 34 default entries are shown above so you can see which workbenches, portals, chests, beds, fires, beehives, processing stations, and ships block zone resets. Add or remove IDs directly. An empty value disables these creator-qualified markers. Removed entries are not silently restored from a built-in list.
+
+Ships built with the hammer have creator metadata. Ships created with the vanilla spawn command do not, so adding their IDs does not make spawned ships protection markers. Existing cfg lists keep their saved values; add the four ship IDs to an existing list if you want them to protect their zones.
 
 Player_tombstone is a separate built-in marker. Tombstones store a character/profile owner ID in s_owner, while placed buildings use s_creator. FreshWorld therefore checks tombstones without the building-creator requirement. Clearing PlayerPlacedObjects leaves the separate tombstone marker in place.
 
