@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5
+
+- Added `Cart` to the default `PlayerPlacedObjects` list.
+
 ## 1.0.4
 
 - Protected each player's zone and its eight neighbors from direct resets for the rest of a run.
