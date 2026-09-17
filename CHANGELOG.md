@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6
+
+- Ensured completely cleared chunks replace their old chunk files during normal saves, preventing deleted world objects from returning and stacking after a reload.
+
 ## 1.0.5
 
 - Added `Cart` to the default `PlayerPlacedObjects` list.

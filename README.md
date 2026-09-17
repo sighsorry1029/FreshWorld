@@ -1,4 +1,4 @@
-# FreshWorld 1.0.5
+# FreshWorld 1.0.6
 
 FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. The cfg has **15 options in three sections** and defaults to automatic restoration every **24 game days**.
 
@@ -45,6 +45,8 @@ Save and wait for completion
 Disabled stages are skipped. A stage must finish before the next one starts, and a failure stops the remaining stages. When both resource groups have targets and the terrain radius is positive, FreshWorld yields two frames between them so the game can refresh terrain and collision data. There is no fixed delay in seconds or minutes between stages.
 
 The initial save is mandatory. A save failure or the 180-second save timeout prevents restoration from starting. FreshWorld does not request another save at the end: normal autosaves and a normal shutdown save persist the result. A crash before the next save can lose restoration changes even if the separate execution record says the run completed. FreshWorld does not create a separate backup or automatically restore one.
+
+When hosting a world, FreshWorld includes previously saved chunks that are now completely empty in the game's normal save process. This prevents an old chunk file from restoring deleted objects after a world reload. The correction adds no extra save or cfg option and does not remove duplicates already present in the world.
 
 ## General: automatic scheduling
 

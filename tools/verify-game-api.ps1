@@ -41,6 +41,13 @@ try {
     Require-Field ($game.GetType('ZoneSystem/ZoneData')) 'm_root' 'UnityEngine.GameObject'
     Require-Field $zdo 'm_objectsByID' 'System.Collections.Generic.Dictionary`2<ZDOID,ZDO>'
     Require-Field $zdo 'm_destroySendList' 'System.Collections.Generic.List`1<ZDOID>'
+    # Empty-chunk save repair uses Harmony field injection and cached reflection for SaveData.
+    Require-Field $zdo 'm_chunkSaveMapping' 'ChunkSaveMapping'
+    Require-Field $zdo 'm_dirtyChunks' 'System.Collections.Generic.HashSet`1<ZoneSystem/ChunkIndex>[]'
+    Require-Field $zdo 'm_objectsBySector' 'System.Collections.Generic.List`1<ZDO>[]'
+    Require-Field $zdo 'm_saveData' 'ZDOMan/SaveData'
+    Require-Field ($game.GetType('ZDOMan/SaveData')) 'm_numFiles' 'System.Int32'
+    Require-Field ($game.GetType('ZDOMan/SaveData')) 'm_dirtyFiles' 'System.Int32'
     Require-Field ($game.GetType('ZNetScene')) 'm_instances' 'System.Collections.Generic.Dictionary`2<ZDO,ZNetView>'
     Require-Field ($game.GetType('Heightmap')) 's_heightmaps' 'System.Collections.Generic.List`1<Heightmap>'
     Require-Field ($game.GetType('Heightmap')) 'm_buildData' 'HeightmapBuilder/HMBuildData'
@@ -63,6 +70,7 @@ try {
     Require-Method ($game.GetType('Terminal/ConsoleCommand')) '.ctor' 'System.String,System.String,Terminal/ConsoleEvent,System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Boolean,Terminal/ConsoleOptionsFetcher,System.Boolean,System.Boolean,System.Boolean' 'System.Void'
     # Every native Harmony target in the plugin, including non-public methods.
     Require-Method $zdo 'SendDestroyed' '' 'System.Void'
+    Require-Method $zdo 'GetSaveClonePerChunk' '' 'System.Collections.Generic.List`1<System.Tuple`2<ZoneSystem/ChunkIndex,System.Collections.Generic.List`1<ZDO>>>'
     Require-Method ($game.GetType('ZNet')) 'InternalCommand' 'ZRpc,System.String' 'System.Void'
     Require-Method ($game.GetType('ZNet')) 'Shutdown' 'System.Boolean' 'System.Void'
     Require-Method ($game.GetType('ZNet')) 'ShutdownWithoutSave' 'System.Boolean' 'System.Void'
