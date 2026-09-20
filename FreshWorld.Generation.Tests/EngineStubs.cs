@@ -37,7 +37,7 @@ public sealed class ZNetView
 }
 public sealed class WearNTear
 {
-    private static bool m_randomInitialDamage;
+    public static bool m_randomInitialDamage;
     public static bool RandomDamage { get => m_randomInitialDamage; set => m_randomInitialDamage = value; }
 }
 public sealed class ZNetScene

@@ -30,8 +30,6 @@ internal static class NativePlacement
         AccessTools.FieldRefAccess<ZoneSystem, List<GameObject>>("m_tempSpawnedObjects");
     private static readonly FieldInfo GhostInit = AccessTools.Field(typeof(ZNetView), "m_ghostInit")
         ?? throw new MissingFieldException("ZNetView.m_ghostInit");
-    private static readonly FieldInfo RandomInitialDamage = AccessTools.Field(typeof(WearNTear), "m_randomInitialDamage")
-        ?? throw new MissingFieldException("WearNTear.m_randomInitialDamage");
     private static readonly FieldInfo CachedPrefabName = AccessTools.Field(
         AccessTools.Field(typeof(ZoneSystem.ZoneLocation), "m_prefab").FieldType, "m_name")
         ?? throw new MissingFieldException("SoftReference.m_name");
@@ -66,7 +64,7 @@ internal static class NativePlacement
     {
         var random = UnityEngine.Random.state;
         var ghost = (bool)GhostInit.GetValue(null)!;
-        var randomDamage = (bool)RandomInitialDamage.GetValue(null)!;
+        var randomDamage = WearNTear.m_randomInitialDamage;
         try { placement(); }
         catch (TargetInvocationException error) when (error.InnerException != null)
         {
@@ -77,7 +75,7 @@ internal static class NativePlacement
         {
             UnityEngine.Random.state = random;
             GhostInit.SetValue(null, ghost);
-            RandomInitialDamage.SetValue(null, randomDamage);
+            WearNTear.m_randomInitialDamage = randomDamage;
         }
     }
 
