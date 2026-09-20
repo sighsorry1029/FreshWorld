@@ -17,7 +17,7 @@ var tests = new (string Name, Action Body)[]
     ("a ready player arriving nearby during a vegetation load retry skips mutation and releases the load", PlayerArrivalDuringVegetationLoad),
     ("a ready player arriving nearby during a location load retry skips mutation and releases the load", PlayerArrivalDuringLocationLoad),
     ("a base-filtered resource stage still records players for the later location stage", BaseFilteredStageSnapshot),
-    ("skipped targets are neither completed, changed nor failed in every tracking wrapper", SkippedOperationResults),
+    ("skipped targets remain unchanged and finish without failures in every tracking wrapper", SkippedOperationResults),
     ("each supplemental operation is created after the prior phase completes", SequentialStages),
     ("location safe zone zero bypasses protection independently of zone and resource settings", LocationProtection),
     ("maintenance always saves before restoration and never requests another save after", SaveBeforeOnly),
@@ -286,9 +286,7 @@ static void SkippedOperationResults()
         Sequence([true], completed);
         Sequence([new Vector2s(0, 0)], operation.Result.SelectedZones);
         Sequence([new Vector2s(0, 0)], operation.Result.SkippedZones);
-        Equal(0, operation.Result.CompletedZones.Count);
         Equal(0, operation.Result.ChangedZones.Count);
-        Equal(0, operation.Result.FailedZones.Count);
         Equal(0, operation.Result.FailedCount);
         True(operation.Result.Finished);
     }
@@ -661,7 +659,7 @@ static void CancelZones()
 static void CleanupAll()
 {
     Fake.AddZone(0); Fake.AddZone(1);
-    var tracker = new OperationTracker(null, null, 64, 8);
+    var tracker = new OperationTracker(null, 64, 8);
     foreach (var zone in ZoneSystem.instance.m_generatedZones)
     {
         tracker.MayLoad(zone);
@@ -698,6 +696,7 @@ static void CleanupRefresh()
 static void CandidateRestriction()
 {
     Fake.AddZone(0); Fake.AddZone(1); Fake.AddZone(2, marker: true);
+    using var lease = MaintenanceGate.Acquire();
     var candidates = new HashSet<Vector2s>([new(1, 0), new(2, 0), new(3, 0)]);
     var operation = new TrackedResetZones(_ => { }, Parameters(1), candidates);
     // Planning owns its constructor-time snapshot, even if streaming or the caller changes before Init.
@@ -705,8 +704,14 @@ static void CandidateRestriction()
     candidates.Clear();
     candidates.Add(new(0, 0));
     operation.Init();
-    Equal(2, operation.Result.CandidateZones.Count);
     Sequence([new Vector2s(1, 0)], operation.Result.SelectedZones);
+    var completed = new List<bool>();
+    using var runner = new GuardedCoroutine(operation.Execute(), () => true, Fake.UnexpectedErrors.Add, completed.Add);
+    Drain(runner);
+    operation.Cleanup();
+    Sequence([true], completed);
+    Sequence(["zones.change:1"], Fake.Calls.Where(call => call.StartsWith("zones.change:")));
+    True(ZoneSystem.instance.m_generatedZones.SetEquals([new(0, 0), new(2, 0), new(3, 0)]));
 }
 
 static void SaveFailure()
