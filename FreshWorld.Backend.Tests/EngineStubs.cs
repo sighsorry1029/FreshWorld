@@ -191,7 +191,7 @@ namespace FreshWorld.Configuration
     {
         public bool ZonesEnabled { get; set; } = true;
         public int ZoneSafeZones { get; set; } = 1;
-        public string[] ProtectedPlayerObjects { get; set; } = [];
+        public string[] PieceBlacklist { get; set; } = [];
         public string[] ProtectedObjects { get; set; } = [];
         public bool VegetationEnabled { get; set; } = true;
         public string[] TerrainVegetationIds { get; set; } = ["copper"];

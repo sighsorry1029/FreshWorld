@@ -45,7 +45,7 @@ internal sealed class MaintenancePipeline
         try
         {
             yield return WaitUntilUnpaused();
-            BaseProtection.Configure(_options.ProtectedPlayerObjects, _options.ProtectedObjects);
+            BaseProtection.Configure(_options.PieceBlacklist, _options.ProtectedObjects);
             yield return SaveWorld("before maintenance");
 
             RequireWorld();

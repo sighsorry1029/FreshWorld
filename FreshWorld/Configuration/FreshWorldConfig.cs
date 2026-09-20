@@ -25,8 +25,8 @@ namespace FreshWorld.Configuration
     {
         public bool ZonesEnabled { get; }
         public int ZoneSafeZones { get; }
-        private readonly string[] protectedPlayerObjects;
-        public string[] ProtectedPlayerObjects => (string[])protectedPlayerObjects.Clone();
+        private readonly string[] pieceBlacklist;
+        public string[] PieceBlacklist => (string[])pieceBlacklist.Clone();
         private readonly string[] protectedObjects;
         public string[] ProtectedObjects => (string[])protectedObjects.Clone();
         public bool VegetationEnabled { get; }
@@ -45,12 +45,12 @@ namespace FreshWorld.Configuration
         public float SaveTimeoutSeconds => 180;
 
         internal RunOptions(bool zonesEnabled, int zoneSafeZones,
-            string[] protectedPlayerObjects, string[] protectedObjects,
+            string[] pieceBlacklist, string[] protectedObjects,
             bool vegetationEnabled, string[] vegetationIds, string[] terrainVegetationIds, float vegetationTerrainRadius,
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones)
         {
             ZonesEnabled = zonesEnabled; ZoneSafeZones = zoneSafeZones;
-            this.protectedPlayerObjects = (string[])protectedPlayerObjects.Clone();
+            this.pieceBlacklist = (string[])pieceBlacklist.Clone();
             this.protectedObjects = (string[])protectedObjects.Clone();
             VegetationEnabled = vegetationEnabled; this.vegetationIds = (string[])vegetationIds.Clone();
             this.terrainVegetationIds = (string[])terrainVegetationIds.Clone();
@@ -62,8 +62,7 @@ namespace FreshWorld.Configuration
 
     public sealed class FreshWorldConfig
     {
-        // Initial marker defaults from Upgrade World 1.80 (Unlicense). Config is owned by FreshWorld.
-        public const string DefaultProtectedPlayerObjects = "blastfurnace,bonfire,charcoal_kiln,fermenter,fire_pit,forge,guard_stone,hearth,piece_artisanstation,piece_bed02,piece_beehive,piece_brazierceiling01,piece_groundtorch,piece_groundtorch_blue,piece_groundtorch_green,piece_groundtorch_wood,piece_oven,piece_spinningwheel,piece_stonecutter,piece_walltorch,piece_workbench,portal,portal_wood,smelter,windmill,piece_chest,piece_chest_blackmetal,piece_chest_private,piece_chest_treasure,piece_chest_wood,Raft,Karve,VikingShip,VikingShip_Ashlands,Cart";
+        public const string DefaultPieceBlacklist = "fire_pit";
         public const string DefaultLocations = "Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress";
         private static readonly Regex ExactId = new Regex(@"^[A-Za-z0-9_]+(?::[A-Za-z0-9_]+)*$", RegexOptions.CultureInvariant);
         // Preserve raw scalar text: BepInEx's bool/enum deserializers can silently retain/default invalid input.
@@ -71,7 +70,7 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<string> enabled, zonesEnabled, vegetationEnabled, locationsEnabled;
         private readonly ConfigEntry<string> dailyTimes, gameDayInterval, vegetationIds, terrainVegetationIds, locationIds;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
-        private readonly ConfigEntry<string> playerPlacedObjects, terrainRadius;
+        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
 
         public FreshWorldConfig(ConfigFile config)
@@ -123,8 +122,8 @@ namespace FreshWorld.Configuration
             locationSafeZones = Bind("Protection", "LocationSafeZones", new ConfigChoice<SafeZoneRange>("0"),
                 "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 bypasses base protection and can delete player pieces inside locations. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 200, choices: ConfigPresentation.SafeZoneChoices);
-            playerPlacedObjects = Bind("Protection", "PlayerPlacedObjects", DefaultProtectedPlayerObjects,
-                "Complete editable list of exact prefab IDs used as base markers when placed by a player (creator != 0); empty disables these markers. Player_tombstone remains a separate marker without the creator requirement. All markers require the stage's SafeZones > 0; unmarked structures are not automatically protected.",
+            pieceBlacklist = Bind("Protection", "PieceBlacklist", DefaultPieceBlacklist,
+                "Comma-separated exact prefab IDs excluded from automatic base markers. Other Pieces with creator != 0 protect their zones when the stage's SafeZones > 0. Default fire_pit prevents lone campfires from protecting zones. Empty excludes no Pieces. Excluded Pieces can still share protection from other markers. Player_tombstone remains a separate marker unaffected by this list.",
                 100);
 
             ConfigEntry<T> Bind<T>(string section, string key, T value, string description, int order,
@@ -136,61 +135,65 @@ namespace FreshWorld.Configuration
                 }));
         }
 
-        public RuntimeSettings Capture()
+        public RuntimeSettings Capture() => Capture(null);
+
+        // Validate a remote edit against the complete host policy without changing live entries.
+        internal RuntimeSettings Capture(IReadOnlyDictionary<ConfigEntryBase, object>? edits)
         {
-            var automaticEnabled = ReadBool(enabled, "General.Enabled");
-            var scheduleMode = ParseEnum<ScheduleMode>(mode.Value.Raw, "General.Mode");
+            T Value<T>(ConfigEntry<T> entry) => edits != null && edits.TryGetValue(entry, out var value) ? (T)value : entry.Value;
+            var automaticEnabled = ReadBool(Value(enabled), "General.Enabled");
+            var scheduleMode = ParseEnum<ScheduleMode>(Value(mode).Raw, "General.Mode");
             ScheduleSettings schedule;
             try
             {
                 // Only the active schedule's inputs are interpreted. An unused text field cannot
                 // disable manual work or reset the current schedule's persisted baseline.
-                schedule = new ScheduleSettings(scheduleMode, dailyTimes.Value, "Local",
-                    automaticEnabled && scheduleMode == ScheduleMode.GameDays ? ReadDouble(gameDayInterval, "General.GameDayInterval") : 24,
+                schedule = new ScheduleSettings(scheduleMode, Value(dailyTimes), "Local",
+                    automaticEnabled && scheduleMode == ScheduleMode.GameDays ? ReadDouble(Value(gameDayInterval), "General.GameDayInterval") : 24,
                     "*", false, automaticEnabled);
             }
             catch (Exception ex) when (ex is ArgumentException || ex is TimeZoneNotFoundException || ex is InvalidTimeZoneException)
             { throw new ArgumentException("Invalid [General] schedule: " + ex.Message, ex); }
 
-            var zoneProtection = ReadSafeZoneRange(zoneSafeZones, "Protection.ZoneSafeZones");
-            var vegetationProtection = ReadSafeZoneRange(vegetationSafeZones, "Protection.ResourceSafeZones");
-            var locationProtection = ReadSafeZoneRange(locationSafeZones, "Protection.LocationSafeZones");
-            var terrain = ReadFloat(terrainRadius, "Reset.ResourceTerrainRadius");
+            var zoneProtection = ReadSafeZoneRange(Value(zoneSafeZones), "Protection.ZoneSafeZones");
+            var vegetationProtection = ReadSafeZoneRange(Value(vegetationSafeZones), "Protection.ResourceSafeZones");
+            var locationProtection = ReadSafeZoneRange(Value(locationSafeZones), "Protection.LocationSafeZones");
+            var terrain = ReadFloat(Value(terrainRadius), "Reset.ResourceTerrainRadius");
             Finite(terrain, "Reset.ResourceTerrainRadius", true);
-            var terrainVegetation = OptionalIds(terrainVegetationIds.Value, "Reset.TerrainResourceIds");
+            var terrainVegetation = OptionalIds(Value(terrainVegetationIds), "Reset.TerrainResourceIds");
             var terrainIds = new HashSet<string>(terrainVegetation, StringComparer.Ordinal);
-            var vegetation = OptionalIds(vegetationIds.Value, "Reset.ResourceIds")
+            var vegetation = OptionalIds(Value(vegetationIds), "Reset.ResourceIds")
                 .Where(id => !terrainIds.Contains(id)).ToArray();
-            var locations = ParseIds(locationIds.Value, "Reset.LocationIds");
-            var markers = OptionalIds(playerPlacedObjects.Value, "Protection.PlayerPlacedObjects");
-            var options = new RunOptions(ReadBool(zonesEnabled, "Reset.Zones"),
-                zoneProtection, markers, new[] { "Player_tombstone" },
-                ReadBool(vegetationEnabled, "Reset.Resources"), vegetation, terrainVegetation, terrain, vegetationProtection,
-                ReadBool(locationsEnabled, "Reset.Locations"), locations, locationProtection);
+            var locations = ParseIds(Value(locationIds), "Reset.LocationIds");
+            var blacklist = OptionalIds(Value(pieceBlacklist), "Protection.PieceBlacklist");
+            var options = new RunOptions(ReadBool(Value(zonesEnabled), "Reset.Zones"),
+                zoneProtection, blacklist, new[] { "Player_tombstone" },
+                ReadBool(Value(vegetationEnabled), "Reset.Resources"), vegetation, terrainVegetation, terrain, vegetationProtection,
+                ReadBool(Value(locationsEnabled), "Reset.Locations"), locations, locationProtection);
             return new RuntimeSettings(schedule, options);
         }
-        private static bool ReadBool(ConfigEntry<string> entry, string key)
+        private static bool ReadBool(string text, string key)
         {
-            if (!bool.TryParse(entry.Value, out var value)) throw new ArgumentException(key + " must be true or false.");
+            if (!bool.TryParse(text, out var value)) throw new ArgumentException(key + " must be true or false.");
             return value;
         }
-        private static int ReadSafeZoneRange(ConfigEntry<ConfigChoice<SafeZoneRange>> entry, string key)
+        private static int ReadSafeZoneRange(ConfigChoice<SafeZoneRange> entry, string key)
         {
-            if (!int.TryParse(entry.Value.Raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+            if (!int.TryParse(entry.Raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
                 throw new ArgumentException(key + " must be an integer.");
             if (!Enum.IsDefined(typeof(SafeZoneRange), value))
                 throw new ArgumentException(key + " must be 0 (No protection), 1 (Marker zone), or 2 (3x3 zones).");
             return value;
         }
-        private static float ReadFloat(ConfigEntry<string> entry, string key)
+        private static float ReadFloat(string text, string key)
         {
-            if (!float.TryParse(entry.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
                 throw new ArgumentException(key + " must be a number using '.' as the decimal separator.");
             return value;
         }
-        private static double ReadDouble(ConfigEntry<string> entry, string key)
+        private static double ReadDouble(string text, string key)
         {
-            if (!double.TryParse(entry.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
                 throw new ArgumentException(key + " must be a number using '.' as the decimal separator.");
             return value;
         }

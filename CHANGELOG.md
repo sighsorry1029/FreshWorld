@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.7
+
+- Fixed a startup error caused by Harmony treating ordinary cleanup methods as patch hooks.
+- Embedded ServerSync so administrators can apply Configuration Manager edits to the server while keeping ordinary clients optional.
+- Protected player-built Pieces automatically and replaced `PlayerPlacedObjects` with `PieceBlacklist`, defaulting to `fire_pit`. Existing whitelist entries are not converted.
+- Kept tombstones as built-in protection markers, independent of the Piece blacklist.
+- Simplified internal reset tracking without changing restoration order or stage protection settings.
+
 ## 1.0.6
 
 - Ensured completely cleared chunks replace their old chunk files during normal saves, preventing deleted world objects from returning and stacking after a reload.

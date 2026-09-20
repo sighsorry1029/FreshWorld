@@ -24,7 +24,7 @@ internal static class ConfigRegressions
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.ResourceTerrainRadius",
-                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PlayerPlacedObjects" };
+                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist" };
             Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the fifteen-key design");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
@@ -34,8 +34,8 @@ internal static class ConfigRegressions
                 !snapshot.Options.LocationIds.Intersect(new[] { "Mistlands_Giant1:dark", "FortressRuins", "AshlandRuins" }).Any(), "reset target defaults");
             Assert(snapshot.Options.ZonesEnabled && snapshot.Options.VegetationEnabled && !snapshot.Options.LocationsEnabled, "stage defaults");
             Assert(snapshot.Options.ZoneSafeZones == 1 && snapshot.Options.VegetationSafeZones == 0 && snapshot.Options.LocationSafeZones == 0, "independent protection defaults");
-            Assert(snapshot.Options.ProtectedPlayerObjects.SequenceEqual(FreshWorldConfig.DefaultProtectedPlayerObjects.Split(',')),
-                "visible player marker defaults differ from the full default list");
+            Assert(snapshot.Options.PieceBlacklist.SequenceEqual(new[] { "fire_pit" }),
+                "only campfires should be excluded from automatic Piece markers by default");
             Assert(snapshot.Options.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }), "fixed tombstone marker changed");
             Assert(snapshot.Options.VegetationTerrainRadius == 20 && !snapshot.Schedule.RunMissedOnWorldStart, "terrain and missed-run policy");
             Assert(file.SaveCount == 0, "Capture must not mutate/save config");
@@ -47,37 +47,38 @@ internal static class ConfigRegressions
                 ("General", "StartupDelaySeconds", "NaN"), ("Performance", "MaxZonesPerFrame", "0"),
                 ("Performance", "FrameBudgetMilliseconds", "Infinity"), ("Performance", "SaveTimeoutSeconds", "invalid"),
                 ("General", "RunNow", "true"), ("General", "CheckIntervalSeconds", "10"), ("Locations", "Force", "true"),
-                ("Protection", "AdditionalPlayerPlacedObjects", "obsolete_marker") };
+                ("Protection", "AdditionalPlayerPlacedObjects", "obsolete_marker"),
+                ("Protection", "PlayerPlacedObjects", "piece_workbench,woodwall") };
             foreach (var item in removed) file.SeedUnbound(item.Item1, item.Item2, item.Item3);
             file.SeedUnbound("Protection", "LocationSafeZones", "1");
             var snapshot = new FreshWorldConfig(file).Capture();
             Assert(snapshot.StartupDelaySeconds == 30 && snapshot.Options.MaxZonesPerFrame == 64 &&
                 snapshot.Options.FrameBudgetMilliseconds == 8 && snapshot.Options.SaveTimeoutSeconds == 180, "internal values changed");
             Assert(snapshot.Options.LocationSafeZones == 1, "removed Force must not translate or override new protection");
-            Assert(snapshot.Options.ProtectedPlayerObjects.SequenceEqual(FreshWorldConfig.DefaultProtectedPlayerObjects.Split(',')),
-                "removed AdditionalPlayerPlacedObjects was migrated or aliased into the new full list");
+            Assert(snapshot.Options.PieceBlacklist.SequenceEqual(new[] { "fire_pit" }),
+                "removed marker lists must not become exclusions");
             Assert(removed.All(x => !file.IsBound(x.Item1, x.Item2)), "removed option was rebound");
         });
         Check("snapshots remain immutable across caller edits and new captures", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file);
             file.Set("Reset", "ResourceIds", "Beech1,Birch1");
-            file.Set("Protection", "PlayerPlacedObjects", "piece_workbench,custom_marker"); var first = cfg.Capture();
+            file.Set("Protection", "PieceBlacklist", "piece_workbench,custom_marker"); var first = cfg.Capture();
             first.Options.VegetationIds[0] = "changed";
             first.Options.TerrainVegetationIds[0] = "changed";
             first.Options.LocationIds[0] = "changed";
-            first.Options.ProtectedPlayerObjects[0] = "changed";
+            first.Options.PieceBlacklist[0] = "changed";
             first.Options.ProtectedObjects[0] = "changed";
             file.Set("Reset", "ResourceIds", "Beech1"); file.Set("Reset", "TerrainResourceIds", "silvervein");
-            file.Set("Protection", "PlayerPlacedObjects", "portal_wood");
+            file.Set("Protection", "PieceBlacklist", "portal_wood");
             var second = cfg.Capture();
             Assert(first.Options.VegetationIds[0] == "Beech1" && first.Options.VegetationIds.Length == 2, "old resource snapshot changed");
             Assert(first.Options.TerrainVegetationIds[0] == "rock4_copper" && first.Options.TerrainVegetationIds.Length == 2 &&
                 second.Options.TerrainVegetationIds.SequenceEqual(new[] { "silvervein" }), "terrain resource snapshots changed or failed to reload");
             Assert(first.Options.LocationIds[0] == "Hildir_crypt" && first.Options.ProtectedObjects[0] == "Player_tombstone", "other snapshot arrays changed");
-            Assert(first.Options.ProtectedPlayerObjects.SequenceEqual(new[] { "piece_workbench", "custom_marker" }) &&
-                second.Options.ProtectedPlayerObjects.SequenceEqual(new[] { "portal_wood" }) && second.Options.VegetationIds.Length == 1,
-                "player marker snapshot changed or full-list replacement failed");
+            Assert(first.Options.PieceBlacklist.SequenceEqual(new[] { "piece_workbench", "custom_marker" }) &&
+                second.Options.PieceBlacklist.SequenceEqual(new[] { "portal_wood" }) && second.Options.VegetationIds.Length == 1,
+                "blacklist snapshot changed or list replacement failed");
         });
         Check("either resource group or both may be empty without expanding targets", () =>
         {
@@ -107,22 +108,22 @@ internal static class ConfigRegressions
             Assert(cfg.Capture().Options.VegetationIds.SequenceEqual(new[] { "Beech1", "silvervein", "rock4_copper" }), "Capture mutated source list while resolving overlap");
             Assert(file.SaveCount == 0, "overlap capture must not save/rewrite config");
         });
-        Check("full player marker list supports additions removals and empty lists without a built-in union", () =>
+        Check("blacklist preserves edits and empty values without restoring default exclusions", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file);
-            file.Set("Protection", "PlayerPlacedObjects", FreshWorldConfig.DefaultProtectedPlayerObjects + ",custom_marker");
+            file.Set("Protection", "PieceBlacklist", FreshWorldConfig.DefaultPieceBlacklist + ",custom_marker");
             var snapshot = cfg.Capture();
-            Assert(snapshot.Options.ProtectedPlayerObjects.SequenceEqual(FreshWorldConfig.DefaultProtectedPlayerObjects.Split(',').Concat(new[] { "custom_marker" })),
-                "editing the full list failed to retain explicitly listed defaults and append a custom marker");
+            Assert(snapshot.Options.PieceBlacklist.SequenceEqual(FreshWorldConfig.DefaultPieceBlacklist.Split(',').Concat(new[] { "custom_marker" })),
+                "editing the blacklist failed to retain the selected exclusions");
             Assert(snapshot.Options.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }), "unconditional marker default changed");
-            file.Set("Protection", "PlayerPlacedObjects", "custom_marker");
-            Assert(cfg.Capture().Options.ProtectedPlayerObjects.SequenceEqual(new[] { "custom_marker" }), "removed default markers were added back implicitly");
+            file.Set("Protection", "PieceBlacklist", "custom_marker");
+            Assert(cfg.Capture().Options.PieceBlacklist.SequenceEqual(new[] { "custom_marker" }), "removed default exclusions were added back implicitly");
             foreach (var empty in new[] { "", "  " })
             {
-                file.Set("Protection", "PlayerPlacedObjects", empty);
+                file.Set("Protection", "PieceBlacklist", empty);
                 var options = cfg.Capture().Options;
-                Assert(options.ProtectedPlayerObjects.Length == 0, "empty full marker list restored defaults");
-                Assert(options.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }), "empty player marker list removed fixed tombstone protection");
+                Assert(options.PieceBlacklist.Length == 0, "empty blacklist restored defaults");
+                Assert(options.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }), "empty blacklist removed fixed tombstone protection");
             }
         });
         Check("three protection ranges are independent and zero disables only selected protection", () =>
@@ -150,7 +151,7 @@ internal static class ConfigRegressions
         });
         Check("wildcards commands empty entries duplicates and invalid enum names rejected", () =>
         {
-            foreach (var key in new[] { ("Reset", "ResourceIds"), ("Reset", "TerrainResourceIds"), ("Reset", "LocationIds"), ("Protection", "PlayerPlacedObjects") })
+            foreach (var key in new[] { ("Reset", "ResourceIds"), ("Reset", "TerrainResourceIds"), ("Reset", "LocationIds"), ("Protection", "PieceBlacklist") })
             foreach (var value in new[] { "*", "rock4_*", "rock4_copper start", "rock4_copper;save", "rock4_copper,", "silvervein,silvervein" })
             {
                 var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); file.Set(key.Item1, key.Item2, value);

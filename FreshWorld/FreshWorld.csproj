@@ -11,6 +11,7 @@
     <!-- Version and author metadata come from the plugin constants in Properties/AssemblyInfo.cs. -->
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateDependencyFile>false</GenerateDependencyFile>
+    <ILRepackTargetsFile>$(MSBuildProjectDirectory)/ILRepack.targets</ILRepackTargetsFile>
     <PackagePowerShell Condition="'$(PackagePowerShell)' == ''">pwsh</PackagePowerShell>
     <GameDir Condition="'$(GameDir)' == '' and '$(ValheimDedicatedDir)' != ''">$(ValheimDedicatedDir)</GameDir>
     <GameDir Condition="'$(GameDir)' == '' and '$(OS)' == 'Windows_NT'">C:/Program Files (x86)/Steam/steamapps/common/Valheim</GameDir>
@@ -22,6 +23,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.44.1" PrivateAssets="all" />
+    <Reference Include="ServerSync" HintPath="Libs/ServerSync.dll" Private="false" />
     <!-- Compile the reusable core into the plugin so users install one FreshWorld DLL. -->
     <Compile Include="../FreshWorld.Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <!-- The host provides these assemblies and resolves their own transitive runtime dependencies.
@@ -46,13 +49,13 @@
            Text="Install BepInExPack Valheim in GameDir, or set BepInExDir to its core directory." />
   </Target>
 
-  <Target Name="DeployDebugToGame" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' and '$(DeployToGame)' == 'true' and '$(DesignTimeBuild)' != 'true'">
+  <Target Name="DeployDebugToGame" AfterTargets="MergeServerSync" Condition="'$(Configuration)' == 'Debug' and '$(DeployToGame)' == 'true' and '$(DesignTimeBuild)' != 'true'">
     <MakeDir Directories="$(GameDir)/BepInEx/plugins" />
     <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(GameDir)/BepInEx/plugins/$(TargetFileName)" />
     <Message Importance="high" Text="Deployed $(TargetFileName) to $(GameDir)/BepInEx/plugins." />
   </Target>
 
-  <Target Name="PackageRelease" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
+  <Target Name="PackageRelease" AfterTargets="MergeServerSync" Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
     <Exec Command="&quot;$(PackagePowerShell)&quot; -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)/../tools/package.ps1&quot; -SkipBuild -PluginPath &quot;$(TargetPath)&quot;" />
   </Target>
 </Project>

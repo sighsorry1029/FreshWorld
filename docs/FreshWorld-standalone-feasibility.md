@@ -1,5 +1,7 @@
 # FreshWorld standalone engine and commands
 
+> Historical design record. Current protection automatically detects player-built Pieces, with `PieceBlacklist = fire_pit` replacing `PlayerPlacedObjects`. Tombstones remain separate markers. ServerSync is now embedded for optional administrator configuration. See the [README](../README.md) for current installation and configuration.
+
 Updated on 2026-09-06 for FreshWorld 0.6.4. This document explains the standalone engine introduced in 0.2.0, the commands introduced in 0.3.0, and the current operating rules. For installation and configuration, use the [README](../README.md) and [cfg example](../config/FreshWorld.example.cfg).
 
 ## Current design

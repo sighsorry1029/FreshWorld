@@ -25,5 +25,8 @@ foreach ($testProject in @('FreshWorld.Core.Tests/FreshWorld.Core.Tests.csproj',
     if ($LASTEXITCODE -ne 0) { throw "$testProject failed with exit code $LASTEXITCODE." }
 }
 
+& dotnet run --project (Join-Path $workspaceRoot 'FreshWorld.Sync.Tests') -c $Configuration --no-build -- (Join-Path $workspaceRoot "FreshWorld/bin/$Configuration/netstandard2.1/FreshWorld.dll")
+if ($LASTEXITCODE -ne 0) { throw "Merged-DLL config sync tests failed with exit code $LASTEXITCODE." }
+
 Write-Host "Build and all test harnesses passed. Plugin: FreshWorld/bin/$Configuration/netstandard2.1/FreshWorld.dll"
 

@@ -1,0 +1,12 @@
+<Project>
+  <Target Name="MergeServerSync" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <!-- Always start from the compiler output, never an already merged TargetPath. -->
+      <FreshWorldMergeInput Include="$(IntermediateOutputPath)$(TargetFileName)" />
+      <FreshWorldMergeInput Include="$(MSBuildProjectDirectory)/Libs/ServerSync.dll" />
+      <FreshWorldMergeSearch Include="$(ManagedDir);$(BepInExDir);$(MSBuildProjectDirectory)/Libs" />
+    </ItemGroup>
+    <ILRepack InputAssemblies="@(FreshWorldMergeInput)" OutputFile="$(TargetPath)"
+              LibraryPath="@(FreshWorldMergeSearch)" Internalize="true" DebugInfo="$(DebugSymbols)" TargetKind="Dll" />
+  </Target>
+</Project>

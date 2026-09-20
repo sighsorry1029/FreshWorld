@@ -15,7 +15,7 @@ internal static class ConfigBindingRegression
         "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
         "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds",
         "Reset.LocationIds", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
-        "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PlayerPlacedObjects"
+        "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist"
     };
 
     internal static int Run()
@@ -72,7 +72,7 @@ internal static class ConfigBindingRegression
         Require(settings.Options.VegetationIds.SequenceEqual(new[] { "Beech1", "Birch1" }) &&
             settings.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper" }) &&
             settings.Options.LocationIds.SequenceEqual(new[] { "Hildir_cave" }) &&
-            settings.Options.ProtectedPlayerObjects.SequenceEqual(new[] { "piece_beehive", "piece_workbench" }),
+            settings.Options.PieceBlacklist.SequenceEqual(new[] { "piece_beehive", "piece_workbench" }),
             "The existing exact-ID lists were changed.");
         fixture.File.Save();
         AssertSavedValues(fixture.Path, values);
@@ -95,7 +95,7 @@ internal static class ConfigBindingRegression
         values["Protection.ZoneSafeZones"] = "2";
         values["Protection.ResourceSafeZones"] = "0";
         values["Protection.LocationSafeZones"] = "1";
-        values["Protection.PlayerPlacedObjects"] = "";
+        values["Protection.PieceBlacklist"] = "";
         fixture.Reload(values);
         AssertRawValues(fixture.File, values);
         var after = fixture.Settings.Capture();
@@ -104,10 +104,10 @@ internal static class ConfigBindingRegression
             "Reload did not apply the file's daily schedule.");
         Require(after.Options.ZonesEnabled && !after.Options.VegetationEnabled && !after.Options.LocationsEnabled &&
             after.Options.ZoneSafeZones == 2 && after.Options.VegetationSafeZones == 0 && after.Options.LocationSafeZones == 1 &&
-            after.Options.VegetationTerrainRadius == 0 && after.Options.ProtectedPlayerObjects.Length == 0,
+            after.Options.VegetationTerrainRadius == 0 && after.Options.PieceBlacklist.Length == 0,
             "Reload clamped, defaulted, or retained earlier values.");
         Require(before.Schedule.Mode == ScheduleMode.GameDays && before.Options.LocationSafeZones == 2 &&
-            before.Options.ProtectedPlayerObjects.Length == 2, "Reload mutated the already captured snapshot.");
+            before.Options.PieceBlacklist.Length == 2, "Reload mutated the already captured snapshot.");
         fixture.File.Save();
         AssertSavedValues(fixture.Path, values);
     }
@@ -292,7 +292,7 @@ internal static class ConfigBindingRegression
         ["Protection.ZoneSafeZones"] = "0",
         ["Protection.ResourceSafeZones"] = "1",
         ["Protection.LocationSafeZones"] = "2",
-        ["Protection.PlayerPlacedObjects"] = "piece_beehive,piece_workbench"
+        ["Protection.PieceBlacklist"] = "piece_beehive,piece_workbench"
     };
 
     private static void Require(bool condition, string message)

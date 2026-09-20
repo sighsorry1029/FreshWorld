@@ -92,6 +92,14 @@ public class ZNetScene
 {
     public static ZNetScene instance = new();
     private readonly Dictionary<ZDO, ZNetView> m_instances = new();
+    private readonly Dictionary<int, GameObject> prefabs = new();
+    public readonly Dictionary<int, int> PrefabQueries = new();
+    public void RegisterPrefab(string name, GameObject prefab) => prefabs[name.GetStableHashCode()] = prefab;
+    public GameObject? GetPrefab(int hash)
+    {
+        PrefabQueries[hash] = PrefabQueries.GetValueOrDefault(hash) + 1;
+        return prefabs.GetValueOrDefault(hash);
+    }
     public int DestroyCalls;
     public void Add(ZDO zdo, ZNetView view) => m_instances[zdo] = view;
     public bool Has(ZDO zdo) => m_instances.ContainsKey(zdo);
@@ -104,6 +112,7 @@ public class ZNetScene
         m_instances.Remove(entry.Key);
     }
 }
+public class Piece : UnityEngine.Object { }
 public class Player
 {
     public static Player? m_localPlayer;
@@ -254,7 +263,17 @@ namespace UnityEngine
         }
         public static void ResetDestroyCallbacks() => DeferredDestroyCallbacks.Clear();
     }
-    public class GameObject : Object { }
+    public class GameObject : Object
+    {
+        private readonly Dictionary<Type, object> components = new();
+        public int ComponentQueries;
+        public void AddComponent<T>(T component) where T : class => components[typeof(T)] = component;
+        public T? GetComponent<T>() where T : class
+        {
+            ComponentQueries++;
+            return components.GetValueOrDefault(typeof(T)) as T;
+        }
+    }
     public class Transform { public Vector3 position; }
 }
 namespace HarmonyLib

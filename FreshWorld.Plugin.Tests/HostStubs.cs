@@ -78,7 +78,8 @@ namespace HarmonyLib
     public sealed class Harmony(string id)
     {
         public string Id { get; } = id;
-        public void PatchAll(System.Reflection.Assembly assembly) { }
+        public List<Type> PatchedTypes { get; } = new();
+        public void PatchAll(Type type) => PatchedTypes.Add(type);
         public void UnpatchSelf() { }
     }
     [AttributeUsage(AttributeTargets.Class)]
@@ -89,6 +90,13 @@ namespace HarmonyLib
         public Type[] ArgumentTypes { get; } = argumentTypes;
     }
     [AttributeUsage(AttributeTargets.Method)] public sealed class HarmonyPrefix : Attribute { }
+}
+
+namespace ServerSync
+{
+    // Embedded libraries register their own patches; plugin discovery must leave them alone.
+    [HarmonyLib.HarmonyPatch(typeof(ZNet), nameof(ZNet.Shutdown), typeof(bool))]
+    internal static class EmbeddedPatchFixture { }
 }
 
 namespace UnityEngine

@@ -1,5 +1,7 @@
 # Downloaded dependencies and local build outputs
 lib/
+!FreshWorld/Libs/
+!FreshWorld/Libs/ServerSync.dll
 **/bin/
 **/obj/
 dist/

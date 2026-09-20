@@ -39,7 +39,7 @@ internal static class ConfigPresentationRegressions
         {
             ("General", new[] { "Enabled", "Mode", "GameDayInterval", "DailyTimes" }, 300),
             ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds" }, 200),
-            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "PlayerPlacedObjects" }, 100)
+            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "PieceBlacklist" }, 100)
         };
         foreach (var (section, keys, categoryOrder) in expected)
         {

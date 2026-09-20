@@ -19,7 +19,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.0.6";
+        public const string ModVersion = "1.0.7";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -28,10 +28,12 @@ namespace FreshWorld
         internal static FreshWorldPlugin? Instance;
 
         private FreshWorldConfig configuration = null!;
+        private ConfigSynchronization? configSync;
         private RuntimeSettings? settings;
         private Harmony? harmony;
         private FileSystemWatcher? watcher;
         private int reloadRequested;
+        private int configValuesChanged;
         private bool supported;
         private bool sessionFaulted;
         private ZNet? host;
@@ -64,7 +66,14 @@ namespace FreshWorld
             {
                 configuration = new FreshWorldConfig(Config);
                 harmony = new Harmony(PluginGuid);
-                harmony.PatchAll(typeof(FreshWorldPlugin).Assembly);
+                // The embedded ServerSync library installs its own patches. Do not patch it twice.
+                // Unannotated helpers can have ordinary Prepare/Cleanup methods that Harmony treats as hooks.
+                foreach (var type in typeof(FreshWorldPlugin).Assembly.GetTypes().Where(type =>
+                    (type.Namespace == "FreshWorld" || type.Namespace?.StartsWith("FreshWorld.", StringComparison.Ordinal) == true) &&
+                    type.IsDefined(typeof(HarmonyPatch), inherit: false)))
+                    harmony.PatchAll(type);
+                configSync = new ConfigSynchronization(Config, configuration, harmony,
+                    () => Interlocked.Exchange(ref configValuesChanged, 1), message => Logger.LogWarning(message));
                 ReloadSettings(false);
                 FreshWorldCommands.Register(HandleCommand, message => Logger.LogWarning(message));
                 watcher = new FileSystemWatcher(Path.GetDirectoryName(Config.ConfigFilePath)!, Path.GetFileName(Config.ConfigFilePath));
@@ -92,13 +101,8 @@ namespace FreshWorld
                 {
                     // BepInEx fires value changes during Reload. Do not save a partially read cfg
                     // over the remaining file entries; normal Configuration Manager saves stay enabled.
-                    var saveOnChange = Config.SaveOnConfigSet;
-                    try
-                    {
-                        Config.SaveOnConfigSet = false;
-                        Config.Reload();
-                    }
-                    finally { Config.SaveOnConfigSet = saveOnChange; }
+                    configSync!.ReloadFile();
+                    Interlocked.Exchange(ref configValuesChanged, 0);
                 }
                 var next = configuration.Capture();
                 // Scheduling changes must not discard an authorized manual request or its captured reset policy.
@@ -112,6 +116,7 @@ namespace FreshWorld
                     return;
                 }
                 settings = next;
+                if (reloadFile) configSync?.Publish();
                 Logger.LogInfo($"Configuration applied: automatic={next.AutomaticEnabled}, schedule={next.Schedule.Mode}, timezone={next.Schedule.TimeZone.Id}, safeZones={next.Options.ZoneSafeZones}/{next.Options.VegetationSafeZones}/{next.Options.LocationSafeZones} (zones/resources/locations).");
                 nextPoll = 0;
             }
@@ -121,6 +126,14 @@ namespace FreshWorld
                 CloseScheduler("The host configuration is invalid.");
                 Logger.LogError("Invalid FreshWorld configuration; new maintenance is disabled until the cfg is corrected. " + error.Message);
             }
+        }
+
+        private void ApplyPendingSettings()
+        {
+            if (runner != null) return;
+            var reload = Interlocked.Exchange(ref reloadRequested, 0) != 0;
+            var changed = Interlocked.Exchange(ref configValuesChanged, 0) != 0;
+            if (reload || changed) ReloadSettings(reload);
         }
 
         private static bool IsHost(ZNet? net) => net != null && net.IsServer() && !net.HaveStopped && ZNet.World != null;
@@ -149,8 +162,7 @@ namespace FreshWorld
                     StopSession();
 
                 // File watchers only flag changes. All Unity and configuration work stays on this thread.
-                if (runner == null && Interlocked.Exchange(ref reloadRequested, 0) != 0)
-                    ReloadSettings(true);
+                ApplyPendingSettings();
 
                 if (!IsHost(current) || !WorldReady())
                 {
@@ -168,8 +180,7 @@ namespace FreshWorld
                     if (!active.MoveNext() && ReferenceEquals(runner, active)) runner = null;
                 }
                 // Apply edits deferred by the active run before admitting another automatic run.
-                if (runner == null && Interlocked.Exchange(ref reloadRequested, 0) != 0)
-                    ReloadSettings(true);
+                ApplyPendingSettings();
                 if (settings == null || sessionFaulted) return;
                 lastClock = ReadClock();
                 EnsureScheduler();
@@ -467,6 +478,7 @@ namespace FreshWorld
             try
             {
                 TryCleanup(DisposeWatcher, "Could not stop configuration watching.");
+                TryCleanup(() => { configSync?.Dispose(); configSync = null; }, "Could not stop configuration synchronization.");
                 TryCleanup(StopSession, "Could not stop the active world session.");
                 TryCleanup(FreshWorldCommands.Unregister, "Could not unregister the console command.");
                 TryCleanup(() => harmony?.UnpatchSelf(), "Could not remove Harmony patches.");

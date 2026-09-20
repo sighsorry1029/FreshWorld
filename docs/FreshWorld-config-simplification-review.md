@@ -1,5 +1,7 @@
 # FreshWorld configuration design - 0.6.4
 
+> Historical design record. The current implementation replaces `PlayerPlacedObjects` with `PieceBlacklist = fire_pit`. Player-built Pieces are detected automatically unless blacklisted; tombstones remain separate markers. The sections below describe the earlier whitelist design. See the [README](../README.md#protection-players-base-markers-and-stage-boundaries) for current behavior.
+
 FreshWorld is designed primarily for ordinary single-player and local-host players, while retaining dedicated-server support. The current configuration has **15 options in three sections**. It exposes choices about when restoration runs, what it restores, and which base zones it protects. Scheduling checks, execution budgets, and save handling are internal policies.
 
 The [README](../README.md) describes current use and shows the full default lists. The [configuration example](../config/FreshWorld.example.cfg) is the copyable reference. This document explains the decisions and their practical limits.

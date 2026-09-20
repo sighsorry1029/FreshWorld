@@ -8,7 +8,7 @@ SafeZones excludes whole zones from a reset stage. Each grid cell represents a *
 | `1` | The marker's zone: **1 cell** |
 | `2` | The marker's zone and its eight neighbors: **3 × 3 cells** |
 
-The house icon represents a base containing a configured protection marker: a prefab listed in `PlayerPlacedObjects` that was placed by a player (`creator != 0`). The icon is a visual shorthand; ordinary houses and building pieces are not automatically markers. `Player_tombstone` is a separate marker without that creator requirement. Multiple markers combine their protected areas; all marker protection requires SafeZones greater than zero.
+The house icon represents an automatic protection marker: a player-built Piece with `creator != 0` whose prefab is not in `PieceBlacklist`. The default blacklist contains `fire_pit`, so a lone campfire is not a marker. `Player_tombstone` is a separate marker without that creator requirement and is unaffected by the blacklist. Multiple markers combine their protected areas; all marker protection requires SafeZones greater than zero.
 
 Circular arrows indicate reset targets. The zone reset panels show the result after later world loading regenerates the natural world. Player-built houses removed from eligible zones are not regenerated.
 

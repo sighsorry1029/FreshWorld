@@ -31,10 +31,15 @@ var tests = new (string Name, Action Body)[]
     ("placed markers require creator metadata while unconditional markers do not", MarkerCreators),
     ("safe zone sizes zero one and two have the expected protection radius", MarkerRadius),
     ("changing marker configuration invalidates the cached protection", MarkerReconfigure),
-    ("new cfg defaults protect crafted chests and tombstones without protecting every piece", DefaultProtection),
-    ("default ship markers require creator metadata and follow safe zone ranges", DefaultShipProtection),
-    ("editable cfg marker list applies additions and removals while requiring player creators", EditableConfiguredProtection),
-    ("empty player marker list preserves creator-independent tombstones only when safe zones are enabled", EmptyConfiguredProtection),
+    ("new cfg defaults protect player-built Pieces and tombstones but exclude campfires", DefaultProtection),
+    ("automatic ship markers require creator metadata and follow safe zone ranges", DefaultShipProtection),
+    ("editable blacklist removes and restores Piece markers while preserving snapshots and tombstones", EditableConfiguredProtection),
+    ("empty blacklist protects all player-built Pieces including campfires", EmptyConfiguredProtection),
+    ("blacklisted Pieces share other markers' zones without expanding protection themselves", BlacklistedZoneSharing),
+    ("automatic Piece protection covers unloaded builds without accepting natural or merely owned objects", AutomaticPieceProtection),
+    ("prefab classification is bounded by prefab types and reused within each protection scan", PrefabClassificationCache),
+    ("fresh protection scans observe late registration prefab replacement and a new world", PrefabClassificationRefresh),
+    ("missing prefab registry prevents an unprotected scan while safe zone zero remains valid", MissingPrefabRegistry),
     ("overlapping and duplicate markers in outside sectors deduplicate their zones", OutsideMarkers),
     ("explicit invalidation refreshes recently changed marker data", MarkerInvalidation),
     ("expired marker cache refreshes within the same safe zone size", MarkerExpiry)
@@ -446,7 +451,8 @@ static void DestroyBatch()
 
 static void MarkerCreators()
 {
-    BaseProtection.Configure(["piece_workbench"], ["Player_tombstone"]);
+    RegisterPiece("piece_workbench");
+    BaseProtection.Configure([], ["Player_tombstone"]);
     ZDOMan.instance.Add(new(1, "piece_workbench", new(0, 0, 0)));
     ZDOMan.instance.Add(new ZDO(2, "piece_workbench", new(128, 0, 0)) { Creator = 55 });
     ZDOMan.instance.Add(new(3, "Player_tombstone", new(192, 0, 0)));
@@ -459,7 +465,8 @@ static void MarkerCreators()
 
 static void MarkerRadius()
 {
-    BaseProtection.Configure(["piece_workbench"], []);
+    RegisterPiece("piece_workbench");
+    BaseProtection.Configure([], []);
     ZDOMan.instance.Add(new ZDO(1, "piece_workbench", new(320, 0, 0)) { Creator = 55 });
     Equal(0, BaseProtection.GetExcluded(0).Count);
     var one = BaseProtection.GetExcluded(1);
@@ -474,12 +481,14 @@ static void MarkerRadius()
 
 static void MarkerReconfigure()
 {
+    RegisterPiece("piece_workbench");
+    RegisterPiece("forge");
     ZDOMan.instance.Add(new ZDO(1, "piece_workbench", new()) { Creator = 55 });
     ZDOMan.instance.Add(new ZDO(2, "forge", new(256, 0, 0)) { Creator = 55 });
-    BaseProtection.Configure(["piece_workbench"], []);
+    BaseProtection.Configure(["forge"], []);
     var previous = BaseProtection.GetExcluded(1);
     True(previous.Contains(new(0, 0)));
-    BaseProtection.Configure(["forge"], []);
+    BaseProtection.Configure(["piece_workbench"], []);
     var current = BaseProtection.GetExcluded(1);
     Equal(1, current.Count); True(current.Contains(new(4, 0)));
     True(!current.Contains(new(0, 0)));
@@ -489,32 +498,35 @@ static void MarkerReconfigure()
 
 static void DefaultProtection()
 {
+    RegisterPiece("piece_workbench");
+    RegisterPiece("piece_chest_wood");
+    RegisterPiece("woodwall");
+    RegisterPiece("fire_pit");
     var settings = new FreshWorldConfig(new ConfigFile()).Capture();
     var options = settings.Options;
     Equal(1, options.ZoneSafeZones);
-    True(options.ProtectedPlayerObjects.Contains("piece_workbench"));
-    True(options.ProtectedPlayerObjects.Contains("piece_chest_wood"));
-    True(options.ProtectedPlayerObjects.SequenceEqual(FreshWorldConfig.DefaultProtectedPlayerObjects.Split(',')));
+    True(options.PieceBlacklist.SequenceEqual(["fire_pit"]));
     True(options.ProtectedObjects.Contains("Player_tombstone"));
-    BaseProtection.Configure(options.ProtectedPlayerObjects, options.ProtectedObjects);
+    BaseProtection.Configure(options.PieceBlacklist, options.ProtectedObjects);
     ZDOMan.instance.Add(new(1, "piece_workbench", new())); // Unclaimed world object is not a player marker.
     ZDOMan.instance.Add(new ZDO(2, "piece_chest_wood", new(64, 0, 0)) { Creator = 77 });
     ZDOMan.instance.Add(new(3, "Player_tombstone", new(128, 0, 0)));
     ZDOMan.instance.Add(new ZDO(4, "woodwall", new(192, 0, 0)) { Creator = 77 });
+    ZDOMan.instance.Add(new ZDO(5, "fire_pit", new(640, 0, 0)) { Creator = 77 });
     var protectedZones = BaseProtection.GetExcluded(options.ZoneSafeZones);
-    Equal(2, protectedZones.Count);
-    True(protectedZones.Contains(new(1, 0)) && protectedZones.Contains(new(2, 0)));
-    True(!protectedZones.Contains(new(0, 0)) && !protectedZones.Contains(new(3, 0)));
+    Equal(3, protectedZones.Count);
+    True(protectedZones.SetEquals([new(1, 0), new(2, 0), new(3, 0)]));
+    True(!BaseProtection.GetExcluded(2).Contains(new(10, 0)));
 }
 
 static void DefaultShipProtection()
 {
     var options = new FreshWorldConfig(new ConfigFile()).Capture().Options;
     string[] ships = ["Raft", "Karve", "VikingShip", "VikingShip_Ashlands"];
-    BaseProtection.Configure(options.ProtectedPlayerObjects, options.ProtectedObjects);
+    BaseProtection.Configure(options.PieceBlacklist, options.ProtectedObjects);
     for (var i = 0; i < ships.Length; i++)
     {
-        True(options.ProtectedPlayerObjects.Contains(ships[i]));
+        RegisterPiece(ships[i]);
         ZDOMan.instance.Add(new ZDO(i * 2 + 1, ships[i], new(i * 512, 0, 0)) { Creator = 77 });
         ZDOMan.instance.Add(new(i * 2 + 2, ships[i], new(i * 512 + 256, 0, 0)));
     }
@@ -529,61 +541,170 @@ static void DefaultShipProtection()
 
 static void EditableConfiguredProtection()
 {
+    RegisterPiece("piece_workbench");
+    RegisterPiece("woodwall");
+    RegisterPiece("fire_pit");
+    ZNetScene.instance.RegisterPrefab("not_a_piece", new());
     var file = new ConfigFile();
     var config = new FreshWorldConfig(file);
     var initial = config.Capture().Options;
-    BaseProtection.Configure(initial.ProtectedPlayerObjects, initial.ProtectedObjects);
+    BaseProtection.Configure(initial.PieceBlacklist, initial.ProtectedObjects);
     ZDOMan.instance.Add(new ZDO(1, "piece_workbench", new()) { Creator = 77 });
-    ZDOMan.instance.Add(new ZDO(2, "custom_workbench", new(64, 0, 0)) { Creator = 77 });
-    ZDOMan.instance.Add(new(3, "custom_workbench", new(128, 0, 0)));
+    ZDOMan.instance.Add(new ZDO(2, "fire_pit", new(64, 0, 0)) { Creator = 77 });
+    ZDOMan.instance.Add(new(3, "woodwall", new(128, 0, 0)));
     ZDOMan.instance.Add(new(4, "Player_tombstone", new(192, 0, 0)));
     ZDOMan.instance.Add(new ZDO(5, "woodwall", new(256, 0, 0)) { Creator = 77 });
+    ZDOMan.instance.Add(new ZDO(6, "not_a_piece", new(320, 0, 0)) { Creator = 77 });
     var originalZones = BaseProtection.GetExcluded(1);
-    Equal(2, originalZones.Count);
-    True(originalZones.Contains(new(0, 0)) && originalZones.Contains(new(3, 0)));
+    True(originalZones.SetEquals([new(0, 0), new(3, 0), new(4, 0)]));
 
-    file.Set("Protection", "PlayerPlacedObjects", FreshWorldConfig.DefaultProtectedPlayerObjects + ",custom_workbench");
+    file.Set("Protection", "PieceBlacklist", "fire_pit,piece_workbench,Player_tombstone");
     var updated = config.Capture().Options;
-    BaseProtection.Configure(updated.ProtectedPlayerObjects, updated.ProtectedObjects);
+    BaseProtection.Configure(updated.PieceBlacklist, updated.ProtectedObjects);
     var protectedZones = BaseProtection.GetExcluded(1);
-    Equal(3, protectedZones.Count);
-    True(protectedZones.Contains(new(0, 0)) && protectedZones.Contains(new(1, 0)) && protectedZones.Contains(new(3, 0)));
-    True(!protectedZones.Contains(new(2, 0)) && !protectedZones.Contains(new(4, 0)));
+    True(protectedZones.SetEquals([new(3, 0), new(4, 0)]));
 
-    // Removing a default entry must change the actual engine's protection cache, not silently restore built-ins.
-    file.Set("Protection", "PlayerPlacedObjects", "custom_workbench");
+    // Replacing the blacklist restores removed IDs; it does not merge exclusions back from defaults.
+    file.Set("Protection", "PieceBlacklist", "woodwall");
     updated = config.Capture().Options;
-    BaseProtection.Configure(updated.ProtectedPlayerObjects, updated.ProtectedObjects);
+    BaseProtection.Configure(updated.PieceBlacklist, updated.ProtectedObjects);
     protectedZones = BaseProtection.GetExcluded(1);
-    Equal(2, protectedZones.Count);
-    True(protectedZones.Contains(new(1, 0)) && protectedZones.Contains(new(3, 0)));
-    True(!protectedZones.Contains(new(0, 0)) && !protectedZones.Contains(new(2, 0)) && !protectedZones.Contains(new(4, 0)));
-    Equal(2, originalZones.Count); // A pre-existing plan retains its original protection snapshot.
-    True(originalZones.Contains(new(0, 0)));
+    True(protectedZones.SetEquals([new(0, 0), new(1, 0), new(3, 0)]));
+    True(updated.PieceBlacklist.SequenceEqual(["woodwall"]));
+
+    file.Set("Protection", "PieceBlacklist", "");
+    updated = config.Capture().Options;
+    BaseProtection.Configure(updated.PieceBlacklist, updated.ProtectedObjects);
+    True(BaseProtection.GetExcluded(1).SetEquals([new(0, 0), new(1, 0), new(3, 0), new(4, 0)]));
+    True(originalZones.SetEquals([new(0, 0), new(3, 0), new(4, 0)])); // The original snapshot remains unchanged.
 }
 
 static void EmptyConfiguredProtection()
 {
+    RegisterPiece("piece_workbench");
+    RegisterPiece("fire_pit");
     var file = new ConfigFile();
     var config = new FreshWorldConfig(file);
-    file.Set("Protection", "PlayerPlacedObjects", "");
+    file.Set("Protection", "PieceBlacklist", "");
     var options = config.Capture().Options;
-    Equal(0, options.ProtectedPlayerObjects.Length);
-    BaseProtection.Configure(options.ProtectedPlayerObjects, options.ProtectedObjects);
+    Equal(0, options.PieceBlacklist.Length);
+    BaseProtection.Configure(options.PieceBlacklist, options.ProtectedObjects);
     ZDOMan.instance.Add(new ZDO(1, "piece_workbench", new()) { Creator = 77 });
-    ZDOMan.instance.Add(new ZDO(2, "custom_workbench", new(64, 0, 0)) { Creator = 77 });
+    ZDOMan.instance.Add(new ZDO(2, "fire_pit", new(64, 0, 0)) { Creator = 77 });
     ZDOMan.instance.Add(new(3, "Player_tombstone", new(128, 0, 0))); // No creator metadata required.
     var protectedZones = BaseProtection.GetExcluded(1);
-    Equal(1, protectedZones.Count);
-    True(protectedZones.Contains(new(2, 0)));
-    True(!protectedZones.Contains(new(0, 0)) && !protectedZones.Contains(new(1, 0)));
+    True(protectedZones.SetEquals([new(0, 0), new(1, 0), new(2, 0)]));
     Equal(0, BaseProtection.GetExcluded(0).Count);
-    Equal(9, BaseProtection.GetExcluded(2).Count);
+    Equal(15, BaseProtection.GetExcluded(2).Count);
+}
+
+static void BlacklistedZoneSharing()
+{
+    RegisterPiece("fire_pit");
+    RegisterPiece("piece_workbench");
+    var options = new FreshWorldConfig(new ConfigFile()).Capture().Options;
+    BaseProtection.Configure(options.PieceBlacklist, options.ProtectedObjects);
+    ZDOMan.instance.Add(new ZDO(1, "fire_pit", new()) { Creator = 77 });
+    ZDOMan.instance.Add(new ZDO(2, "fire_pit", new(256, 0, 0)) { Creator = 77 });
+    ZDOMan.instance.Add(new ZDO(3, "piece_workbench", new(256, 0, 0)) { Creator = 77 });
+    True(BaseProtection.GetExcluded(1).SetEquals([new(4, 0)]));
+    var surrounding = BaseProtection.GetExcluded(2);
+    Equal(9, surrounding.Count);
+    True(surrounding.Contains(new(4, 0)) && !surrounding.Contains(new(0, 0)));
+    True(!surrounding.Contains(new(1, 0)) && !surrounding.Contains(new(-1, 0)));
+    Equal(0, BaseProtection.GetExcluded(0).Count);
+}
+
+static GameObject RegisterPiece(string name)
+{
+    var prefab = new GameObject();
+    prefab.AddComponent(new Piece());
+    ZNetScene.instance.RegisterPrefab(name, prefab);
+    return prefab;
+}
+
+static void AutomaticPieceProtection()
+{
+    string[] pieces = ["woodwall", "stone_wall", "blackmarble_wall", "modded_piece", "Raft",
+        "Cart", "piece_trap_troll", "piece_sapcollector", "planted_piece"];
+    for (var i = 0; i < pieces.Length; i++)
+    {
+        RegisterPiece(pieces[i]);
+        ZDOMan.instance.Add(new ZDO(i + 1, pieces[i], new(i * 256, 0, 0)) { Creator = 77 });
+    }
+    // Creator and network owner are separate; a natural Piece can be owned without being built.
+    ZDOMan.instance.Add(new ZDO(100, "woodwall", new(-512, 0, 0)) { Owner = 987 });
+    ZNetScene.instance.RegisterPrefab("not_a_piece", new());
+    ZDOMan.instance.Add(new ZDO(101, "not_a_piece", new(-1024, 0, 0)) { Creator = 77 });
+    ZDOMan.instance.Add(new ZDO(102, "unknown_prefab", new(-1536, 0, 0)) { Creator = 77 });
+    Equal(0, BaseProtection.GetExcluded(0).Count);
+    Equal(0, ZNetScene.instance.PrefabQueries.Count);
+    var one = BaseProtection.GetExcluded(1);
+    True(one.SetEquals(Enumerable.Range(0, pieces.Length).Select(i => new Vector2s(i * 4, 0))));
+    var two = BaseProtection.GetExcluded(2);
+    Equal(pieces.Length * 9, two.Count);
+    for (var i = 0; i < pieces.Length; i++)
+        for (var x = -1; x <= 1; x++)
+            for (var y = -1; y <= 1; y++) True(two.Contains(new(i * 4 + x, y)));
+    Equal(0, ZoneSystem.instance.Pokes); // No scene/zone loading is needed to protect these builds.
+}
+
+static void PrefabClassificationCache()
+{
+    var campfire = RegisterPiece("fire_pit");
+    BaseProtection.Configure(["fire_pit"], []);
+    var piece = RegisterPiece("woodwall");
+    var natural = new GameObject();
+    ZNetScene.instance.RegisterPrefab("tree", natural);
+    for (var i = 0; i < 2000; i++)
+    {
+        ZDOMan.instance.Add(new ZDO(i * 3 + 1, "woodwall", new((i % 2) * 64, 0, 0)) { Creator = 77 });
+        ZDOMan.instance.Add(new(i * 3 + 2, "tree", new(512, 0, 0)));
+        ZDOMan.instance.Add(new(i * 3 + 3, "missing_prefab", new(1024, 0, 0)));
+        ZDOMan.instance.Add(new ZDO(10000 + i, "fire_pit", new(1536, 0, 0)) { Creator = 77 });
+    }
+    var protection = BaseProtection.GetExcluded(2);
+    Equal(12, protection.Count);
+    Equal(3, ZNetScene.instance.PrefabQueries.Count);
+    True(ZNetScene.instance.PrefabQueries.Values.All(count => count == 1));
+    Equal(1, piece.ComponentQueries); Equal(1, natural.ComponentQueries);
+    Equal(0, campfire.ComponentQueries);
+    True(ReferenceEquals(protection, BaseProtection.GetExcluded(2)));
+    True(ZNetScene.instance.PrefabQueries.Values.All(count => count == 1));
+}
+
+static void PrefabClassificationRefresh()
+{
+    ZDOMan.instance.Add(new ZDO(1, "late_piece", new()) { Creator = 77 });
+    ZDOMan.instance.Add(new ZDO(2, "changed_prefab", new(128, 0, 0)) { Creator = 77 });
+    ZNetScene.instance.RegisterPrefab("changed_prefab", new());
+    Equal(0, BaseProtection.GetExcluded(1).Count);
+    RegisterPiece("late_piece"); RegisterPiece("changed_prefab");
+    typeof(BaseProtection).GetField("calculatedAt", BindingFlags.Static | BindingFlags.NonPublic)!
+        .SetValue(null, DateTime.UtcNow.AddSeconds(-11));
+    True(BaseProtection.GetExcluded(1).SetEquals([new(0, 0), new(2, 0)]));
+
+    ZNetScene.instance.RegisterPrefab("changed_prefab", new());
+    BaseProtection.InvalidateCache();
+    True(BaseProtection.GetExcluded(1).SetEquals([new(0, 0)]));
+
+    // A new run/world must not reuse either positive or negative prefab classifications.
+    ZNetScene.instance = new();
+    BaseProtection.Configure([], []);
+    Equal(0, BaseProtection.GetExcluded(1).Count);
+}
+
+static void MissingPrefabRegistry()
+{
+    ZNetScene.instance = null!;
+    Equal(0, BaseProtection.GetExcluded(0).Count);
+    Throws<InvalidOperationException>(() => BaseProtection.GetExcluded(1));
 }
 
 static void OutsideMarkers()
 {
-    BaseProtection.Configure(["piece_workbench", "piece_workbench"], ["Player_tombstone"]);
+    RegisterPiece("piece_workbench");
+    BaseProtection.Configure([], ["Player_tombstone"]);
     ZDOMan.instance.Add(new ZDO(1, "piece_workbench", new(-192, 0, 128)) { Creator = 55 });
     ZDOMan.instance.Add(new ZDO(2, "piece_workbench", new(-192, 0, 128)) { Creator = 66 });
     ZDOMan.instance.Add(new(3, "Player_tombstone", new(-128, 0, 128)));

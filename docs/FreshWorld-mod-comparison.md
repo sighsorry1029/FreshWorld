@@ -1,5 +1,7 @@
 # Valheim world-reset mod comparison for FreshWorld
 
+> Historical research and implementation record. Current protection automatically detects player-built Pieces, with `PieceBlacklist = fire_pit` replacing `PlayerPlacedObjects`. Tombstones remain separate markers. ServerSync is now embedded for optional administrator configuration. See the [README](../README.md) for current behavior; versioned implementation descriptions below retain their original scope.
+
 Research date: **2026-09-06 (Asia/Seoul)**  
 Design goal: make location, vegetation, zone, and terrain restoration accessible through configuration for single-player worlds, in-game local hosts, and dedicated servers. Scheduled use should not require users to write console commands.
 

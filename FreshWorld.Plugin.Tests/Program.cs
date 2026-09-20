@@ -15,10 +15,13 @@ internal static class Program
     {
         try
         {
+            Test("startup submits only declared plugin patches before a world loads", StartupPatchSelection);
             Test("plugin metadata supplies the standard config filename and shared live settings", MetadataConfigIdentity);
             Test("manual dispatch bypasses scheduler polling interval", ImmediateDispatch);
             Test("automatic work polls every second without duplicate execution", FixedSchedulePolling);
             Test("hot reload applies before the next automatic poll", ReloadBeforeScheduledPoll);
+            Test("synced in-memory edits apply without rereading the cfg", SyncedMemoryEdit);
+            Test("synced edits wait for the active reset to finish", SyncedEditDuringRun);
             Test("disabled automatic scheduling suppresses automatic work while retaining manual commands", AutomaticDisabledCommands);
             Test("switching to disabled automatic scheduling drops pending automatic work without later catch-up", DisableCancelsAutomaticPending);
             Test("inactive daily times reload preserves the game-day scheduler and anchor", InactiveDailyTimesPreserveAnchor);
@@ -65,6 +68,49 @@ internal static class Program
         System.Console.WriteLine("PASS " + name);
     }
 
+    private static void StartupPatchSelection()
+    {
+        using var f = new Fixture(beforeAwake: (_, _, _) =>
+        {
+            ZNet.instance = null!;
+            ZNet.World = null;
+        });
+        var submitted = f.GetField<HarmonyLib.Harmony>("harmony")!.PatchedTypes;
+        // These are the two production patch containers linked into this controller harness.
+        // Ordinary helpers (including cleanup methods) and the embedded-library fixture must be absent.
+        True(submitted.Count == 2 && submitted.Contains(typeof(ShutdownPatch)) &&
+            submitted.Contains(typeof(ShutdownWithoutSavePatch)),
+            "unexpected startup patch submissions: " + string.Join(", ", submitted.Select(type => type.FullName)));
+        True(FreshWorldCommands.Handler != null, "startup did not reach command registration");
+        True(f.Scheduler == null && MaintenancePipeline.Created.Count == 0,
+            "pre-world initialization must not start maintenance");
+    }
+
+    private static void SyncedMemoryEdit()
+    {
+        using var f = new Fixture();
+        var reloads = f.Plugin.Config.ReloadCount;
+        f.Plugin.Config.Set("Reset", "Zones", "false");
+        f.SetField("configValuesChanged", 1); // Transport has already applied the complete edit.
+        f.Tick();
+        Equal(reloads, f.Plugin.Config.ReloadCount, "memory edit must not reread an older cfg");
+        True(!f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings")!.Options.ZonesEnabled, "synced policy was not captured");
+    }
+
+    private static void SyncedEditDuringRun()
+    {
+        using var f = new Fixture();
+        MaintenancePipeline.HoldFrames = 3;
+        f.Run(); f.Tick();
+        f.Plugin.Config.Set("Reset", "Zones", "false");
+        f.SetField("configValuesChanged", 1);
+        f.Tick();
+        True(f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings")!.Options.ZonesEnabled, "policy changed in the middle of a reset");
+        True(MaintenancePipeline.Created.Single().Options.ZonesEnabled, "backend snapshot changed");
+        for (var i = 0; i < 4; i++) f.Tick();
+        True(!f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings")!.Options.ZonesEnabled, "deferred policy was not applied after completion");
+    }
+
     private static void MetadataConfigIdentity()
     {
         using var f = new Fixture();
@@ -81,7 +127,7 @@ internal static class Program
         var expectedPath = Path.Combine(Paths.ConfigPath, "sighsorry.FreshWorld.cfg");
         Equal(expectedPath, config.ConfigFilePath, "standard cfg filename");
         True(config.IsBound("General", "Enabled") && config.IsBound("Reset", "TerrainResourceIds") &&
-            config.IsBound("Protection", "PlayerPlacedObjects"), "settings are exposed on the base Config instance");
+            config.IsBound("Protection", "PieceBlacklist"), "settings are exposed on the base Config instance");
         var watcher = (FileSystemWatcher)typeof(FreshWorldPlugin).GetField("watcher", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(f.Plugin)!;
         Equal("sighsorry.FreshWorld.cfg", watcher.Filter, "hot reload watches the metadata-derived filename");
         Equal(Path.GetFullPath(Paths.ConfigPath), Path.GetFullPath(watcher.Path), "hot reload watches the config directory");
@@ -334,7 +380,7 @@ internal static class Program
             c.Set("Reset", "ResourceTerrainRadius", "20");
             c.Set("Reset", "Locations", "true");
             c.Set("Protection", "LocationSafeZones", "0");
-            c.Set("Protection", "PlayerPlacedObjects", "piece_workbench,custom_marker");
+            c.Set("Protection", "PieceBlacklist", "piece_workbench,custom_marker");
             c.Set("Reset", "LocationIds", "Hildir_cave");
         }, skipStartupDelay: false);
         f.Run();
@@ -345,7 +391,7 @@ internal static class Program
         f.Plugin.Config.Set("Reset", "ResourceTerrainRadius", "0");
         f.Plugin.Config.Set("Reset", "Locations", "false");
         f.Plugin.Config.Set("Protection", "LocationSafeZones", "1");
-        f.Plugin.Config.Set("Protection", "PlayerPlacedObjects", "");
+        f.Plugin.Config.Set("Protection", "PieceBlacklist", "");
         Time.realtimeSinceStartup = 30;
         f.Tick();
         var dispatched = MaintenancePipeline.Created.Single();
@@ -356,8 +402,8 @@ internal static class Program
         Equal("Beech1", dispatched.Options.VegetationIds.Single(), "accepted vegetation-only list");
         Equal("silvervein", dispatched.Options.TerrainVegetationIds.Single(), "accepted terrain resource list");
         Equal(20f, dispatched.Options.VegetationTerrainRadius, "accepted terrain resource radius");
-        True(dispatched.Options.ProtectedPlayerObjects.SequenceEqual(new[] { "piece_workbench", "custom_marker" }),
-            "accepted complete marker list survives cfg edits before dispatch");
+        True(dispatched.Options.PieceBlacklist.SequenceEqual(new[] { "piece_workbench", "custom_marker" }),
+            "accepted blacklist survives cfg edits before dispatch");
         Equal("Hildir_cave", dispatched.Options.LocationIds.Single(), "accepted exact location list");
     }
 
@@ -725,7 +771,7 @@ internal static class Program
         public void Tick() => Invoke("Update");
         public void Run(CommandRequestContext? context = null) => Plugin.HandleCommand(FreshWorldCommandAction.Run, context ?? Request);
         public void SetField(string name, object value) => typeof(FreshWorldPlugin).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(Plugin, value);
-        private T? GetField<T>(string name) => (T?)typeof(FreshWorldPlugin).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(Plugin);
+        internal T? GetField<T>(string name) => (T?)typeof(FreshWorldPlugin).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(Plugin);
         private void Invoke(string name)
         {
             try { typeof(FreshWorldPlugin).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(Plugin, null); }

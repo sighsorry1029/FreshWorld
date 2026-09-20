@@ -1,41 +1,53 @@
-# ServerSync integration review
+# ServerSync integration
 
-Reviewed on 2026-09-06. ServerSync integration was deferred by request and is not included in FreshWorld 0.6.4. This document records a static review for a possible future feature: letting a server administrator edit server settings through Configuration Manager. It is not a report of in-game compatibility testing.
+Implemented on 2026-09-20. The earlier proposal was deferred; this document now describes the implemented integration. No mod version or release package was changed for this work.
 
-## Reviewed material
+## Distribution
 
-- Supplied file: `C:/Users/blizz/Downloads/ServerSync.dll`, 49,664 bytes. The assembly was inspected without running its code.
-- SHA-256: `166956302A294E224474B26F4C7D58409084AD3F48BD0AF1FEB7551F229C8F60`.
-- Assembly and file version: `1.0.0.0`. Target framework: `.NETFramework,Version=v4.8`. These values do not identify the exact source commit or prove current game compatibility.
-- [ServerSyncModTemplate](https://github.com/AzumattDev/ServerSyncModTemplate/tree/9fd34dd7c3e61fc42e57ed0b6af4bb1192aa0b2a) and [ServerSync source](https://github.com/blaxxun-boop/ServerSync/tree/c57c2aa54e07cdcc7630d6068699ea781622323e). These are the revisions reviewed, not a verified source match for the supplied DLL.
+FreshWorld vendors the unchanged `valheim-1.0.7-r1` DLL in `FreshWorld/Libs/ServerSync.dll`. SHA-256: `b4dd786997f4e90d770f09ef3e9d64154754fe7e8edfb4841795751895b35846`. It was built against original Valheim 1.0.7 assemblies from upstream commit `c57c2aa54e07cdcc7630d6068699ea781622323e`, with fixes for the Everybody constant, administrator API, and initial peer/list message ordering. Provenance and MIT-0 license: `FreshWorld/Libs/README.md`, `third_party/ServerSync.LICENSE.txt`.
 
-## Packaging and editing
+ILRepack 2.0.44.1 merges and internalizes it into FreshWorld.dll, always starting from the compiler output in obj. Debug deployment and Release packaging run after merging. The final DLL has no external ServerSync reference. The existing five-file release package does not include a separate ServerSync plugin.
 
-ServerSync could be merged into FreshWorld.dll so users would not need a separate ServerSync installation. Its documentation describes merging with ILRepack and the Internalize option. Configuration Manager would remain an optional editor on the administrator's client; the server would not need the editing UI. See the [distribution and API guide](https://github.com/blaxxun-boop/ServerSync/blob/c57c2aa54e07cdcc7630d6068699ea781622323e/README.md).
+`ModRequired=false` preserves server-only installation. Ordinary clients and administrators using the server console/RCON need not install FreshWorld. Administrators who want in-game commands or remote Configuration Manager editing install the matching FreshWorld version on their client. Configuration Manager is optional and not required on the dedicated server.
 
-Most FreshWorld settings remain `ConfigEntry<string>`. Mode and the three SafeZones entries use `ConfigEntry<ConfigChoice>` with a lossless BepInEx converter that preserves their original cfg text, including invalid values. This lets Configuration Manager display its native choice popup while FreshWorld retains explicit validation. Other settings retain toggles, numeric inputs, or text fields. This is a local editing feature, separate from the deferred ServerSync transport. Any future use of `AddConfigEntry<T>` must verify transport serialization of the choice wrapper and preservation of invalid input. The in-game UI and synchronization integration still require testing.
+## Settings and authority
 
-## Authority and validation
+- All existing 15 settings are registered. Sections, keys, defaults, raw cfg text, choice labels, and validation remain intact. No editable unlock option is added.
+- The server supplies initial values. Clients cannot publish before initial sync or while restoring local values on disconnect.
+- Administrator edits target only the server peer. The library's client broadcast-to-everyone path is bypassed so unvalidated edits are not forwarded to other clients.
+- The server matches the executing ZRpc to a live, ready peer and the routed sender ID, then checks the socket identity through `ZNet.IsAdmin(string)`. Client admin flags and claimed IDs are not trusted.
+- A nested RPC scope and finalizer preserve identity even across nested calls or skipped prefixes. Command permissions remain separate and unchanged.
+- Remote edits must be partial config packages of at most 128 KiB. Unknown/duplicate keys, null/unexpected types, library control values, client compression/fragments, and trailing bytes are rejected before library decoding. Only registered types reach its reflection-based decoder.
+- `FreshWorldConfig.Capture(edits)` validates the complete proposed policy without changing live entries. Rejected known peers receive authoritative values. Accepted edits are saved and redistributed from the server's entries.
+- Client cfg files retain local fallback values, including for administrators. Disconnect restores those values.
 
-In the inspected DLL, `HandleConfigSyncRPC` checks the real RPC socket identity against the server's `m_adminList` through `ListContainsId` when `isServer && IsLocked`. A read-only client UI is separate from this server-side check.
+Large edits can be made in the server cfg. Full server-to-client synchronization retains the library's compression and fragmentation. A settings edit does not itself trigger a reset.
 
-Unlocking settings bypasses that administrator check. For settings that control world resets, a future integration should keep administrator editing locked and avoid exposing an unlock option to ordinary players. ServerSync's local `IsAdmin` property should not replace FreshWorld's command authority checks.
+## Reload and lifecycle
 
-The DLL also has a branch that skips the explicit administrator comparison when it cannot obtain the current RPC or host identity. This inspection alone does not prove a usable remote bypass. Before integration, verify that unidentified remote changes are rejected and retain FreshWorld's connection and session checks.
+The file watcher only signals the Unity main thread. File reload suppresses autosaving and individual broadcasts until the whole file has been read and validated. Valid host reloads publish the resulting settings; invalid host cfg files still disable new maintenance rather than silently choosing defaults.
 
-ServerSync handles registration and transport. FreshWorld must still validate exact IDs, finite numbers, ranges, and the active schedule. Apply a complete validated settings snapshot on the host. A running reset must keep the snapshot captured when it started.
+SettingChanged and source-of-truth events separately queue capture of in-memory settings without forcing a disk reload. Active resets and accepted manual requests retain their captured RunOptions. Deferred settings apply after active work finishes.
 
-## File changes and synchronization events
+FreshWorld's Harmony discovery excludes the merged ServerSync namespace, whose library installs its own patches. Cleanup removes FreshWorld event subscriptions, sync/version registrations, and live config RPC handlers before removing FreshWorld-owned patches. This does not add general support for unloading BepInEx plugins during gameplay.
 
-The supplied DLL sends registered `SettingChanged` events. On receipt, it sets `BoxedValue` and saves the file, using `ProcessingServerUpdate` to suppress a resend loop. A future integration should distinguish these events:
+## Verification
 
-- A cfg file edit: reload the file and validate the complete settings on the main thread.
-- An in-memory edit from Configuration Manager or ServerSync: request validation of the current values on the main thread. Do not reload older file values over each incoming change.
+Baseline Debug build and the existing core/config, controller, and installed-Harmony/BepInEx tests passed before integration. Integration checks cover:
 
-Coalesce related changes so partially received settings do not repeatedly reset the schedule. Connect these events to FreshWorld's existing validation and snapshot flow instead of copying the template's file watcher unchanged. See the [template configuration and file watcher](https://github.com/AzumattDev/ServerSyncModTemplate/blob/9fd34dd7c3e61fc42e57ed0b6af4bb1192aa0b2a/Plugin.cs).
+- Debug compilation, internalized merge, final DLL deployment, and source/destination hash comparison.
+- Existing regression harnesses, plus memory-only config application and deferral through active maintenance.
+- The merged-DLL probe: all 15 setting types, malformed edits, missing/spoofed/disconnected RPC contexts, administrator versus ordinary-client edits, initial upload suppression, server-only destinations, file saving/reload, local cfg preservation, disconnect restoration, nested scopes, and cleanup.
+- Original client/server metadata, reflected members, and compiled game-member resolution using `tools/verify-game-api.ps1`; original access restrictions are retained.
 
-## Optional clients and attribution
+The merged-DLL probe runs outside Unity. In a memory-only test copy it suppresses the VersionCheck Unity bootstrap and logging, substitutes Unity object checks/coroutines and the native administrator result, skips native game detours, and bridges the .NET Standard string.Split overload for the .NET Framework runner. It uses fake sockets and captures sends. Actual BepInEx bindings, ServerSync serialization/receiving, config persistence, and the adapter's session/validation logic execute. Original game DLLs are not rewritten or publicized. These are isolated tests, not actual Steam/PlayFab or game-runtime results.
 
-The supplied `ConfigSync.ModRequired` defaults to false, but the template also includes `VersionHandshake.cs`. Verify version checks and connections from clients without FreshWorld before adopting that code. Ordinary players should remain able to join without installing FreshWorld. Administrators who edit remote settings would need FreshWorld and an editor on their client.
+After a successful Debug build:
 
-The reviewed source and template use MIT-0. Any future merged distribution should record the exact included source or binary, hash, and license notice. FreshWorld currently copies or merges none of the supplied ServerSync DLL. See the [ServerSync license](https://github.com/blaxxun-boop/ServerSync/blob/c57c2aa54e07cdcc7630d6068699ea781622323e/LICENSE.txt) and [template license](https://github.com/AzumattDev/ServerSyncModTemplate/blob/9fd34dd7c3e61fc42e57ed0b6af4bb1192aa0b2a/LICENSE.txt).
+```powershell
+dotnet run --project FreshWorld.Sync.Tests -c Debug --no-build -- FreshWorld/bin/Debug/netstandard2.1/FreshWorld.dll
+```
+
+## Remaining actual-game checks
+
+Verify local hosting and a dedicated server: unmodded client admission; administrator and ordinary-client Configuration Manager behavior; a fresh admin cfg receiving server values without uploading defaults; direct server cfg reload; edits during maintenance; server restart persistence; disconnect/reconnect/local-world restoration; and coexistence with other embedded ServerSync copies. Steam and PlayFab crossplay need separate execution checks. Build and isolated test success do not establish these results.
