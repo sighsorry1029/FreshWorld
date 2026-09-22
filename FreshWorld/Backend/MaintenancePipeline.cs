@@ -24,6 +24,7 @@ internal sealed class MaintenancePipeline
     private readonly ZoneSystem _zones;
     private readonly long _worldUid;
     private readonly HashSet<Vector2s> _playerZones = new();
+    private readonly EpicLootProtection _treasures = new();
     private ITrackedOperation? _activeOperation;
 
     public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn)
@@ -53,7 +54,8 @@ internal sealed class MaintenancePipeline
             GameWorld.CollectPlayerZones(_playerZones);
             var generated = GameWorld.GeneratedSetSnapshot();
             var protectedZones = ProtectedSnapshot(_options.ZoneSafeZones, generated);
-            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection.");
+            var treasureZones = _options.EpicLootProtectionEnabled ? _treasures.Capture() : 0;
+            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {treasureZones} EpicLoot treasure zones with 1x1 protection.");
 
             if (_options.ZonesEnabled)
             {
@@ -62,7 +64,7 @@ internal sealed class MaintenancePipeline
                 yield return Execute("Zone reset", new TrackedResetZones(_log, args, generated,
                     zone => CanResetZone(zone, _options.ZoneSafeZones, protectedZones),
                     maxZonesPerFrame: _options.MaxZonesPerFrame,
-                    frameBudgetMilliseconds: _options.FrameBudgetMilliseconds));
+                    frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn));
             }
 
             if (_includeVegetation && _options.VegetationEnabled)
@@ -102,9 +104,9 @@ internal sealed class MaintenancePipeline
                     if (safeZones == 0)
                         _warn("LocationSafeZones=0: configured locations may remove player pieces inside their reset area.");
                     yield return Execute("Location reset", new TrackedRegenerateLocations(_log, ids, args,
-                        candidates, zone => CanResetZone(zone, safeZones),
-                        maxZonesPerFrame: _options.MaxZonesPerFrame,
-                        frameBudgetMilliseconds: _options.FrameBudgetMilliseconds));
+                          candidates, zone => CanResetZone(zone, safeZones),
+                          maxZonesPerFrame: _options.MaxZonesPerFrame,
+                          frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn));
                 }
             }
 
@@ -137,7 +139,7 @@ internal sealed class MaintenancePipeline
         yield return Execute(name, new TrackedResetVegetation(_log, ids, args,
             candidates, zone => CanResetZone(zone, _options.VegetationSafeZones),
             maxZonesPerFrame: _options.MaxZonesPerFrame,
-            frameBudgetMilliseconds: _options.FrameBudgetMilliseconds));
+            frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn));
     }
 
     private IEnumerator Execute(string name, ITrackedOperation operation)
@@ -155,7 +157,9 @@ internal sealed class MaintenancePipeline
             var result = operation.Result;
             if (!result.Finished || result.FailedCount > 0)
                 throw new InvalidOperationException($"{name} did not finish successfully ({result.FailedCount} failed zones).");
-            _log($"{name}: {result.ChangedZones.Count} changed, {result.SkippedZones.Count} skipped; {elapsed.Elapsed.TotalSeconds:F1}s.");
+            _log($"{name}: {result.ChangedZones.Count} changed, {result.SkippedZones.Count} skipped " +
+                $"({result.TimedOutZones.Count} timed out); {elapsed.Elapsed.TotalSeconds:F1}s total, " +
+                $"{result.LoadWaitSeconds:F1}s waiting for zone or asset loading.");
         }
         finally
         {
@@ -209,6 +213,7 @@ internal sealed class MaintenancePipeline
         for (var x = Math.Max(short.MinValue, zone.x - 1); x <= Math.Min(short.MaxValue, zone.x + 1); x++)
             for (var y = Math.Max(short.MinValue, zone.y - 1); y <= Math.Min(short.MaxValue, zone.y + 1); y++)
                 if (_playerZones.Contains(new Vector2s(x, y))) return false;
+        if (_options.EpicLootProtectionEnabled && !_treasures.CanResetZone(zone)) return false;
         if (initialProtection != null && initialProtection.Contains(zone)) return false;
         if (safeZones <= 0) return true;
         // Cache the world scan for ten seconds rather than scanning all objects for each zone.
@@ -218,7 +223,8 @@ internal sealed class MaintenancePipeline
     private OperationParameters Parameters(int safeZones) =>
         new()
         {
-            SafeZones = safeZones
+            SafeZones = safeZones,
+            ProtectEpicLoot = _options.EpicLootProtectionEnabled
         };
 
     private HashSet<string> ResolveIds(string kind, IEnumerable<string> configured, IEnumerable<string> available)

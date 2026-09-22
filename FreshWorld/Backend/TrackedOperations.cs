@@ -13,6 +13,8 @@ internal sealed class OperationResult
     public HashSet<Vector2s> SelectedZones { get; } = new();
     public HashSet<Vector2s> ChangedZones { get; } = new();
     public HashSet<Vector2s> SkippedZones { get; } = new();
+    public HashSet<Vector2s> TimedOutZones { get; } = new();
+    public double LoadWaitSeconds { get; internal set; }
     public int FailedCount { get; internal set; }
     public bool Started { get; internal set; }
     public bool Finished { get; internal set; }
@@ -32,23 +34,30 @@ internal interface ITrackedOperation
 /// </summary>
 internal sealed class OperationTracker
 {
+    private const int DefaultLoadTimeoutMilliseconds = 30000;
     private readonly Func<Vector2s, bool>? _canProcess;
+    private readonly Action<string>? _warn;
     private readonly HashSet<Vector2s> _pendingLoads = new();
     private readonly int _maxZonesPerFrame;
     private readonly double _frameBudgetMilliseconds;
     private readonly ZNet _worldNet;
     private readonly ZoneSystem _worldZones;
     private readonly long _worldUid;
+    private readonly int _loadTimeoutMilliseconds;
     public OperationResult Result { get; } = new();
 
-    public OperationTracker(Func<Vector2s, bool>? canProcess, int maxZonesPerFrame, double frameBudgetMilliseconds)
+    public OperationTracker(Func<Vector2s, bool>? canProcess, int maxZonesPerFrame, double frameBudgetMilliseconds,
+        Action<string>? warn = null, int loadTimeoutMilliseconds = DefaultLoadTimeoutMilliseconds)
     {
         if (maxZonesPerFrame < 1) throw new ArgumentOutOfRangeException(nameof(maxZonesPerFrame));
         if (frameBudgetMilliseconds <= 0 || double.IsNaN(frameBudgetMilliseconds) || double.IsInfinity(frameBudgetMilliseconds))
             throw new ArgumentOutOfRangeException(nameof(frameBudgetMilliseconds));
+        if (loadTimeoutMilliseconds < 1) throw new ArgumentOutOfRangeException(nameof(loadTimeoutMilliseconds));
         _canProcess = canProcess;
+        _warn = warn;
         _maxZonesPerFrame = maxZonesPerFrame;
         _frameBudgetMilliseconds = frameBudgetMilliseconds;
+        _loadTimeoutMilliseconds = loadTimeoutMilliseconds;
         _worldNet = ZNet.instance;
         _worldZones = ZoneSystem.instance;
         _worldUid = _worldNet.GetWorldUID();
@@ -99,7 +108,7 @@ internal sealed class OperationTracker
 
     public void Changed(Vector2s zone) => Result.ChangedZones.Add(zone);
 
-    public IEnumerator Execute(Vector2s[] zones, Func<Vector2s, bool> execute, Action failed)
+    public IEnumerator Execute(Vector2s[] zones, Func<Vector2s, bool> execute)
     {
         Result.Started = true;
         var frame = Stopwatch.StartNew();
@@ -109,6 +118,7 @@ internal sealed class OperationTracker
         {
             var zone = zones[index];
             waiting.Restart();
+            var waitedForLoad = false;
             while (true)
             {
                 while (UnityEngine.Time.timeScale <= 0f)
@@ -122,13 +132,18 @@ internal sealed class OperationTracker
                 attempts++;
                 if (execute(zone))
                 {
+                    if (waitedForLoad) Result.LoadWaitSeconds += waiting.Elapsed.TotalSeconds;
                     Release(zone);
                     break;
                 }
-                // Keep the existing timeout and report failure before releasing the zone.
-                if (waiting.ElapsedMilliseconds >= 10000)
+                waitedForLoad = true;
+                if (waiting.ElapsedMilliseconds >= _loadTimeoutMilliseconds)
                 {
-                    failed();
+                    Result.LoadWaitSeconds += waiting.Elapsed.TotalSeconds;
+                    Result.TimedOutZones.Add(zone);
+                    Result.SkippedZones.Add(zone);
+                    _warn?.Invoke($"Zone {zone.x},{zone.y} did not become ready after {waiting.Elapsed.TotalSeconds:F1}s " +
+                        $"({GameWorld.DescribeZoneLoad(zone)}); skipped. Any FreshWorld-owned root will be cleaned up when safe.");
                     Release(zone);
                     break;
                 }
@@ -148,10 +163,10 @@ internal sealed class OperationTracker
         while (UnityEngine.Time.timeScale <= 0f) yield return null;
     }
 
-    public void Finish(int failed)
+    public void Finish()
     {
         // Completion requires the execution loop to have started.
-        Result.FailedCount = failed + (Result.Started ? 0 : 1);
+        Result.FailedCount = Result.Started ? 0 : 1;
         Result.Finished = Result.Started;
     }
 
@@ -184,9 +199,9 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
     public TrackedResetZones(Action<string> log, OperationParameters args,
         HashSet<Vector2s>? candidates = null, Func<Vector2s, bool>? canProcess = null,
         int maxZonesPerFrame = 64,
-        double frameBudgetMilliseconds = 8) : base(log, args, candidates)
+        double frameBudgetMilliseconds = 8, Action<string>? warn = null) : base(log, args, candidates)
     {
-        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds);
+        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn);
     }
 
     protected override string OnInit()
@@ -211,13 +226,13 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
         return success;
     }
 
-    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
+    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone);
 
     protected override void OnEnd()
     {
         _endAttempted = true;
         base.OnEnd();
-        _tracker.Finish(Failed);
+        _tracker.Finish();
     }
 
     public void Cleanup()
@@ -246,9 +261,9 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
     public TrackedResetVegetation(Action<string> log, HashSet<string> ids, OperationParameters args,
         HashSet<Vector2s>? candidates = null, Func<Vector2s, bool>? canProcess = null,
         int maxZonesPerFrame = 64,
-        double frameBudgetMilliseconds = 8) : base(log, RequireIds(ids), args, candidates)
+        double frameBudgetMilliseconds = 8, Action<string>? warn = null) : base(log, RequireIds(ids), args, candidates)
     {
-        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds);
+        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn);
     }
 
     private static HashSet<string> RequireIds(HashSet<string> ids)
@@ -302,12 +317,12 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
         }
     }
 
-    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
+    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone);
 
     protected override void OnEnd()
     {
         base.OnEnd();
-        _tracker.Finish(Failed);
+        _tracker.Finish();
     }
 
     public void Cleanup() => _tracker.Cleanup();
@@ -323,10 +338,10 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
     public TrackedRegenerateLocations(Action<string> log, HashSet<string> ids, OperationParameters args,
         HashSet<Vector2s>? candidates = null, Func<Vector2s, bool>? canProcess = null,
         int maxZonesPerFrame = 64,
-        double frameBudgetMilliseconds = 8) : base(log, RequireIds(ids), args, candidates)
+        double frameBudgetMilliseconds = 8, Action<string>? warn = null) : base(log, RequireIds(ids), args, candidates)
     {
         _ids = new HashSet<string>(ids);
-        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds);
+        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn);
     }
 
     private static HashSet<string> RequireIds(HashSet<string> ids)
@@ -396,12 +411,12 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         return changed;
     }
 
-    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone, () => Failed++);
+    protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone);
 
     protected override void OnEnd()
     {
         base.OnEnd();
-        _tracker.Finish(Failed);
+        _tracker.Finish();
     }
 
     public void Cleanup() => _tracker.Cleanup();

@@ -381,6 +381,7 @@ internal static class Program
             c.Set("Reset", "Locations", "true");
             c.Set("Protection", "LocationSafeZones", "0");
             c.Set("Protection", "PieceBlacklist", "piece_workbench,custom_marker");
+            c.Set("Protection", "EpicLootProtection", "false");
             c.Set("Reset", "LocationIds", "Hildir_cave");
         }, skipStartupDelay: false);
         f.Run();
@@ -392,6 +393,7 @@ internal static class Program
         f.Plugin.Config.Set("Reset", "Locations", "false");
         f.Plugin.Config.Set("Protection", "LocationSafeZones", "1");
         f.Plugin.Config.Set("Protection", "PieceBlacklist", "");
+        f.Plugin.Config.Set("Protection", "EpicLootProtection", "true");
         Time.realtimeSinceStartup = 30;
         f.Tick();
         var dispatched = MaintenancePipeline.Created.Single();
@@ -404,6 +406,8 @@ internal static class Program
         Equal(20f, dispatched.Options.VegetationTerrainRadius, "accepted terrain resource radius");
         True(dispatched.Options.PieceBlacklist.SequenceEqual(new[] { "piece_workbench", "custom_marker" }),
             "accepted blacklist survives cfg edits before dispatch");
+        True(!dispatched.Options.EpicLootProtectionEnabled,
+            "accepted EpicLoot policy survives cfg edits before dispatch");
         Equal("Hildir_cave", dispatched.Options.LocationIds.Single(), "accepted exact location list");
     }
 

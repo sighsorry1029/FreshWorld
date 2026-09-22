@@ -17,6 +17,8 @@ internal static class GameWorld
         AccessTools.FieldRefAccess<ZDOMan, Dictionary<ZDOID, ZDO>>("m_objectsByID");
     private static readonly AccessTools.FieldRef<ZNetScene, Dictionary<ZDO, ZNetView>> SceneInstances =
         AccessTools.FieldRefAccess<ZNetScene, Dictionary<ZDO, ZNetView>>("m_instances");
+    private static readonly AccessTools.FieldRef<ZoneSystem, Dictionary<Vector2s, List<ZDO>>> LoadingObjects =
+        AccessTools.FieldRefAccess<ZoneSystem, Dictionary<Vector2s, List<ZDO>>>("m_loadingObjectsInZones");
     private static readonly Func<ZoneSystem, Vector2s, bool> PokeLocalZone =
         AccessTools.MethodDelegate<Func<ZoneSystem, Vector2s, bool>>(AccessTools.Method(typeof(ZoneSystem), "PokeLocalZone"));
 
@@ -30,7 +32,8 @@ internal static class GameWorld
     private static readonly FieldInfo HeightmapBuildData = AccessTools.Field(typeof(Heightmap), "m_buildData")
         ?? throw new MissingFieldException(typeof(Heightmap).FullName, "m_buildData");
     private static readonly int PlayerPrefab = "Player".GetStableHashCode();
-    private static readonly HashSet<Vector2s> OwnedLoads = new();
+    private static readonly Dictionary<Vector2s, GameObject> OwnedLoads = new();
+    private static readonly HashSet<Vector2s> DeferredReleases = new();
     private static ZoneSystem? _loadWorld;
 
     public static Vector2s[] GeneratedSnapshot(HashSet<Vector2s>? candidates = null)
@@ -98,11 +101,14 @@ internal static class GameWorld
         return true;
     }
 
-    public static void RemoveZDO(ZDO zdo) => RemoveZDO(zdo, null);
+    public static void RemoveZDO(ZDO zdo) => RemoveZDO(zdo, true);
 
-    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited)
+    public static void RemoveZDO(ZDO zdo, bool protectEpicLoot) => RemoveZDO(zdo, null, protectEpicLoot);
+
+    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot)
     {
-        if (zdo == null || !zdo.IsValid() || IsPlayer(zdo)) return;
+        if (zdo == null || !zdo.IsValid() || IsPlayer(zdo) ||
+            (protectEpicLoot && EpicLootProtection.IsTreasureObject(zdo))) return;
         if (visited != null && !visited.Add(zdo.m_uid)) return;
         var manager = ZDOMan.instance;
         zdo.SetOwner(ZDOMan.GetSessionID());
@@ -111,7 +117,7 @@ internal static class GameWorld
         {
             // A corrupt/modded connection cycle must not recurse forever while cleaning a zone.
             visited ??= new HashSet<ZDOID> { zdo.m_uid };
-            RemoveZDO(child, visited);
+            RemoveZDO(child, visited, protectEpicLoot);
         }
         if (!zdo.IsValid()) return;
         var scene = ZNetScene.instance;
@@ -141,7 +147,17 @@ internal static class GameWorld
         var current = ZoneSystem.instance;
         if (ReferenceEquals(current, _loadWorld)) return;
         OwnedLoads.Clear();
+        DeferredReleases.Clear();
         _loadWorld = current;
+    }
+
+    public static string DescribeZoneLoad(Vector2s zone)
+    {
+        var world = ZoneSystem.instance;
+        var hasRoot = TryGetRoot(zone, out _);
+        var loading = LoadingObjects(world);
+        var count = loading.TryGetValue(zone, out var objects) ? objects.Count : 0;
+        return $"root={hasRoot}, loaded={world.IsZoneLoaded(zone)}, loadingObjects={count}";
     }
 
     public static void PokeZone(Vector2s zone)
@@ -150,14 +166,35 @@ internal static class GameWorld
         var world = ZoneSystem.instance;
         if (world.IsZoneLoaded(zone)) return;
         // A root that already exists may still be loading for a player. FreshWorld does not own it.
-        if (!TryGetRoot(zone, out _)) OwnedLoads.Add(zone);
+        var hadRoot = TryGetRoot(zone, out _);
         PokeLocalZone(world, zone);
+        if (!hadRoot && TryGetRoot(zone, out var createdRoot))
+        {
+            OwnedLoads[zone] = createdRoot;
+            DeferredReleases.Remove(zone);
+        }
     }
 
     public static void ReleaseZone(Vector2s zone)
     {
         EnsureLoadWorld();
-        if (!OwnedLoads.Remove(zone)) return;
+        if (!OwnedLoads.TryGetValue(zone, out var ownedRoot)) return;
+        // Native streaming can replace a root before a deferred release is polled.
+        if (!TryGetRoot(zone, out var root) || !ReferenceEquals(root, ownedRoot))
+        {
+            OwnedLoads.Remove(zone);
+            DeferredReleases.Remove(zone);
+            return;
+        }
+        // LocationProxy and DungeonGenerator unregister their loads during their own lifecycle.
+        // Removing their root before that work finishes can interrupt asset spawning and zone readiness.
+        if (!ZoneSystem.instance.IsZoneLoaded(zone))
+        {
+            DeferredReleases.Add(zone);
+            return;
+        }
+        OwnedLoads.Remove(zone);
+        DeferredReleases.Remove(zone);
         var objects = GetZDOs(zone);
         // A player can arrive while a manually poked zone is loading. Hand it back to normal streaming.
         if (objects.Any(zdo => zdo != null && zdo.IsValid() && IsPlayer(zdo))) return;
@@ -178,6 +215,21 @@ internal static class GameWorld
         RemoveRoot(zone);
     }
 
+    public static int ProcessDeferredReleases()
+    {
+        if (DeferredReleases.Count == 0) return 0;
+        EnsureLoadWorld();
+        if (ZNetScene.instance == null || ZDOMan.instance == null) return 0;
+        var released = 0;
+        foreach (var zone in DeferredReleases.ToArray())
+        {
+            if (!ZoneSystem.instance.IsZoneLoaded(zone) && TryGetRoot(zone, out _)) continue;
+            ReleaseZone(zone);
+            if (!DeferredReleases.Contains(zone)) released++;
+        }
+        return released;
+    }
+
     public static bool TryGetRoot(Vector2s zone, out GameObject root)
     {
         var roots = (IDictionary)(ZoneRoots.GetValue(ZoneSystem.instance)
@@ -196,6 +248,7 @@ internal static class GameWorld
         EnsureLoadWorld();
         GeneratedZones(ZoneSystem.instance).Remove(zone);
         OwnedLoads.Remove(zone);
+        DeferredReleases.Remove(zone);
         RemoveRoot(zone);
     }
 

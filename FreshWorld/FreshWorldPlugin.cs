@@ -8,6 +8,7 @@ using FreshWorld.Backend;
 using FreshWorld.Configuration;
 using FreshWorld.Commands;
 using FreshWorld.Core;
+using FreshWorld.Engine;
 using FreshWorld.Runtime;
 using HarmonyLib;
 using UnityEngine;
@@ -19,7 +20,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.0.7";
+        public const string ModVersion = "1.0.8";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -45,6 +46,7 @@ namespace FreshWorld
         private float attachedAt;
         private float nextPoll;
         private float nextCheckpoint;
+        private float nextReleaseSweep;
         private ManualRequest? pendingManual;
         private string? activeRunId;
         private string progress = "Idle.";
@@ -172,6 +174,13 @@ namespace FreshWorld
                     CancelPendingManual("The hosting world is no longer ready.");
                     return;
                 }
+                var now = Time.realtimeSinceStartup;
+                if (now >= nextReleaseSweep)
+                {
+                    var released = GameWorld.ProcessDeferredReleases();
+                    if (released > 0) Logger.LogInfo($"Cleared {released} deferred maintenance zone release(s).");
+                    nextReleaseSweep = now + 1f;
+                }
                 AttachHost(current);
 
                 if (runner != null)
@@ -194,7 +203,6 @@ namespace FreshWorld
                         TryDispatch(pendingManual.Run, pendingManual.Options);
                 }
 
-                var now = Time.realtimeSinceStartup;
                 if (now < nextPoll) return;
                 nextPoll = now + SchedulePollIntervalSeconds;
                 var due = scheduler!.GetDue(lastClock);
@@ -462,6 +470,7 @@ namespace FreshWorld
             host = null;
             worldUid = null;
             nextPoll = 0;
+            nextReleaseSweep = 0;
             sessionFaulted = false;
             activeRunId = null;
             progress = "Idle.";

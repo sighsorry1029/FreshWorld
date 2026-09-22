@@ -56,7 +56,7 @@ internal class RegenerateLocations : ZoneOperation
 
         var zones = ZoneSystem.instance;
         var radius = location.m_location.m_exteriorRadius;
-        ClearLocationObjects(zone, location.m_position, radius);
+        ClearLocationObjects(zone, location.m_position, radius, Args.ProtectEpicLoot);
         var terrainRadius = Args.TerrainReset > 0 ? Args.TerrainReset : radius;
         if (terrainRadius > 0)
         {
@@ -82,7 +82,7 @@ internal class RegenerateLocations : ZoneOperation
         return true;
     }
 
-    private static void ClearLocationObjects(Vector2s zone, Vector3 center, float radius)
+    private static void ClearLocationObjects(Vector2s zone, Vector3 center, float radius, bool protectEpicLoot)
     {
         if (radius <= 0) return;
         var squaredRadius = radius * radius;
@@ -95,7 +95,7 @@ internal class RegenerateLocations : ZoneOperation
             var position = zdo.GetPosition();
             var dx = position.x - center.x;
             var dz = position.z - center.z;
-            if (position.y > 4000f || dx * dx + dz * dz < squaredRadius) GameWorld.RemoveZDO(zdo);
+            if (position.y > 4000f || dx * dx + dz * dz < squaredRadius) GameWorld.RemoveZDO(zdo, protectEpicLoot);
         }
     }
 

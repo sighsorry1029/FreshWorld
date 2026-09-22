@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="../FreshWorld.Core/FreshWorld.Core.csproj" />
     <Compile Include="../FreshWorld/Engine/GameWorld.cs" Link="Production/GameWorld.cs" />
+    <Compile Include="../FreshWorld/Engine/EpicLootProtection.cs" Link="Production/EpicLootProtection.cs" />
     <Compile Include="../FreshWorld/Engine/ResetZones.cs" Link="Production/ResetZones.cs" />
     <Compile Include="../FreshWorld/Engine/BaseProtection.cs" Link="Production/BaseProtection.cs" />
     <Compile Include="../FreshWorld/Configuration/FreshWorldConfig.cs" Link="Production/FreshWorldConfig.cs" />

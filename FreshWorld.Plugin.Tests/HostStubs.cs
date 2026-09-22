@@ -142,6 +142,14 @@ public sealed class EnvMan
     public float m_dayLengthSec = 1800; // Vanilla _Environment prefab value overrides EnvMan's field initializer.
 }
 
+namespace FreshWorld.Engine
+{
+    internal static class GameWorld
+    {
+        public static int ProcessDeferredReleases() => 0;
+    }
+}
+
 namespace FreshWorld.Backend
 {
     internal sealed class MaintenancePipeline

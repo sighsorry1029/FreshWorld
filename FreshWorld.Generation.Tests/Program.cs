@@ -18,6 +18,7 @@ var tests = new (string Name, Action Test)[]
     ("named modded references remain eligible and unnamed invalid references stay excluded", NamedLocations),
     ("location clearing preserves controls and selects radius plus high dungeon objects", LocationClearScope),
     ("canceling an unloaded native operation releases its pending load", Cancellation),
+    ("protection refusal prevents native object terrain and placement changes before and after loading", ProtectedGeneration),
     ("empty IDs cannot expand a native reset", EmptyIds),
 };
 int failures = 0;
@@ -87,6 +88,35 @@ static void VegetationWaitsForLoad()
     zones.Loaded.Add(Zone()); Drain(runner);
     Equal(1, zones.VegetationCalls); Equal(1, GameWorld.Removed.Count);
     Success(errors, finishes);
+}
+
+static void ProtectedGeneration()
+{
+    foreach (var resources in new[] { true, false })
+        foreach (var waitForLoad in new[] { true, false })
+        {
+            Reset();
+            var zones = ZoneSystem.instance;
+            var allowed = waitForLoad;
+            if (waitForLoad) zones.Loaded.Clear();
+            GameWorld.Objects[Zone()] = new() { new("rock4_copper", new()), new("dungeon", new(0, 4500, 0)) };
+            var errors = new List<Exception>(); var finishes = new List<bool>();
+            ITrackedOperation operation = resources
+                ? new TrackedResetVegetation(_ => { }, new() { "rock4_copper" }, new() { TerrainReset = 20 }, canProcess: _ => allowed)
+                : new TrackedRegenerateLocations(_ => { }, new() { "Hildir_cave" }, new(), canProcess: _ => allowed);
+            using var runner = Start(operation, errors, finishes);
+            if (waitForLoad)
+            {
+                Equal(true, runner.MoveNext());
+                zones.Loaded.Add(Zone());
+                allowed = false;
+            }
+            Drain(runner); Success(errors, finishes);
+            Equal(0, GameWorld.Removed.Count); Equal(0, TerrainResetter.Restored.Count);
+            Equal(0, zones.VegetationCalls); Equal(0, zones.LocationCalls);
+            Equal(true, zones.m_locationInstances[Zone()].m_placed);
+            Equal(0, operation.Result.ChangedZones.Count); Equal(1, operation.Result.SkippedZones.Count);
+        }
 }
 static void LocationWaitsForLoad()
 {

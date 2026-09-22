@@ -39,7 +39,7 @@ internal static class ConfigPresentationRegressions
         {
             ("General", new[] { "Enabled", "Mode", "GameDayInterval", "DailyTimes" }, 300),
             ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds" }, 200),
-            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "PieceBlacklist" }, 100)
+            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "EpicLootProtection", "PieceBlacklist" }, 100)
         };
         foreach (var (section, keys, categoryOrder) in expected)
         {
@@ -48,7 +48,7 @@ internal static class ConfigPresentationRegressions
             Require(entries.All(entry => Metadata(entry).CategoryOrder == categoryOrder && entry.Description.AcceptableValues == null), section + " metadata");
         }
         Require(Metadata(file.Get("General", "Enabled")).DispName == "Automatic Runs", "Display name must not rename the cfg key.");
-        Require(file.BoundKeys.Count() == 15, "Unexpected new settings.");
+        Require(file.BoundKeys.Count() == 16, "Unexpected new settings.");
     }
 
     private static void DrawWithoutEdits()
@@ -88,6 +88,10 @@ internal static class ConfigPresentationRegressions
             "Selecting protection changed another stage or failed to repair the invalid value.");
         Require(protection.GetSerializedValue() == "2", "SafeZones saved its display label instead of its cfg value.");
         Require(!snapshot.Options.LocationsEnabled && snapshot.Options.LocationIds.Length == 14, "Presentation altered unrelated defaults.");
+        Require(snapshot.Options.EpicLootProtectionEnabled, "EpicLoot protection must remain enabled by default.");
+        file.Set("Protection", "EpicLootProtection", "false");
+        Require(!config.Capture().Options.EpicLootProtectionEnabled && snapshot.Options.EpicLootProtectionEnabled,
+            "EpicLoot toggle changed an existing run snapshot.");
     }
 
     private static void EditNumbers()

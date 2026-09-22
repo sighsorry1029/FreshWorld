@@ -33,7 +33,7 @@ internal class ResetZones : ZoneOperation
         foreach (var zdo in GameWorld.GetZDOs(zone))
         {
             if (zdo == null || !zdo.IsValid()) continue;
-            if (ZoneSystem.GetZone(zdo.GetPosition()) == zone) GameWorld.RemoveZDO(zdo);
+            if (ZoneSystem.GetZone(zdo.GetPosition()) == zone) GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot);
         }
 
         if (world.m_locationInstances.TryGetValue(zone, out var location))
@@ -66,6 +66,6 @@ internal class ResetZones : ZoneOperation
         ClutterSystem.instance?.ClearAll();
         GameWorld.RecalculateTerrain();
         if (Minimap.instance != null) UpdateLocationPins(Minimap.instance, 1000);
-        Log($"Zone reset finished: {_reset} zones reset, {Failed} failed.");
+        Log($"Zone reset finished: {_reset} zones reset, 0 failed.");
     }
 }

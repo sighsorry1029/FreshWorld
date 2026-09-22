@@ -16,7 +16,22 @@ public class Terminal
 }
 public class Console : Terminal { public static Console instance = new(); }
 public class ZRpc { }
-public class ZDO { }
+public static class HashExtensions { public static int GetStableHashCode(this string value) => StringComparer.Ordinal.GetHashCode(value); }
+public class ZDO
+{
+    public string Prefab = "EL_SpawnController";
+    public bool HasTreasure = true;
+    public bool IsBounty;
+    private static readonly byte[] TreasurePayload = [1];
+    public bool Valid = true;
+    public Vector2s Zone;
+    public bool IsValid() => Valid;
+    public int GetPrefab() => Prefab.GetStableHashCode();
+    public string GetString(int key) => key == "BountyID".GetStableHashCode() && IsBounty ? "bounty" : "";
+    public bool GetBool(int key) => key == "isBounty".GetStableHashCode() && IsBounty;
+    public byte[]? GetByteArray(int key) => key == "treasure_spawn".GetStableHashCode() && HasTreasure ? TreasurePayload : null;
+    public UnityEngine.Vector3 GetPosition() => new(Zone.x * 64, 0, Zone.y * 64);
+}
 public class World { public long m_uid = 123; }
 public class ZNet
 {
@@ -46,7 +61,7 @@ public class ZNet
     }
 }
 public class ZNetScene { public static ZNetScene instance = new(); }
-public class ZDOMan { public static ZDOMan instance = new(); }
+public class ZDOMan { public static ZDOMan instance = new(); public List<ZDO> Objects = new(); }
 public class WorldGenerator { public static WorldGenerator instance = new(); }
 public class DungeonDB
 {
@@ -66,8 +81,9 @@ public class ZoneSystem
     public List<UnityEngine.GameObject> m_tempSpawnedObjects = new();
     public bool IsZoneLoaded(Vector2s zone) => Loaded.Contains(zone);
     public bool SkipSaving() => false;
-    public class ZoneVegetation(string id) { public Prefab m_prefab = new(id); }
-    public class ZoneLocation(string id) { public LocationPrefab m_prefab = new(id); }
+    public static Vector2s GetZone(UnityEngine.Vector3 position) => new((int)Math.Floor((position.x + 32) / 64), (int)Math.Floor((position.z + 32) / 64));
+    public class ZoneVegetation(string id) { public Prefab m_prefab = new(id); public float m_groupRadius; }
+    public class ZoneLocation(string id) { public LocationPrefab m_prefab = new(id); public float m_exteriorRadius; public float m_interiorRadius; }
     public struct LocationInstance
     {
         public bool m_placed;
@@ -139,6 +155,7 @@ internal static class Fake
 
 namespace UnityEngine
 {
+    public readonly record struct Vector3(float x, float y, float z);
     public class Object
     {
         public static void Destroy(GameObject obj) => Fake.DestroyedGhosts.Add(obj);
@@ -201,6 +218,7 @@ namespace FreshWorld.Configuration
         public bool LocationsEnabled { get; set; } = true;
         public string[] LocationIds { get; set; } = ["cave"];
         public int LocationSafeZones { get; set; }
+        public bool EpicLootProtectionEnabled { get; set; } = true;
         public int MaxZonesPerFrame { get; set; } = 1;
         public double FrameBudgetMilliseconds { get; set; } = 8;
         public float SaveTimeoutSeconds { get; set; } = 180;
@@ -217,12 +235,16 @@ namespace FreshWorld.Engine
     }
     public static class GameWorld
     {
+        public static IEnumerable<ZDO> AllZDOs() => ZDOMan.instance.Objects.ToArray();
+        public static List<ZDO> GetZDOs(Vector2s zone) => ZDOMan.instance.Objects.Where(zdo => zdo.Valid && zdo.Zone == zone).ToList();
         public static readonly HashSet<Vector2s> Pending = new();
         public static Vector2s[] GeneratedSnapshot(HashSet<Vector2s>? candidates = null) =>
             ZoneSystem.instance.m_generatedZones.Where(zone => candidates == null || candidates.Contains(zone)).OrderBy(z => z.x).ToArray();
         public static HashSet<Vector2s> GeneratedSetSnapshot() => new(ZoneSystem.instance.m_generatedZones);
         public static void CollectPlayerZones(HashSet<Vector2s> zones) => zones.UnionWith(Fake.PlayerZones);
         public static bool IsGenerated(Vector2s zone) => ZoneSystem.instance.m_generatedZones.Contains(zone);
+        public static string DescribeZoneLoad(Vector2s zone) =>
+            $"root={Pending.Contains(zone)}, loaded={ZoneSystem.instance.IsZoneLoaded(zone)}, loadingObjects=0";
         public static void RecalculateTerrain() => Fake.Calls.Add("terrain.refresh");
         public static void PokeZone(Vector2s zone)
         {

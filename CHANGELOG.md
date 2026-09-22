@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.8
+
+- Protected unfound EpicLoot treasure chests and pending treasure controllers in their own zones, with a server-synced `EpicLootProtection` switch enabled by default.
+- Skipped zones that remain unavailable after a bounded load wait, reported their status, and cleaned up deferred zone releases without aborting the rest of maintenance.
+
 ## 1.0.7
 
 - Fixed a startup error caused by Harmony treating ordinary cleanup methods as patch hooks.

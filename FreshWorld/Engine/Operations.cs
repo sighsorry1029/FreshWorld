@@ -9,13 +9,13 @@ internal sealed class OperationParameters
 {
     public int SafeZones { get; set; }
     public float TerrainReset { get; set; }
+    public bool ProtectEpicLoot { get; set; } = true;
 }
 
 /// <summary>Typed host-side operations; exceptions propagate to the owning guarded runner.</summary>
 internal abstract class ExecutedOperation
 {
     protected readonly Action<string> Log;
-    protected int Failed;
     protected ExecutedOperation(Action<string> log) => Log = log;
     public void Init()
     {

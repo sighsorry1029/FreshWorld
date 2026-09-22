@@ -34,6 +34,12 @@ public class ZDO(long id, string prefab, Vector3 position)
     public long Owner;
     public long Creator;
     public ZDOID Spawned;
+    public readonly Dictionary<int, string> Strings = new();
+    public readonly Dictionary<int, bool> Bools = new();
+    public readonly Dictionary<int, byte[]> Bytes = new();
+    public string GetString(int key) => Strings.GetValueOrDefault(key, "");
+    public bool GetBool(int key) => Bools.GetValueOrDefault(key);
+    public byte[]? GetByteArray(int key) => Bytes.GetValueOrDefault(key);
     public bool IsValid() => Valid;
     public int GetPrefab() => prefab.GetStableHashCode();
     public long GetLong(int key) => key == ZDOVars.s_creator ? Creator : 0;
@@ -305,12 +311,13 @@ namespace HarmonyLib
 }
 namespace FreshWorld.Engine
 {
-    internal sealed class OperationParameters { }
+    internal sealed class OperationParameters { public bool ProtectEpicLoot { get; set; } = true; }
     internal abstract class ZoneOperation
     {
         protected Action<string> Log;
         protected int Failed;
-        protected ZoneOperation(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) { Log = log; Failed = 0; }
+        protected readonly OperationParameters Args;
+        protected ZoneOperation(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) { Log = log; Args = args; Failed = 0; }
         protected abstract bool ExecuteZone(Vector2s zone);
         protected abstract void OnEnd();
     }

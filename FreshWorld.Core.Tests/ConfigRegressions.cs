@@ -19,13 +19,13 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact fifteen bindings in three sections and game-day defaults", () =>
+        Check("exact sixteen bindings in three sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.ResourceTerrainRadius",
-                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist" };
-            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the fifteen-key design");
+                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.EpicLootProtection", "Protection.PieceBlacklist" };
+            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the sixteen-key design");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
             Assert(snapshot.Options.VegetationIds.Length == 0 && snapshot.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper", "silvervein" }) &&
@@ -37,6 +37,7 @@ internal static class ConfigRegressions
             Assert(snapshot.Options.PieceBlacklist.SequenceEqual(new[] { "fire_pit" }),
                 "only campfires should be excluded from automatic Piece markers by default");
             Assert(snapshot.Options.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }), "fixed tombstone marker changed");
+            Assert(snapshot.Options.EpicLootProtectionEnabled, "EpicLoot protection default changed");
             Assert(snapshot.Options.VegetationTerrainRadius == 20 && !snapshot.Schedule.RunMissedOnWorldStart, "terrain and missed-run policy");
             Assert(file.SaveCount == 0, "Capture must not mutate/save config");
         });

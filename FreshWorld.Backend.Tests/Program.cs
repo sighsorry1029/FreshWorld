@@ -40,6 +40,7 @@ var tests = new (string Name, Action Body)[]
     ("vegetation exception restores shared settings and releases its load", VegetationFailure),
     ("location generation failure removes only its new temporary objects", LocationGhostFailure),
     ("canceling a nested load releases it without starting another stage", CancelLoad),
+    ("a slow zone is logged and skipped without failing the operation", SlowZoneSkip),
     ("canceling a partial zone reset finalizes its borders once", CancelZones),
     ("cleanup attempts every pending release even after a release error", CleanupAll),
     ("cancel cleanup failure still attempts terrain refresh", CleanupRefresh),
@@ -50,7 +51,13 @@ var tests = new (string Name, Action Body)[]
     ("paused maintenance does not mutate another zone", PauseZones),
     ("pausing after the final zone delays terrain border finalization", PauseBeforeFinalization),
     ("paused save time does not consume the timeout", PauseSaveTimeout),
-    ("gate refuses overlapping work and releases idempotently", GateExclusion)
+    ("gate refuses overlapping work and releases idempotently", GateExclusion),
+    ("treasure protects only its own sector in all stages and releases on the next run", TreasureStages),
+    ("disabled EpicLoot protection permits direct resets in treasure sectors", TreasureDisabled),
+    ("treasure snapshot is taken after the initial world save", TreasureAfterSave),
+    ("load retries protect new treasures only in the target sector", TreasureDuringLoad),
+    ("neighbor treasure does not block resource terrain group or location extents", TreasureNeighbors),
+    ("bounty objects do not protect sectors from any stage", BountyStages)
 };
 
 var failures = 0;
@@ -644,6 +651,37 @@ static void CancelLoad()
     True(!Fake.Calls.Contains("locations.create"));
 }
 
+static void SlowZoneSkip()
+{
+    Fake.AddZone(0);
+    Fake.LoadOnPoke = false;
+    var zone = new Vector2s(0, 0);
+    var warnings = new List<string>();
+    var tracker = new OperationTracker(null, 64, 8, warnings.Add, loadTimeoutMilliseconds: 30);
+    tracker.Selected([zone]);
+    tracker.MayLoad(zone);
+    var attempts = 0;
+    var execution = tracker.Execute([zone], target =>
+    {
+        attempts++;
+        GameWorld.PokeZone(target);
+        return false;
+    });
+    True(execution.MoveNext());
+    Thread.Sleep(50);
+    while (execution.MoveNext()) { }
+    tracker.Finish();
+    tracker.Cleanup();
+    Equal(2, attempts);
+    Equal(0, tracker.Result.FailedCount);
+    Sequence([zone], tracker.Result.TimedOutZones);
+    Sequence([zone], tracker.Result.SkippedZones);
+    True(tracker.Result.LoadWaitSeconds >= 0.03);
+    True(warnings.Single().Contains("Zone 0,0") && warnings[0].Contains("loadingObjects="));
+    Equal(0, GameWorld.Pending.Count);
+    Equal(1, Fake.LoadReleases);
+}
+
 static void CancelZones()
 {
     Fake.AddZone(0); Fake.AddZone(1);
@@ -808,6 +846,112 @@ static void GateExclusion()
     lease.Dispose(); lease.Dispose();
     True(MaintenanceGate.IsAvailable);
 
+}
+
+static void TreasureStages()
+{
+    foreach (var zoneReset in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1); Fake.AddZone(2);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+        ZDOMan.instance.Objects.Add(new() { Zone = new(0, 0) });
+        // A target completed/removed after planning remains protected until this run ends.
+        Fake.OnStart = _ => ZDOMan.instance.Objects.Clear();
+        var options = new RunOptions { ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationIds = ["raspberry"] };
+        True(Run(options).Success);
+        True(!Fake.Calls.Any(call => (call.StartsWith("zones.change:") || IsSupplementChange(call)) &&
+            call.EndsWith(":0")));
+        True(Fake.Calls.Any(call => call.EndsWith("change:1")));
+        True(Fake.Calls.Any(call => call.EndsWith("change:2")));
+        Fake.Calls.Clear();
+        True(Run(options).Success);
+        True(Fake.Calls.Any(call => call.EndsWith("change:0")));
+    }
+}
+
+static void TreasureDisabled()
+{
+    foreach (var zoneReset in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZDOMan.instance.Objects.Add(new() { Zone = new(0, 0) });
+        var options = new RunOptions
+        {
+            ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationSafeZones = 0,
+            LocationSafeZones = 0, EpicLootProtectionEnabled = false
+        };
+        True(Run(options).Success);
+        True(Fake.Calls.Any(call => call.EndsWith("change:0")),
+            "Disabled EpicLoot protection blocked a reset stage.");
+    }
+}
+
+static void TreasureAfterSave()
+{
+    Fake.AddZone(0); Fake.HoldSave = true;
+    using var lease = MaintenanceGate.Acquire();
+    var completed = new List<bool>();
+    using var runner = NewRunner(new() { ZoneSafeZones = 0, VegetationEnabled = false, LocationsEnabled = false },
+        completed, advancePastSave: false);
+    True(runner.MoveNext());
+    ZDOMan.instance.Objects.Add(new() { Zone = new(0, 0) });
+    ZNet.instance.Saving = false;
+    Fake.OnStart = _ => ZDOMan.instance.Objects.Clear();
+    Drain(runner); Sequence([true], completed);
+    True(!Fake.Calls.Contains("zones.change:0"));
+}
+
+static void TreasureDuringLoad()
+{
+    foreach (var resources in new[] { true, false })
+    foreach (var sameSector in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        using var lease = MaintenanceGate.Acquire();
+        var completed = new List<bool>();
+        using var runner = NewRunner(new() { ZonesEnabled = false, VegetationEnabled = resources, LocationsEnabled = !resources }, completed);
+        True(runner.MoveNext()); True(GameWorld.Pending.Contains(new(0, 0)));
+        ZDOMan.instance.Objects.Add(new() { Zone = sameSector ? new(0, 0) : new(1, 1) });
+        Drain(runner); Sequence([true], completed);
+        Equal(!sameSector, Fake.Calls.Any(IsSupplementChange));
+        Equal(0, GameWorld.Pending.Count);
+    }
+}
+
+static void TreasureNeighbors()
+{
+    foreach (var kind in new[] { "terrain", "group", "exterior", "interior" })
+    {
+        Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZDOMan.instance.Objects.Add(new() { Zone = new(1, 0) });
+        var location = ZoneSystem.instance.m_locationInstances[new(0, 0)].m_location;
+        if (kind == "group") ZoneSystem.instance.m_vegetation[0].m_groupRadius = 100;
+        if (kind == "exterior") location.m_exteriorRadius = 128;
+        if (kind == "interior") location.m_interiorRadius = 128;
+        True(Run(new()
+        {
+            ZonesEnabled = false, VegetationEnabled = kind is "terrain" or "group",
+            LocationsEnabled = kind is "exterior" or "interior", VegetationTerrainRadius = kind == "terrain" ? 128 : 0
+        }).Success);
+        True(Fake.Calls.Any(IsSupplementChange), kind + " was blocked by a neighboring treasure sector");
+    }
+}
+
+static void BountyStages()
+{
+    foreach (var zoneReset in new[] { true, false })
+    foreach (var prefab in new[] { "EL_SpawnController", "Troll", "Greydwarf" })
+    {
+        Fake.Reset(); Fake.AddZone(0);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+        // Even a bounty controller with a leftover treasure payload is not protected.
+        ZDOMan.instance.Objects.Add(new() { Zone = new(0, 0), Prefab = prefab, IsBounty = true });
+        True(Run(new() { ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationIds = ["raspberry"] }).Success);
+        True(Fake.Calls.Any(call => call.EndsWith("change:0")));
+    }
 }
 
 static (bool Success, List<Exception> Errors, List<string> Warnings) Run(RunOptions options, bool includeVegetation = true)

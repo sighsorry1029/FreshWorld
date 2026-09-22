@@ -1,6 +1,6 @@
 # FreshWorld 1.0.7
 
-FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. The cfg has **15 options in three sections** and defaults to automatic restoration every **24 game days**.
+FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. The cfg has **16 options in three sections** and defaults to automatic restoration every **24 game days**.
 
 
 ![](https://i.ibb.co/WS2DPzB/freshzones.gif) <br>
@@ -29,6 +29,8 @@ Save and wait for completion
 ~~~
 
 Disabled stages are skipped. A stage must finish before the next one starts, and a failure stops the remaining stages. When both resource groups have targets and the terrain radius is positive, FreshWorld yields two frames between them so the game can refresh terrain and collision data. There is no fixed delay in seconds or minutes between stages.
+
+If a zone or location asset is still not ready after 30 seconds, FreshWorld logs its coordinates and loading state, skips that zone, and continues the run. A skipped zone is eligible again on the next run. FreshWorld releases a zone it opened only after loading finishes; a player who enters it keeps the zone loaded. Stage logs include the number of timed-out zones and time spent waiting for loading.
 
 The initial save is mandatory. A save failure or the 180-second save timeout prevents restoration from starting. FreshWorld does not request another save at the end: normal autosaves and a normal shutdown save persist the result. A crash before the next save can lose restoration changes even if the separate execution record says the run completed. FreshWorld does not create a separate backup or automatically restore one.
 
@@ -112,6 +114,7 @@ This protection skips direct targets; it does not clip terrain edits to the prot
 ZoneSafeZones = 1
 ResourceSafeZones = 0
 LocationSafeZones = 0
+EpicLootProtection = true
 PieceBlacklist = fire_pit
 ~~~
 
@@ -144,6 +147,16 @@ Ships built with the hammer have creator metadata and qualify automatically unle
 Player_tombstone is a separate built-in marker. Tombstones store a character/profile owner ID in s_owner, while placed buildings use s_creator. FreshWorld therefore checks tombstones without the building-creator requirement. PieceBlacklist does not disable this separate marker, even if it contains Player_tombstone.
 
 **All markers, including automatically detected Pieces and tombstones, protect zones only when that stage's SafeZones value is greater than 0.** SafeZones=0 bypasses this protection; it does not grant individual objects deletion immunity. Each stage keeps its own SafeZones policy. Terrain edits from outside a protected area can still cross its boundary, as described above.
+
+## EpicLoot treasure maps
+
+With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, even with all SafeZones settings set to 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.
+
+Neighboring zones remain eligible for restoration, including resource and location placement, terrain edits, and terrain-border repairs that cross into the treasure zone. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty targets, their adds, and bounty spawn controllers receive no special protection. Existing player, base, and tombstone rules remain separate.
+
+FreshWorld takes the initial treasure snapshot after the pre-maintenance save and rechecks saved objects in each target zone before an attempt or loading retry. Once observed, a protected zone remains protected for that run. A found or removed chest no longer triggers this treasure rule on the next run, although ordinary base-marker protection may still apply. A pending controller must contain treasure spawn data, must not be marked as a bounty, and must not have finished placement.
+
+There is no expiry or limit on protected treasure zones: an unfound chest can retain its one zone indefinitely. This does not recreate previously lost chests, clear old map pins, cancel contracts, grant rewards, or alter player progress. The recognized saved markers were checked against EpicLoot 0.14.10. Other reset tools are outside this protection.
 
 ## Manual commands and permissions
 

@@ -40,6 +40,7 @@ namespace FreshWorld.Configuration
         private readonly string[] locationIds;
         public string[] LocationIds => (string[])locationIds.Clone();
         public int LocationSafeZones { get; }
+        public bool EpicLootProtectionEnabled { get; }
         public int MaxZonesPerFrame => 64;
         public double FrameBudgetMilliseconds => 8;
         public float SaveTimeoutSeconds => 180;
@@ -47,7 +48,8 @@ namespace FreshWorld.Configuration
         internal RunOptions(bool zonesEnabled, int zoneSafeZones,
             string[] pieceBlacklist, string[] protectedObjects,
             bool vegetationEnabled, string[] vegetationIds, string[] terrainVegetationIds, float vegetationTerrainRadius,
-            int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones)
+            int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
+            bool epicLootProtectionEnabled)
         {
             ZonesEnabled = zonesEnabled; ZoneSafeZones = zoneSafeZones;
             this.pieceBlacklist = (string[])pieceBlacklist.Clone();
@@ -57,6 +59,7 @@ namespace FreshWorld.Configuration
             VegetationTerrainRadius = vegetationTerrainRadius; VegetationSafeZones = vegetationSafeZones;
             LocationsEnabled = locationsEnabled; this.locationIds = (string[])locationIds.Clone();
             LocationSafeZones = locationSafeZones;
+            EpicLootProtectionEnabled = epicLootProtectionEnabled;
         }
     }
 
@@ -70,7 +73,7 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<string> enabled, zonesEnabled, vegetationEnabled, locationsEnabled;
         private readonly ConfigEntry<string> dailyTimes, gameDayInterval, vegetationIds, terrainVegetationIds, locationIds;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
-        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius;
+        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
 
         public FreshWorldConfig(ConfigFile config)
@@ -122,6 +125,9 @@ namespace FreshWorld.Configuration
             locationSafeZones = Bind("Protection", "LocationSafeZones", new ConfigChoice<SafeZoneRange>("0"),
                 "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 bypasses base protection and can delete player pieces inside locations. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 200, choices: ConfigPresentation.SafeZoneChoices);
+            epicLootProtection = Bind("Protection", "EpicLootProtection", "true",
+                "Protect unfound EpicLoot treasure chests and pending treasure controllers in their own zones, even when SafeZones=0. Also prevent FreshWorld from deleting those objects through a reset in another zone. Set false to disable both protections on the next run. EpicLoot is optional.",
+                150, ConfigPresentation.DrawToggle);
             pieceBlacklist = Bind("Protection", "PieceBlacklist", DefaultPieceBlacklist,
                 "Comma-separated exact prefab IDs excluded from automatic base markers. Other Pieces with creator != 0 protect their zones when the stage's SafeZones > 0. Default fire_pit prevents lone campfires from protecting zones. Empty excludes no Pieces. Excluded Pieces can still share protection from other markers. Player_tombstone remains a separate marker unaffected by this list.",
                 100);
@@ -169,7 +175,8 @@ namespace FreshWorld.Configuration
             var options = new RunOptions(ReadBool(Value(zonesEnabled), "Reset.Zones"),
                 zoneProtection, blacklist, new[] { "Player_tombstone" },
                 ReadBool(Value(vegetationEnabled), "Reset.Resources"), vegetation, terrainVegetation, terrain, vegetationProtection,
-                ReadBool(Value(locationsEnabled), "Reset.Locations"), locations, locationProtection);
+                ReadBool(Value(locationsEnabled), "Reset.Locations"), locations, locationProtection,
+                ReadBool(Value(epicLootProtection), "Protection.EpicLootProtection"));
             return new RuntimeSettings(schedule, options);
         }
         private static bool ReadBool(string text, string key)

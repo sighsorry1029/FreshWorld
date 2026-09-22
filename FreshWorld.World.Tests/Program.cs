@@ -20,7 +20,9 @@ var tests = new (string Name, Action Body)[]
     ("spawned connection cycles delete each object once", SpawnedCycle),
     ("loaded object deletion uses the scene destruction path", LoadedDeletion),
     ("manual release unspawns scene objects without deleting their ZDOs", OwnedRelease),
-    ("deferred proxy destruction unregisters its load after zone release", DeferredReleaseLoading),
+    ("loading proxies keep their zone root until they finish", DeferredReleaseLoading),
+    ("deferred cleanup never removes a replacement zone root", DeferredReleaseReplacement),
+    ("a player entering a deferred zone keeps its root", DeferredPlayerArrival),
     ("old proxy destruction preserves new proxy loading in the same zone", DeferredResetLoading),
     ("naturally loading zones are never claimed or released", ExistingLoad),
     ("a player entering a manual zone keeps it loaded", PlayerEnters),
@@ -42,7 +44,15 @@ var tests = new (string Name, Action Body)[]
     ("missing prefab registry prevents an unprotected scan while safe zone zero remains valid", MissingPrefabRegistry),
     ("overlapping and duplicate markers in outside sectors deduplicate their zones", OutsideMarkers),
     ("explicit invalidation refreshes recently changed marker data", MarkerInvalidation),
-    ("expired marker cache refreshes within the same safe zone size", MarkerExpiry)
+    ("expired marker cache refreshes within the same safe zone size", MarkerExpiry),
+    ("EpicLoot protects only unfound treasure and pending treasure spawns without Piece or creator", TreasureMarkers),
+    ("treasure spawners require opaque payload and exclude bounty uninitialized and placed controllers", TreasureSpawners),
+    ("treasure observations survive completion for one run and refresh on the next", TreasureLifetime),
+    ("treasure sector checks see new and moved targets without protecting neighbors", TreasureMovement),
+    ("treasure protection stays in its own sector at native coordinate edges", TreasureSectorEdges),
+    ("spawned-child recursion cannot delete a treasure in a different sector", TreasureSpawnedChild),
+    ("disabled EpicLoot protection permits chest and spawned-child deletion", TreasureDeletionDisabled),
+    ("border finalization still repairs neighboring treasure sectors", TreasureBorders)
 };
 var failed = 0;
 foreach (var (name, body) in tests)
@@ -335,13 +345,50 @@ static void DeferredReleaseLoading()
     ZoneSystem.instance.SetLoadingInZone(proxy);
     view.gameObject.OnDestroy = () => ZoneSystem.instance.UnsetLoadingInZone(proxy);
     GameWorld.ReleaseZone(zone);
-    True(!ZoneSystem.instance.HasRoot(zone));
-    True(ZoneSystem.instance.IsLoading(zone)); // Native OnDestroy has not run yet.
+    True(ZoneSystem.instance.HasRoot(zone));
+    True(ZoneSystem.instance.IsLoading(zone));
+    True(!view.gameObject.Destroyed);
+    Equal(0, GameWorld.ProcessDeferredReleases());
+    True(ZoneSystem.instance.HasRoot(zone));
+    ZoneSystem.instance.UnsetLoadingInZone(proxy);
+    view.gameObject.OnDestroy = null; // Native proxy clears its registration after loading.
+    Equal(1, GameWorld.ProcessDeferredReleases());
+    True(!ZoneSystem.instance.HasRoot(zone) && view.gameObject.Destroyed);
     UnityEngine.Object.FlushDestroyCallbacks();
     True(!ZoneSystem.instance.IsLoading(zone));
     True(proxy.Valid); // Unloading preserved the persistent proxy record.
     GameWorld.PokeZone(zone);
     True(ZoneSystem.instance.HasRoot(zone) && ZoneSystem.instance.IsZoneLoaded(zone));
+}
+
+static void DeferredReleaseReplacement()
+{
+    var zone = new Vector2s(0, 0);
+    GameWorld.PokeZone(zone);
+    True(GameWorld.TryGetRoot(zone, out var original));
+    var proxy = new ZDO(1, "LocationProxy", new());
+    ZoneSystem.instance.SetLoadingInZone(proxy);
+    GameWorld.ReleaseZone(zone);
+    var replacement = ZoneSystem.instance.AddRoot(zone);
+    ZoneSystem.instance.UnsetLoadingInZone(proxy);
+    Equal(1, GameWorld.ProcessDeferredReleases());
+    True(!replacement.Destroyed && ZoneSystem.instance.HasRoot(zone));
+    True(!original.Destroyed);
+    Equal(0, GameWorld.ProcessDeferredReleases());
+}
+
+static void DeferredPlayerArrival()
+{
+    var zone = new Vector2s(0, 0);
+    GameWorld.PokeZone(zone);
+    True(GameWorld.TryGetRoot(zone, out var root));
+    var proxy = new ZDO(1, "LocationProxy", new());
+    ZoneSystem.instance.SetLoadingInZone(proxy);
+    GameWorld.ReleaseZone(zone);
+    ZDOMan.instance.Add(new(2, "Player", new()));
+    ZoneSystem.instance.UnsetLoadingInZone(proxy);
+    Equal(1, GameWorld.ProcessDeferredReleases());
+    True(!root.Destroyed && ZoneSystem.instance.HasRoot(zone));
 }
 
 static void DeferredResetLoading()
@@ -735,6 +782,140 @@ static void MarkerExpiry()
     typeof(BaseProtection).GetField("calculatedAt", BindingFlags.Static | BindingFlags.NonPublic)!
         .SetValue(null, DateTime.UtcNow.AddSeconds(-11));
     Equal(2, BaseProtection.GetExcluded(1).Count);
+}
+
+static ZDO TreasureChest(long id, Vector3 position, bool found = false)
+{
+    var zdo = new ZDO(id, "loot_chest_stone", position);
+    zdo.Strings["TreasureMapChest.Biome".GetStableHashCode()] = "BlackForest";
+    zdo.Bools["TreasureMapChest.HasBeenFound".GetStableHashCode()] = found;
+    return zdo;
+}
+
+static ZDO TreasureSpawner(long id, Vector3 position)
+{
+    var zdo = new ZDO(id, "EL_SpawnController", position);
+    // An opaque marker, not a BinaryFormatter fixture: protection must never deserialize it.
+    zdo.Bytes["treasure_spawn".GetStableHashCode()] = [255];
+    return zdo;
+}
+
+static void TreasureMarkers()
+{
+    var spawner = TreasureSpawner(1, new());
+    var chest = TreasureChest(2, new());
+    var found = TreasureChest(3, new(), found: true);
+    var ordinary = new ZDO(4, "loot_chest_stone", new()) { Creator = 123 };
+    var leader = new ZDO(5, "Troll", new());
+    var add = new ZDO(6, "Greydwarf", new());
+    leader.Strings["BountyID".GetStableHashCode()] = "owner/interval/biome";
+    add.Strings["BountyID".GetStableHashCode()] = "owner/interval/biome";
+    add.Bools["IsAdd".GetStableHashCode()] = true;
+    foreach (var target in new[] { spawner, chest })
+    {
+        True(EpicLootProtection.IsTreasureObject(target));
+        Equal(0L, target.Creator);
+        GameWorld.RemoveZDO(target);
+        True(target.Valid); Equal(0L, target.Owner);
+    }
+    foreach (var target in new[] { found, ordinary, leader, add, new ZDO(7, "Troll", new()) })
+    {
+        True(!EpicLootProtection.IsTreasureObject(target));
+        GameWorld.RemoveZDO(target); True(!target.Valid);
+    }
+    spawner.Valid = false;
+    True(!EpicLootProtection.IsTreasureObject(spawner));
+}
+
+static void TreasureSpawners()
+{
+    foreach (var kind in new[] { "pending", "uninitialized", "empty", "bounty", "placed", "other prefab" })
+    {
+        var zdo = kind == "other prefab" ? new ZDO(1, "other", new()) : TreasureSpawner(1, new());
+        if (kind == "uninitialized") zdo.Bytes.Clear();
+        if (kind == "empty") zdo.Bytes["treasure_spawn".GetStableHashCode()] = [];
+        if (kind == "bounty") zdo.Bools["isBounty".GetStableHashCode()] = true;
+        if (kind == "placed") zdo.Bools["placed".GetStableHashCode()] = true;
+        if (kind == "other prefab") zdo.Bytes["treasure_spawn".GetStableHashCode()] = [255];
+        Equal(kind == "pending", EpicLootProtection.IsTreasureObject(zdo));
+        ZDOMan.instance.ClearObjects(); ZDOMan.instance.Add(zdo);
+        var protection = new EpicLootProtection();
+        Equal(kind == "pending" ? 1 : 0, protection.Capture());
+        Equal(kind != "pending", protection.CanResetZone(new(0, 0)));
+        GameWorld.RemoveZDO(zdo);
+        Equal(kind == "pending", zdo.Valid);
+    }
+}
+
+static void TreasureLifetime()
+{
+    var chest = TreasureChest(1, new()); ZDOMan.instance.Add(chest);
+    var protection = new EpicLootProtection();
+    Equal(1, protection.Capture());
+    chest.Bools["TreasureMapChest.HasBeenFound".GetStableHashCode()] = true;
+    True(!protection.CanResetZone(new(0, 0)));
+    var nextRun = new EpicLootProtection();
+    Equal(0, nextRun.Capture()); True(nextRun.CanResetZone(new(0, 0)));
+}
+
+static void TreasureMovement()
+{
+    var protection = new EpicLootProtection(); Equal(0, protection.Capture());
+    True(protection.CanResetZone(new(0, 0)));
+    var chest = TreasureChest(1, new(64, 0, 64)); ZDOMan.instance.Add(chest);
+    True(protection.CanResetZone(new(0, 0)));
+    True(!protection.CanResetZone(new(1, 1)));
+    chest.SetPosition(new(320, 0, 0));
+    ZDOMan.instance.ClearObjects(); ZDOMan.instance.Add(chest);
+    True(!protection.CanResetZone(new(5, 0)));
+    True(!protection.CanResetZone(new(1, 1))); // Previous observation retained.
+    True(protection.CanResetZone(new(-2, 0)));
+}
+
+static void TreasureSectorEdges()
+{
+    var chest = TreasureChest(1, new(short.MaxValue * 64f, 0, 0)); ZDOMan.instance.Add(chest);
+    var protection = new EpicLootProtection(); protection.Capture();
+    True(protection.CanResetZone(new((int)short.MinValue, 0)));
+    True(protection.CanResetZone(new(short.MaxValue - 1, 0)));
+    True(!protection.CanResetZone(new((int)short.MaxValue, 0)));
+}
+
+static void TreasureSpawnedChild()
+{
+    var child = TreasureChest(2, new(640, 0, 0));
+    var parent = new ZDO(1, "spawner", new()) { Spawned = child.m_uid };
+    ZDOMan.instance.Add(parent); ZDOMan.instance.Add(child);
+    GameWorld.RemoveZDO(parent);
+    True(!parent.Valid && child.Valid); Equal(0L, child.Owner);
+    Equal(1, ZDOMan.instance.Destroyed.Count);
+}
+
+static void TreasureDeletionDisabled()
+{
+    var chest = TreasureChest(1, new());
+    var controller = TreasureSpawner(2, new());
+    var child = TreasureChest(4, new(640, 0, 0));
+    var parent = new ZDO(3, "spawner", new()) { Spawned = child.m_uid };
+    foreach (var zdo in new[] { chest, controller, parent, child }) ZDOMan.instance.Add(zdo);
+    GameWorld.RemoveZDO(chest, false);
+    GameWorld.RemoveZDO(controller, false);
+    GameWorld.RemoveZDO(parent, false);
+    True(!chest.Valid && !controller.Valid && !parent.Valid && !child.Valid);
+}
+
+static void TreasureBorders()
+{
+    for (var x = -1; x <= 1; x++)
+        for (var y = -1; y <= 1; y++) ZoneSystem.instance.AddGenerated(new(x, y));
+    var operation = new ProbeReset();
+    True(operation.Run(new(0, 0)));
+    var chest = TreasureChest(1, new(64, 0, 0));
+    ZDOMan.instance.Add(chest);
+    operation.Finish();
+    Equal(8, TerrainResetter.Borders!.Count);
+    True(TerrainResetter.Borders.ContainsKey(new(1, 0)));
+    True(chest.Valid);
 }
 
 static void True(bool condition) { if (!condition) throw new Exception("Assertion failed."); }
