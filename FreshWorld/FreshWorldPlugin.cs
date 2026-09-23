@@ -200,7 +200,7 @@ namespace FreshWorld
                     if (!IsCurrentRequest(pendingManual.Context))
                         CancelPendingManual("The requester disconnected, changed session, or lost administrator authority.");
                     else if (runner == null)
-                        TryDispatch(pendingManual.Run, pendingManual.Options);
+                        TryDispatch(pendingManual.Run);
                 }
 
                 if (now < nextPoll) return;
@@ -212,7 +212,7 @@ namespace FreshWorld
                     nextCheckpoint = now + 60;
                 }
                 if (runner != null) return;
-                if (due != null) TryDispatch(due, settings.Options);
+                if (due != null) TryDispatch(due);
             }
             catch (Exception error)
             {
@@ -296,7 +296,7 @@ namespace FreshWorld
                     ", safeZones=" + settings.Options.ZoneSafeZones + "/" + settings.Options.VegetationSafeZones + "/" +
                     settings.Options.LocationSafeZones + " (zones/resources/locations).");
                 Logger.LogInfo("Manual request accepted from " + context.Actor + ": " + run.Id);
-                TryDispatch(run, pendingManual.Options);
+                TryDispatch(run);
                 nextPoll = 0;
             }
             catch (Exception error)
@@ -325,10 +325,11 @@ namespace FreshWorld
                 "Idle. Last run: " + last.Status + " (" + last.Run.Id + ").");
         }
 
-        private void TryDispatch(ScheduledRun run, RunOptions options)
+        private void TryDispatch(ScheduledRun run)
         {
             if (runner != null || settings == null || sessionFaulted) return;
             if (!run.IsManual && !settings.AutomaticEnabled) return;
+            var options = settings.Options;
             var request = pendingManual;
             if (run.IsManual)
             {
