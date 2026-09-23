@@ -1,6 +1,6 @@
-# FreshWorld 1.0.7
+# FreshWorld
 
-FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. The cfg has **16 options in three sections** and defaults to automatic restoration every **24 game days**.
+FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. Settings are organized into **three sections**, with automatic restoration every **24 game days** by default.
 
 
 ![](https://i.ibb.co/WS2DPzB/freshzones.gif) <br>
