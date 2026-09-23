@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.9
+
+- Added independent, server-synced `EpicLootBountyProtection`, disabled by default. When enabled, pending bounty controllers, targets, and their adds protect their own zones and cannot be deleted by FreshWorld.
+- Simplified run option selection while preserving accepted manual settings and current automatic settings.
+
 ## 1.0.8
 
 - Protected unfound EpicLoot treasure chests and pending treasure controllers in their own zones, with a server-synced `EpicLootProtection` switch enabled by default.
