@@ -52,7 +52,11 @@ var tests = new (string Name, Action Body)[]
     ("treasure protection stays in its own sector at native coordinate edges", TreasureSectorEdges),
     ("spawned-child recursion cannot delete a treasure in a different sector", TreasureSpawnedChild),
     ("disabled EpicLoot protection permits chest and spawned-child deletion", TreasureDeletionDisabled),
-    ("border finalization still repairs neighboring treasure sectors", TreasureBorders)
+    ("border finalization still repairs neighboring treasure sectors", TreasureBorders),
+    ("bounty controllers require their own pending payload and targets require only BountyID", BountyMarkers),
+    ("treasure and bounty options independently control zones and object deletion", EpicLootOptions),
+    ("bounty leaders and adds protect their own moving sectors for one run", BountyMovement),
+    ("late bounty targets and recursive children survive direct deletion", BountyDeletion)
 };
 var failed = 0;
 foreach (var (name, body) in tests)
@@ -821,7 +825,7 @@ static void TreasureMarkers()
     foreach (var target in new[] { found, ordinary, leader, add, new ZDO(7, "Troll", new()) })
     {
         True(!EpicLootProtection.IsTreasureObject(target));
-        GameWorld.RemoveZDO(target); True(!target.Valid);
+        GameWorld.RemoveZDO(target, true, false); True(!target.Valid);
     }
     spawner.Valid = false;
     True(!EpicLootProtection.IsTreasureObject(spawner));
@@ -839,7 +843,7 @@ static void TreasureSpawners()
         if (kind == "other prefab") zdo.Bytes["treasure_spawn".GetStableHashCode()] = [255];
         Equal(kind == "pending", EpicLootProtection.IsTreasureObject(zdo));
         ZDOMan.instance.ClearObjects(); ZDOMan.instance.Add(zdo);
-        var protection = new EpicLootProtection();
+        var protection = new EpicLootProtection(true, false);
         Equal(kind == "pending" ? 1 : 0, protection.Capture());
         Equal(kind != "pending", protection.CanResetZone(new(0, 0)));
         GameWorld.RemoveZDO(zdo);
@@ -850,17 +854,17 @@ static void TreasureSpawners()
 static void TreasureLifetime()
 {
     var chest = TreasureChest(1, new()); ZDOMan.instance.Add(chest);
-    var protection = new EpicLootProtection();
+    var protection = new EpicLootProtection(true, false);
     Equal(1, protection.Capture());
     chest.Bools["TreasureMapChest.HasBeenFound".GetStableHashCode()] = true;
     True(!protection.CanResetZone(new(0, 0)));
-    var nextRun = new EpicLootProtection();
+    var nextRun = new EpicLootProtection(true, false);
     Equal(0, nextRun.Capture()); True(nextRun.CanResetZone(new(0, 0)));
 }
 
 static void TreasureMovement()
 {
-    var protection = new EpicLootProtection(); Equal(0, protection.Capture());
+    var protection = new EpicLootProtection(true, false); Equal(0, protection.Capture());
     True(protection.CanResetZone(new(0, 0)));
     var chest = TreasureChest(1, new(64, 0, 64)); ZDOMan.instance.Add(chest);
     True(protection.CanResetZone(new(0, 0)));
@@ -875,7 +879,7 @@ static void TreasureMovement()
 static void TreasureSectorEdges()
 {
     var chest = TreasureChest(1, new(short.MaxValue * 64f, 0, 0)); ZDOMan.instance.Add(chest);
-    var protection = new EpicLootProtection(); protection.Capture();
+    var protection = new EpicLootProtection(true, false); protection.Capture();
     True(protection.CanResetZone(new((int)short.MinValue, 0)));
     True(protection.CanResetZone(new(short.MaxValue - 1, 0)));
     True(!protection.CanResetZone(new((int)short.MaxValue, 0)));
@@ -898,9 +902,9 @@ static void TreasureDeletionDisabled()
     var child = TreasureChest(4, new(640, 0, 0));
     var parent = new ZDO(3, "spawner", new()) { Spawned = child.m_uid };
     foreach (var zdo in new[] { chest, controller, parent, child }) ZDOMan.instance.Add(zdo);
-    GameWorld.RemoveZDO(chest, false);
-    GameWorld.RemoveZDO(controller, false);
-    GameWorld.RemoveZDO(parent, false);
+    GameWorld.RemoveZDO(chest, false, false);
+    GameWorld.RemoveZDO(controller, false, false);
+    GameWorld.RemoveZDO(parent, false, false);
     True(!chest.Valid && !controller.Valid && !parent.Valid && !child.Valid);
 }
 
@@ -916,6 +920,110 @@ static void TreasureBorders()
     Equal(8, TerrainResetter.Borders!.Count);
     True(TerrainResetter.Borders.ContainsKey(new(1, 0)));
     True(chest.Valid);
+}
+
+static ZDO BountySpawner(long id, Vector3 position)
+{
+    var zdo = new ZDO(id, "EL_SpawnController", position);
+    zdo.Bools["isBounty".GetStableHashCode()] = true;
+    zdo.Bytes["bount_spawn".GetStableHashCode()] = [255]; // Opaque payload must not be deserialized.
+    return zdo;
+}
+
+static ZDO BountyTarget(long id, Vector3 position, bool add = false)
+{
+    var zdo = new ZDO(id, add ? "Greydwarf" : "Troll", position);
+    zdo.Strings["BountyID".GetStableHashCode()] = "owner/interval/biome";
+    zdo.Bools["IsAdd".GetStableHashCode()] = add;
+    return zdo;
+}
+
+static void BountyMarkers()
+{
+    foreach (var kind in new[] { "pending", "uninitialized", "empty", "treasure payload", "treasure", "placed", "other prefab", "invalid" })
+    {
+        var zdo = BountySpawner(1, new());
+        if (kind == "uninitialized") zdo.Bytes.Clear();
+        if (kind == "empty") zdo.Bytes["bount_spawn".GetStableHashCode()] = [];
+        if (kind == "treasure payload") { zdo.Bytes.Clear(); zdo.Bytes["treasure_spawn".GetStableHashCode()] = [255]; }
+        if (kind == "treasure") zdo.Bools["isBounty".GetStableHashCode()] = false;
+        if (kind == "placed") zdo.Bools["placed".GetStableHashCode()] = true;
+        if (kind == "other prefab") { zdo = new ZDO(1, "other", new()); zdo.Bools["isBounty".GetStableHashCode()] = true; zdo.Bytes["bount_spawn".GetStableHashCode()] = [255]; }
+        if (kind == "invalid") zdo.Valid = false;
+        Equal(kind == "pending", EpicLootProtection.IsBountyObject(zdo));
+    }
+    foreach (var add in new[] { true, false })
+    {
+        var target = BountyTarget(2, new(), add);
+        True(EpicLootProtection.IsBountyObject(target)); // No Piece, creator, BountyData or MonsterID needed.
+        Equal(0L, target.Creator);
+        target.Strings["BountyID".GetStableHashCode()] = "";
+        target.Strings["BountyData".GetStableHashCode()] = "leftover";
+        True(!EpicLootProtection.IsBountyObject(target));
+    }
+}
+
+static void EpicLootOptions()
+{
+    foreach (var treasure in new[] { true, false })
+    foreach (var bounty in new[] { true, false })
+    {
+        ZDOMan.instance.ClearObjects();
+        var objects = new[] { TreasureChest(1, new(0, 0, 0)), TreasureSpawner(2, new(64, 0, 0)),
+            BountySpawner(3, new(128, 0, 0)), BountyTarget(4, new(192, 0, 0)), BountyTarget(5, new(256, 0, 0), true) };
+        foreach (var zdo in objects) ZDOMan.instance.Add(zdo);
+        var protection = new EpicLootProtection(treasure, bounty);
+        Equal((treasure ? 2 : 0) + (bounty ? 3 : 0), protection.Capture());
+        for (var i = 0; i < objects.Length; i++)
+        {
+            var expected = i < 2 ? treasure : bounty;
+            Equal(!expected, protection.CanResetZone(new(i, 0)));
+            GameWorld.RemoveZDO(objects[i], treasure, bounty);
+            Equal(expected, objects[i].Valid);
+            if (expected) Equal(0L, objects[i].Owner);
+        }
+        True(protection.CanResetZone(new(0, 1))); // No surrounding 3x3 expansion.
+    }
+}
+
+static void BountyMovement()
+{
+    var leader = BountyTarget(1, new(31, 0, 0));
+    var add = BountyTarget(2, new(35, 0, 0), true); // 4m offset crosses the native 32m zone boundary.
+    ZDOMan.instance.Add(leader); ZDOMan.instance.Add(add);
+    var protection = new EpicLootProtection(false, true);
+    Equal(2, protection.Capture());
+    True(!protection.CanResetZone(new(0, 0)) && !protection.CanResetZone(new(1, 0)));
+    True(protection.CanResetZone(new(-1, 0)));
+    add.SetPosition(new(320, 0, 0));
+    ZDOMan.instance.ClearObjects(); ZDOMan.instance.Add(leader); ZDOMan.instance.Add(add);
+    True(!protection.CanResetZone(new(5, 0)));
+    True(!protection.CanResetZone(new(1, 0)));
+    // Abandoning a contract leaves its world tag; a fresh run must still preserve that object.
+    True(!new EpicLootProtection(false, true).CanResetZone(new(5, 0)));
+    ZDOMan.instance.ClearObjects();
+    True(!protection.CanResetZone(new(5, 0)));
+    var nextRun = new EpicLootProtection(false, true);
+    Equal(0, nextRun.Capture()); True(nextRun.CanResetZone(new(5, 0)));
+}
+
+static void BountyDeletion()
+{
+    var protection = new EpicLootProtection(false, true);
+    Equal(0, protection.Capture()); True(protection.CanResetZone(new(0, 0)));
+    var target = BountyTarget(1, new()); ZDOMan.instance.Add(target);
+    GameWorld.RemoveZDO(target, false, true); // Target arrived after the zone check.
+    True(target.Valid); Equal(0L, target.Owner);
+    foreach (var enabled in new[] { true, false })
+    {
+        ZDOMan.instance.ClearObjects();
+        var child = BountyTarget(3, new(640, 0, 0), true);
+        var parent = new ZDO(2, "spawner", new()) { Spawned = child.m_uid };
+        ZDOMan.instance.Add(parent); ZDOMan.instance.Add(child);
+        GameWorld.RemoveZDO(parent, false, enabled);
+        True(!parent.Valid); Equal(enabled, child.Valid);
+        if (enabled) Equal(0L, child.Owner);
+    }
 }
 
 static void True(bool condition) { if (!condition) throw new Exception("Assertion failed."); }

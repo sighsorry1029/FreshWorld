@@ -113,7 +113,7 @@ public static class Program
         Require(((Array)Call(versionType, null, "GetFailedServer", new ZRpc(new TestSocket("Steam_222")))!).Length == 0,
             "The server requires an unmodded peer to complete FreshWorld's version handshake.");
         Require((bool)syncType.GetProperty("IsLocked")!.GetValue(sync)!, "Administrator-only policy is not fixed.");
-        Require(file.Count == 16, "Integration did not register the expected config keys.");
+        Require(file.Count == 17, "Integration did not register the expected config keys.");
         var broadcast = AccessTools.Method(syncType, "Broadcast", new[] { typeof(long), typeof(ConfigEntryBase[]) });
         // Capture server sends without invoking Unity coroutines; run the real client-send prefix separately.
         harmony.Patch(broadcast, prefix: new HarmonyMethod(typeof(Program), nameof(RecordBroadcast)) { priority = Priority.Last });
@@ -125,7 +125,9 @@ public static class Program
         var mode = file[new ConfigDefinition("General", "Mode")];
         var blacklist = file[new ConfigDefinition("Protection", "PieceBlacklist")];
         var epicLoot = file[new ConfigDefinition("Protection", "EpicLootProtection")];
+        var bounty = file[new ConfigDefinition("Protection", "EpicLootBountyProtection")];
         Require(epicLoot.GetSerializedValue() == "true", "EpicLoot protection default changed.");
+        Require(bounty.GetSerializedValue() == "false", "Bounty protection must default to disabled.");
         Require(blacklist.GetSerializedValue() == "fire_pit" &&
             !file.ContainsKey(new ConfigDefinition("Protection", "PlayerPlacedObjects")), "Blacklist did not replace the whitelist schema.");
         ZPackage Edit(ConfigEntryBase entry, string raw, bool initial = false)
@@ -142,6 +144,7 @@ public static class Program
         Require(true, "All registered setting types round trip through the real serializer.");
         Reject(Edit(zone, "3")); Reject(Edit(radius, "NaN")); Reject(Edit(mode, "ManualOnly"));
         Reject(Edit(epicLoot, "invalid"));
+        Reject(Edit(bounty, "invalid"));
         Reject(Edit(blacklist, "fire_pit,*")); Reject(Edit(blacklist, "fire_pit,fire_pit"));
         var full = Package(new[] { zone }, false); Reject(full);
         var trailing = new ZPackage(valid.GetArray()); trailing.SetPos(trailing.Size()); trailing.Write(42); Reject(trailing);
@@ -193,15 +196,21 @@ public static class Program
         ReceiveClient(peer.m_uid, Edit(epicLoot, "false"));
         Require(epicLoot.GetSerializedValue() == "false" &&
             File.ReadAllText(file.ConfigFilePath).Contains("EpicLootProtection = false"), "Administrator EpicLoot edit was not saved.");
+        Require(bounty.GetSerializedValue() == "false", "Treasure edit changed bounty protection.");
+        ReceiveClient(peer.m_uid, Edit(bounty, "true"));
+        Require(bounty.GetSerializedValue() == "true" &&
+            File.ReadAllText(file.ConfigFilePath).Contains("EpicLootBountyProtection = true"), "Administrator bounty edit was not saved.");
         var disk = File.ReadAllText(file.ConfigFilePath).Replace("ZoneSafeZones = 2", "ZoneSafeZones = 1")
             .Replace("PieceBlacklist = fire_pit,woodwall", "PieceBlacklist = ")
-            .Replace("EpicLootProtection = false", "EpicLootProtection = true");
+            .Replace("EpicLootProtection = false", "EpicLootProtection = true")
+            .Replace("EpicLootBountyProtection = true", "EpicLootBountyProtection = false");
         File.WriteAllText(file.ConfigFilePath, disk);
         var oldBroadcasts = broadcasts;
         Call(adapterType, adapter, "ReloadFile");
         Require(zone.GetSerializedValue() == "1" && broadcasts == oldBroadcasts && file.SaveOnConfigSet, "Reload sent partial values or left saving disabled.");
         Require(blacklist.GetSerializedValue() == "", "Reload restored default blacklist entries over an empty value.");
         Require(epicLoot.GetSerializedValue() == "true", "Reload did not apply EpicLoot protection.");
+        Require(bounty.GetSerializedValue() == "false", "Reload did not apply bounty protection.");
         Call(adapterType, adapter, "Publish", 0L);
         Require(broadcasts == oldBroadcasts + 1, "Validated file reload did not publish.");
 

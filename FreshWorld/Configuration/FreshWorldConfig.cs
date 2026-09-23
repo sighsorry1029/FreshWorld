@@ -41,6 +41,7 @@ namespace FreshWorld.Configuration
         public string[] LocationIds => (string[])locationIds.Clone();
         public int LocationSafeZones { get; }
         public bool EpicLootProtectionEnabled { get; }
+        public bool EpicLootBountyProtectionEnabled { get; }
         public int MaxZonesPerFrame => 64;
         public double FrameBudgetMilliseconds => 8;
         public float SaveTimeoutSeconds => 180;
@@ -49,7 +50,7 @@ namespace FreshWorld.Configuration
             string[] pieceBlacklist, string[] protectedObjects,
             bool vegetationEnabled, string[] vegetationIds, string[] terrainVegetationIds, float vegetationTerrainRadius,
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
-            bool epicLootProtectionEnabled)
+            bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled)
         {
             ZonesEnabled = zonesEnabled; ZoneSafeZones = zoneSafeZones;
             this.pieceBlacklist = (string[])pieceBlacklist.Clone();
@@ -60,6 +61,7 @@ namespace FreshWorld.Configuration
             LocationsEnabled = locationsEnabled; this.locationIds = (string[])locationIds.Clone();
             LocationSafeZones = locationSafeZones;
             EpicLootProtectionEnabled = epicLootProtectionEnabled;
+            EpicLootBountyProtectionEnabled = epicLootBountyProtectionEnabled;
         }
     }
 
@@ -73,7 +75,7 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<string> enabled, zonesEnabled, vegetationEnabled, locationsEnabled;
         private readonly ConfigEntry<string> dailyTimes, gameDayInterval, vegetationIds, terrainVegetationIds, locationIds;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
-        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection;
+        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
 
         public FreshWorldConfig(ConfigFile config)
@@ -128,6 +130,9 @@ namespace FreshWorld.Configuration
             epicLootProtection = Bind("Protection", "EpicLootProtection", "true",
                 "Protect unfound EpicLoot treasure chests and pending treasure controllers in their own zones, even when SafeZones=0. Also prevent FreshWorld from deleting those objects through a reset in another zone. Set false to disable both protections on the next run. EpicLoot is optional.",
                 150, ConfigPresentation.DrawToggle);
+            epicLootBountyProtection = Bind("Protection", "EpicLootBountyProtection", "false",
+                "Protect pending EpicLoot bounty controllers, targets, and their adds. Each object's current zone is excluded from direct resets, even when SafeZones=0, and FreshWorld cannot delete the object. Neighboring terrain edits can still reach it. Abandoned bounty objects remain protected while their tags exist. Changes apply to the next run. EpicLoot is optional.",
+                140, ConfigPresentation.DrawToggle);
             pieceBlacklist = Bind("Protection", "PieceBlacklist", DefaultPieceBlacklist,
                 "Comma-separated exact prefab IDs excluded from automatic base markers. Other Pieces with creator != 0 protect their zones when the stage's SafeZones > 0. Default fire_pit prevents lone campfires from protecting zones. Empty excludes no Pieces. Excluded Pieces can still share protection from other markers. Player_tombstone remains a separate marker unaffected by this list.",
                 100);
@@ -176,7 +181,8 @@ namespace FreshWorld.Configuration
                 zoneProtection, blacklist, new[] { "Player_tombstone" },
                 ReadBool(Value(vegetationEnabled), "Reset.Resources"), vegetation, terrainVegetation, terrain, vegetationProtection,
                 ReadBool(Value(locationsEnabled), "Reset.Locations"), locations, locationProtection,
-                ReadBool(Value(epicLootProtection), "Protection.EpicLootProtection"));
+                ReadBool(Value(epicLootProtection), "Protection.EpicLootProtection"),
+                ReadBool(Value(epicLootBountyProtection), "Protection.EpicLootBountyProtection"));
             return new RuntimeSettings(schedule, options);
         }
         private static bool ReadBool(string text, string key)

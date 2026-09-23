@@ -19,13 +19,13 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact sixteen bindings in three sections and game-day defaults", () =>
+        Check("exact seventeen bindings in three sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.ResourceTerrainRadius",
-                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.EpicLootProtection", "Protection.PieceBlacklist" };
-            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the sixteen-key design");
+                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.PieceBlacklist" };
+            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the seventeen-key design");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
             Assert(snapshot.Options.VegetationIds.Length == 0 && snapshot.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper", "silvervein" }) &&
@@ -38,8 +38,26 @@ internal static class ConfigRegressions
                 "only campfires should be excluded from automatic Piece markers by default");
             Assert(snapshot.Options.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }), "fixed tombstone marker changed");
             Assert(snapshot.Options.EpicLootProtectionEnabled, "EpicLoot protection default changed");
+            Assert(!snapshot.Options.EpicLootBountyProtectionEnabled, "EpicLoot bounty protection must default to disabled");
             Assert(snapshot.Options.VegetationTerrainRadius == 20 && !snapshot.Schedule.RunMissedOnWorldStart, "terrain and missed-run policy");
             Assert(file.SaveCount == 0, "Capture must not mutate/save config");
+        });
+        Check("treasure and bounty switches are independent immutable run options", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var original = cfg.Capture();
+            foreach (var treasure in new[] { true, false })
+            foreach (var bounty in new[] { true, false })
+            {
+                file.Set("Protection", "EpicLootProtection", treasure.ToString());
+                file.Set("Protection", "EpicLootBountyProtection", bounty.ToString());
+                var options = cfg.Capture().Options;
+                Assert(options.EpicLootProtectionEnabled == treasure && options.EpicLootBountyProtectionEnabled == bounty,
+                    "EpicLoot options are not independent");
+            }
+            Assert(original.Options.EpicLootProtectionEnabled && !original.Options.EpicLootBountyProtectionEnabled,
+                "edits changed an existing run snapshot");
+            file.Set("Protection", "EpicLootBountyProtection", "invalid");
+            Invalid(() => cfg.Capture());
         });
         Check("startup and performance remain fixed and removed keys stay unbound", () =>
         {

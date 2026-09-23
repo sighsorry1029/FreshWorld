@@ -24,12 +24,13 @@ internal sealed class MaintenancePipeline
     private readonly ZoneSystem _zones;
     private readonly long _worldUid;
     private readonly HashSet<Vector2s> _playerZones = new();
-    private readonly EpicLootProtection _treasures = new();
+    private readonly EpicLootProtection _epicLoot;
     private ITrackedOperation? _activeOperation;
 
     public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn)
     {
         _options = options;
+        _epicLoot = new EpicLootProtection(options.EpicLootProtectionEnabled, options.EpicLootBountyProtectionEnabled);
         _includeVegetation = includeVegetation;
         _log = log;
         _warn = warn;
@@ -54,8 +55,8 @@ internal sealed class MaintenancePipeline
             GameWorld.CollectPlayerZones(_playerZones);
             var generated = GameWorld.GeneratedSetSnapshot();
             var protectedZones = ProtectedSnapshot(_options.ZoneSafeZones, generated);
-            var treasureZones = _options.EpicLootProtectionEnabled ? _treasures.Capture() : 0;
-            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {treasureZones} EpicLoot treasure zones with 1x1 protection.");
+            var epicLootZones = _epicLoot.Capture();
+            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection.");
 
             if (_options.ZonesEnabled)
             {
@@ -213,7 +214,7 @@ internal sealed class MaintenancePipeline
         for (var x = Math.Max(short.MinValue, zone.x - 1); x <= Math.Min(short.MaxValue, zone.x + 1); x++)
             for (var y = Math.Max(short.MinValue, zone.y - 1); y <= Math.Min(short.MaxValue, zone.y + 1); y++)
                 if (_playerZones.Contains(new Vector2s(x, y))) return false;
-        if (_options.EpicLootProtectionEnabled && !_treasures.CanResetZone(zone)) return false;
+        if (!_epicLoot.CanResetZone(zone)) return false;
         if (initialProtection != null && initialProtection.Contains(zone)) return false;
         if (safeZones <= 0) return true;
         // Cache the world scan for ten seconds rather than scanning all objects for each zone.
@@ -224,7 +225,8 @@ internal sealed class MaintenancePipeline
         new()
         {
             SafeZones = safeZones,
-            ProtectEpicLoot = _options.EpicLootProtectionEnabled
+            ProtectEpicLoot = _options.EpicLootProtectionEnabled,
+            ProtectEpicLootBounties = _options.EpicLootBountyProtectionEnabled
         };
 
     private HashSet<string> ResolveIds(string kind, IEnumerable<string> configured, IEnumerable<string> available)

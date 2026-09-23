@@ -1,5 +1,7 @@
 # FreshWorld / EpicLoot treasure protection
 
+This records the treasure-only implementation from September 22. The September 23 bounty extension is documented at the end; the README describes the combined current behavior.
+
 ## Scope and evidence
 
 Implemented in the FreshWorld checkout on local `master` (tracking `origin/main`), based on `d1a75b7ee5c760dbddada2dc64f57d82e0ee1bc3`, version 1.0.7. The tree was clean before the initial compatibility work. This revision narrows that uncommitted work to treasure-only, own-sector protection at the user's request. ServerManager and EpicLoot were not modified. No version change, Release package, commit, or push was performed.
@@ -75,3 +77,38 @@ Test a disposable world copy with EpicLoot 0.14.10 and the patched FreshWorld on
 4. Create a treasure while restoration waits for zone loading. Confirm an own-sector treasure blocks that attempt, while a neighboring treasure does not. Check bounty objects remain subject to ordinary restoration.
 
 Update the FreshWorld DLL on the machine hosting the world. The Debug deployment performed here updates only this PC's Steam Valheim installation; external servers and Gale profiles need their own DLL replacement while stopped.
+
+## Bounty extension: September 23, 2026
+
+Implemented on top of `7587cd32323ff9f470eea7fa824decb670fade7b` (FreshWorld 1.0.8), with a clean starting tree. The following structure-review request changes the bounty default to false and requests a separate commit for this feature. No version change, Release packaging, or push was requested.
+
+The new `[Protection] EpicLootBountyProtection=false` setting is independent of the existing treasure setting. Enabling it opts into bounty protection. It uses the existing ServerSync registration, administrator validation, cfg watcher, and immutable run snapshot. The vendored ServerSync DLL and its merge path are unchanged. Both settings appear next to each other in Configuration Manager. Existing explicit values are preserved when the config is bound or reloaded.
+
+Recognition was checked against the same original EpicLoot 0.14.10 DLL and hash listed above:
+
+| Object | Saved markers | Scope |
+| --- | --- | --- |
+| Pending bounty controller | `EL_SpawnController`, `isBounty=true`, `placed=false`, nonempty **`bount_spawn`** byte array | Own zone and direct deletion protection |
+| Bounty leader or add | Nonempty `BountyID` | Current zone and direct deletion protection |
+
+The payload is never deserialized. `BountyID` alone matches EpicLoot's target restoration check; requiring `BountyData` or `MonsterID` as well could miss partially synchronized targets. The owner need not be online, and neither a loaded component nor creator metadata is required.
+
+`EpicLootProtection` now captures the enabled treasure and bounty markers in one initial ZDO scan after the pre-maintenance save. Each target-zone attempt and loading retry checks for new or moved objects. Observed zones remain excluded until the run ends; the next run starts fresh. With both settings disabled, the EpicLoot world scan and target-zone lookup are skipped. No idle per-frame scan was added. Performance was not benchmarked.
+
+Each controller, leader, and add protects only its own zone, independently of SafeZones. EpicLoot selects the actual spawn point within the map circle and can place adds up to 4m from the leader, so one bounty can occupy several zones. It sets a patrol point rather than restricting movement to one zone. `GameWorld.RemoveZDO` also checks the appropriate option before claiming ownership or deleting an object, including recursive spawned children reached from another zone. All three reset stages pass both options through to this guard.
+
+Normal kills and rewards remain EpicLoot's responsibility. Its completion condition requires the leader and all adds to be slain; destroying a target object does not report a kill. Abandoning a bounty changes player progress and map pins without necessarily deleting the target or clearing `BountyID`. Such residual objects remain protected while their tags exist. FreshWorld does not infer active quest status or remove abandoned targets.
+
+Neighboring terrain restoration, location/resource placement, and border repairs retain their existing behavior. This protection does not promise unchanged terrain around a surviving target, restore already lost targets, or protect objects not yet known to the host.
+
+### Verification
+
+- Baseline Debug solution build and relevant Core, World, Backend, Generation, Plugin, and merged-DLL Sync checks passed before edits.
+- Final Debug solution build with `DeployToGame=true`: zero warnings and errors. No EpicLoot assembly dependency was added.
+- Core/config 65, World 51, Backend 53, Generation 14, Plugin 37, merged-DLL Sync 56, and installed Harmony/BepInEx 27 checks passed. The installed Configuration Manager metadata smoke was skipped because its optional assembly path was not supplied. Configuration presentation tests checked the new toggle, ordering, and captured settings without rendering Unity UI.
+- Cases cover both options' four combinations, opaque controller payloads and placed/uninitialized exclusions, leaders/adds, the 4m zone-boundary case, movement, late arrivals, recursive deletion, per-run retention/release, independent administrator edits, server file reload, malformed settings, and preservation of an admitted run's settings.
+- The installed-BepInEx fixture's old 15-key schema and drawer expectations were updated to include both EpicLoot switches (17 settings total).
+- Original Valheim 1.0.15 client and dedicated-server API checks passed: 51 contracts and 170 compiled member references per role. Reports: `FreshWorld/bin/Debug/bounty-verification/`.
+- After changing the bounty default to false, the seven relevant suites above passed again (303 checks), including an explicit true value surviving Bind/Save/Reload. Debug DLL and Steam `BepInEx/plugins/FreshWorld.dll` SHA-256 match for this feature checkpoint: `4b987453d05b3f937a71dbcc42cc9c8139daaf80e74203ed638f82e33e3d58c7`.
+
+These are build, metadata, and isolated regression results. Actual Unity, local-host, dedicated multiplayer, and EpicLoot quest sessions were not run. Remaining game checks are remote-owned target movement across zones, controller-to-target transitions during maintenance, and save/restart/reconnect with pending, active, completed, and abandoned bounties. Confirm normal quest completion and rewards, independent switches, and the documented neighboring-terrain limitation in a disposable world copy.

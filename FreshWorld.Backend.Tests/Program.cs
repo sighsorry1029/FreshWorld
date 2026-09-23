@@ -57,7 +57,8 @@ var tests = new (string Name, Action Body)[]
     ("treasure snapshot is taken after the initial world save", TreasureAfterSave),
     ("load retries protect new treasures only in the target sector", TreasureDuringLoad),
     ("neighbor treasure does not block resource terrain group or location extents", TreasureNeighbors),
-    ("bounty objects do not protect sectors from any stage", BountyStages)
+    ("bounty protection independently skips its sectors in every stage", BountyStages),
+    ("bounties created during loading stop only their own sector and release pending loads", BountyDuringLoad)
 };
 
 var failures = 0;
@@ -943,14 +944,42 @@ static void BountyStages()
 {
     foreach (var zoneReset in new[] { true, false })
     foreach (var prefab in new[] { "EL_SpawnController", "Troll", "Greydwarf" })
+    foreach (var treasure in new[] { true, false })
+    foreach (var bounty in new[] { true, false })
     {
-        Fake.Reset(); Fake.AddZone(0);
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1);
         ZoneSystem.instance.m_vegetation.Add(new("copper"));
         ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
-        // Even a bounty controller with a leftover treasure payload is not protected.
+        // A leftover treasure payload on a bounty controller must not join the treasure policy.
         ZDOMan.instance.Objects.Add(new() { Zone = new(0, 0), Prefab = prefab, IsBounty = true });
-        True(Run(new() { ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationIds = ["raspberry"] }).Success);
-        True(Fake.Calls.Any(call => call.EndsWith("change:0")));
+        True(Run(new()
+        {
+            ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationIds = ["raspberry"],
+            EpicLootProtectionEnabled = treasure, EpicLootBountyProtectionEnabled = bounty
+        }).Success);
+        Equal(!bounty, Fake.Calls.Any(call => call.EndsWith("change:0")));
+        True(Fake.Calls.Any(call => call.EndsWith("change:1")));
+    }
+}
+
+static void BountyDuringLoad()
+{
+    foreach (var resources in new[] { true, false })
+    foreach (var sameSector in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        using var lease = MaintenanceGate.Acquire();
+        var completed = new List<bool>();
+        using var runner = NewRunner(new()
+        {
+            ZonesEnabled = false, VegetationEnabled = resources, LocationsEnabled = !resources,
+            EpicLootProtectionEnabled = false, EpicLootBountyProtectionEnabled = true
+        }, completed);
+        True(runner.MoveNext()); True(GameWorld.Pending.Contains(new(0, 0)));
+        ZDOMan.instance.Objects.Add(new() { Zone = sameSector ? new(0, 0) : new(1, 1), Prefab = "Greydwarf", IsBounty = true });
+        Drain(runner); Sequence([true], completed);
+        Equal(!sameSector, Fake.Calls.Any(IsSupplementChange));
+        Equal(0, GameWorld.Pending.Count);
     }
 }
 

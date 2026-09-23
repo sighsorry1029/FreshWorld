@@ -27,9 +27,11 @@ public class ZDO
     public Vector2s Zone;
     public bool IsValid() => Valid;
     public int GetPrefab() => Prefab.GetStableHashCode();
-    public string GetString(int key) => key == "BountyID".GetStableHashCode() && IsBounty ? "bounty" : "";
+    public string GetString(int key) => key == "BountyID".GetStableHashCode() && IsBounty && Prefab != "EL_SpawnController" ? "bounty" : "";
     public bool GetBool(int key) => key == "isBounty".GetStableHashCode() && IsBounty;
-    public byte[]? GetByteArray(int key) => key == "treasure_spawn".GetStableHashCode() && HasTreasure ? TreasurePayload : null;
+    public byte[]? GetByteArray(int key) =>
+        (key == "treasure_spawn".GetStableHashCode() && HasTreasure) ||
+        (key == "bount_spawn".GetStableHashCode() && IsBounty) ? TreasurePayload : null;
     public UnityEngine.Vector3 GetPosition() => new(Zone.x * 64, 0, Zone.y * 64);
 }
 public class World { public long m_uid = 123; }
@@ -219,6 +221,7 @@ namespace FreshWorld.Configuration
         public string[] LocationIds { get; set; } = ["cave"];
         public int LocationSafeZones { get; set; }
         public bool EpicLootProtectionEnabled { get; set; } = true;
+        public bool EpicLootBountyProtectionEnabled { get; set; }
         public int MaxZonesPerFrame { get; set; } = 1;
         public double FrameBudgetMilliseconds { get; set; } = 8;
         public float SaveTimeoutSeconds { get; set; } = 180;

@@ -101,14 +101,15 @@ internal static class GameWorld
         return true;
     }
 
-    public static void RemoveZDO(ZDO zdo) => RemoveZDO(zdo, true);
+    public static void RemoveZDO(ZDO zdo) => RemoveZDO(zdo, true, false);
 
-    public static void RemoveZDO(ZDO zdo, bool protectEpicLoot) => RemoveZDO(zdo, null, protectEpicLoot);
+    public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties) =>
+        RemoveZDO(zdo, null, protectEpicLoot, protectEpicLootBounties);
 
-    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot)
+    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot, bool protectEpicLootBounties)
     {
         if (zdo == null || !zdo.IsValid() || IsPlayer(zdo) ||
-            (protectEpicLoot && EpicLootProtection.IsTreasureObject(zdo))) return;
+            EpicLootProtection.IsProtectedObject(zdo, protectEpicLoot, protectEpicLootBounties)) return;
         if (visited != null && !visited.Add(zdo.m_uid)) return;
         var manager = ZDOMan.instance;
         zdo.SetOwner(ZDOMan.GetSessionID());
@@ -117,7 +118,7 @@ internal static class GameWorld
         {
             // A corrupt/modded connection cycle must not recurse forever while cleaning a zone.
             visited ??= new HashSet<ZDOID> { zdo.m_uid };
-            RemoveZDO(child, visited, protectEpicLoot);
+            RemoveZDO(child, visited, protectEpicLoot, protectEpicLootBounties);
         }
         if (!zdo.IsValid()) return;
         var scene = ZNetScene.instance;

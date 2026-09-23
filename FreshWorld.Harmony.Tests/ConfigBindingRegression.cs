@@ -15,7 +15,8 @@ internal static class ConfigBindingRegression
         "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
         "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds",
         "Reset.LocationIds", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
-        "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist"
+        "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
+        "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection"
     };
 
     internal static int Run()
@@ -25,12 +26,14 @@ internal static class ConfigBindingRegression
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 15 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all 17 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
             ("General.Enabled", "not-a-boolean"),
             ("Reset.Locations", "maybe"),
+            ("Protection.EpicLootProtection", "maybe"),
+            ("Protection.EpicLootBountyProtection", "maybe"),
             ("General.Mode", "ManualOnly"),
             ("General.Mode", "1"),
             ("General.Mode", @"GameDays\nDailyTimes"),
@@ -60,9 +63,12 @@ internal static class ConfigBindingRegression
     private static void ValidBinding()
     {
         var values = ValidValues();
+        values["Protection.EpicLootBountyProtection"] = "true";
         using var fixture = new Fixture(values);
         AssertRawValues(fixture.File, values);
         var settings = fixture.Settings.Capture();
+        Require(settings.Options.EpicLootBountyProtectionEnabled,
+            "The disabled bounty default replaced an explicit true value during Bind.");
         Require(settings.AutomaticEnabled && settings.Schedule.Mode == ScheduleMode.GameDays && settings.Schedule.GameDayInterval == 12.5,
             "The existing schedule was replaced by defaults during Bind.");
         Require(!settings.Options.ZonesEnabled && settings.Options.VegetationEnabled && settings.Options.LocationsEnabled,
@@ -96,6 +102,8 @@ internal static class ConfigBindingRegression
         values["Protection.ResourceSafeZones"] = "0";
         values["Protection.LocationSafeZones"] = "1";
         values["Protection.PieceBlacklist"] = "";
+        values["Protection.EpicLootProtection"] = "false";
+        values["Protection.EpicLootBountyProtection"] = "true";
         fixture.Reload(values);
         AssertRawValues(fixture.File, values);
         var after = fixture.Settings.Capture();
@@ -108,6 +116,9 @@ internal static class ConfigBindingRegression
             "Reload clamped, defaulted, or retained earlier values.");
         Require(before.Schedule.Mode == ScheduleMode.GameDays && before.Options.LocationSafeZones == 2 &&
             before.Options.PieceBlacklist.Length == 2, "Reload mutated the already captured snapshot.");
+        Require(before.Options.EpicLootProtectionEnabled && !before.Options.EpicLootBountyProtectionEnabled &&
+            !after.Options.EpicLootProtectionEnabled && after.Options.EpicLootBountyProtectionEnabled,
+            "Reload changed the previous EpicLoot snapshot or coupled its two switches.");
         fixture.File.Save();
         AssertSavedValues(fixture.Path, values);
     }
@@ -116,7 +127,7 @@ internal static class ConfigBindingRegression
     {
         using var fixture = new Fixture(ValidValues());
         var actual = fixture.File.Keys.Select(key => key.Section + "." + key.Key).OrderBy(key => key, StringComparer.Ordinal);
-        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 15-key config schema changed.");
+        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 17-key config schema changed.");
         foreach (var definition in fixture.File.Keys)
         {
             var entry = fixture.File[definition];
@@ -134,7 +145,8 @@ internal static class ConfigBindingRegression
             var choices = (object[]?)ReadPublicField(tag, "AcceptableValues", typeof(object[]));
             var expectsDrawer = key == "General.Enabled" || key == "General.GameDayInterval" ||
                 key == "Reset.Zones" || key == "Reset.Resources" || key == "Reset.Locations" ||
-                key == "Reset.ResourceTerrainRadius";
+                key == "Reset.ResourceTerrainRadius" || key == "Protection.EpicLootProtection" ||
+                key == "Protection.EpicLootBountyProtection";
             Require(expectsDrawer ? drawer is Action<ConfigEntryBase> : drawer == null,
                 key + " has an unexpected custom drawer contract.");
             if (IsChoiceKey(key)) AssertChoices(entry, choices, key);
@@ -292,7 +304,9 @@ internal static class ConfigBindingRegression
         ["Protection.ZoneSafeZones"] = "0",
         ["Protection.ResourceSafeZones"] = "1",
         ["Protection.LocationSafeZones"] = "2",
-        ["Protection.PieceBlacklist"] = "piece_beehive,piece_workbench"
+        ["Protection.PieceBlacklist"] = "piece_beehive,piece_workbench",
+        ["Protection.EpicLootProtection"] = "true",
+        ["Protection.EpicLootBountyProtection"] = "false"
     };
 
     private static void Require(bool condition, string message)

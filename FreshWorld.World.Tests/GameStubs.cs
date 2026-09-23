@@ -311,7 +311,11 @@ namespace HarmonyLib
 }
 namespace FreshWorld.Engine
 {
-    internal sealed class OperationParameters { public bool ProtectEpicLoot { get; set; } = true; }
+    internal sealed class OperationParameters
+    {
+        public bool ProtectEpicLoot { get; set; } = true;
+        public bool ProtectEpicLootBounties { get; set; }
+    }
     internal abstract class ZoneOperation
     {
         protected Action<string> Log;

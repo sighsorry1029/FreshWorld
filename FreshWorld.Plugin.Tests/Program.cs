@@ -382,6 +382,7 @@ internal static class Program
             c.Set("Protection", "LocationSafeZones", "0");
             c.Set("Protection", "PieceBlacklist", "piece_workbench,custom_marker");
             c.Set("Protection", "EpicLootProtection", "false");
+            c.Set("Protection", "EpicLootBountyProtection", "false");
             c.Set("Reset", "LocationIds", "Hildir_cave");
         }, skipStartupDelay: false);
         f.Run();
@@ -394,6 +395,7 @@ internal static class Program
         f.Plugin.Config.Set("Protection", "LocationSafeZones", "1");
         f.Plugin.Config.Set("Protection", "PieceBlacklist", "");
         f.Plugin.Config.Set("Protection", "EpicLootProtection", "true");
+        f.Plugin.Config.Set("Protection", "EpicLootBountyProtection", "true");
         Time.realtimeSinceStartup = 30;
         f.Tick();
         var dispatched = MaintenancePipeline.Created.Single();
@@ -408,6 +410,8 @@ internal static class Program
             "accepted blacklist survives cfg edits before dispatch");
         True(!dispatched.Options.EpicLootProtectionEnabled,
             "accepted EpicLoot policy survives cfg edits before dispatch");
+        True(!dispatched.Options.EpicLootBountyProtectionEnabled,
+            "accepted bounty policy survives cfg edits before dispatch");
         Equal("Hildir_cave", dispatched.Options.LocationIds.Single(), "accepted exact location list");
     }
 

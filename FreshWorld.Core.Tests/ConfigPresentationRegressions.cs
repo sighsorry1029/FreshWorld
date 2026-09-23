@@ -39,7 +39,7 @@ internal static class ConfigPresentationRegressions
         {
             ("General", new[] { "Enabled", "Mode", "GameDayInterval", "DailyTimes" }, 300),
             ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds" }, 200),
-            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "EpicLootProtection", "PieceBlacklist" }, 100)
+            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "EpicLootProtection", "EpicLootBountyProtection", "PieceBlacklist" }, 100)
         };
         foreach (var (section, keys, categoryOrder) in expected)
         {
@@ -48,7 +48,7 @@ internal static class ConfigPresentationRegressions
             Require(entries.All(entry => Metadata(entry).CategoryOrder == categoryOrder && entry.Description.AcceptableValues == null), section + " metadata");
         }
         Require(Metadata(file.Get("General", "Enabled")).DispName == "Automatic Runs", "Display name must not rename the cfg key.");
-        Require(file.BoundKeys.Count() == 16, "Unexpected new settings.");
+        Require(file.BoundKeys.Count() == 17, "Unexpected new settings.");
     }
 
     private static void DrawWithoutEdits()
@@ -92,6 +92,11 @@ internal static class ConfigPresentationRegressions
         file.Set("Protection", "EpicLootProtection", "false");
         Require(!config.Capture().Options.EpicLootProtectionEnabled && snapshot.Options.EpicLootProtectionEnabled,
             "EpicLoot toggle changed an existing run snapshot.");
+        GUILayout.Toggles.Enqueue(true);
+        var bounty = file.Get("Protection", "EpicLootBountyProtection");
+        Metadata(bounty).CustomDrawer!(bounty);
+        Require(config.Capture().Options.EpicLootBountyProtectionEnabled && !snapshot.Options.EpicLootBountyProtectionEnabled,
+            "Bounty drawer failed to update its setting or changed an existing snapshot.");
     }
 
     private static void EditNumbers()

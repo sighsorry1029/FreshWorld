@@ -115,6 +115,7 @@ ZoneSafeZones = 1
 ResourceSafeZones = 0
 LocationSafeZones = 0
 EpicLootProtection = true
+EpicLootBountyProtection = false
 PieceBlacklist = fire_pit
 ~~~
 
@@ -152,11 +153,21 @@ Player_tombstone is a separate built-in marker. Tombstones store a character/pro
 
 With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, even with all SafeZones settings set to 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.
 
-Neighboring zones remain eligible for restoration, including resource and location placement, terrain edits, and terrain-border repairs that cross into the treasure zone. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty targets, their adds, and bounty spawn controllers receive no special protection. Existing player, base, and tombstone rules remain separate.
+Neighboring zones remain eligible for restoration, including resource and location placement, terrain edits, and terrain-border repairs that cross into the treasure zone. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty protection has its own setting below. Existing player, base, and tombstone rules remain separate.
 
 FreshWorld takes the initial treasure snapshot after the pre-maintenance save and rechecks saved objects in each target zone before an attempt or loading retry. Once observed, a protected zone remains protected for that run. A found or removed chest no longer triggers this treasure rule on the next run, although ordinary base-marker protection may still apply. A pending controller must contain treasure spawn data, must not be marked as a bounty, and must not have finished placement.
 
 There is no expiry or limit on protected treasure zones: an unfound chest can retain its one zone indefinitely. This does not recreate previously lost chests, clear old map pins, cancel contracts, grant rewards, or alter player progress. The recognized saved markers were checked against EpicLoot 0.14.10. Other reset tools are outside this protection.
+
+## EpicLoot bounties
+
+`EpicLootBountyProtection` is disabled by default. Set it to `true` to protect pending bounty spawn controllers, bounty targets, and all their adds. Each object's current zone (1x1) is excluded from direct zone, resource, and location resets, even with SafeZones=0. FreshWorld also prevents direct or recursive deletion of those objects. If a target and its adds occupy different zones, each zone is protected; this is not a fixed area around the map pin or the original spawn point.
+
+FreshWorld reads saved world tags, so protection does not require loaded components, creator metadata, or an online quest owner. It captures the initial set after the pre-maintenance save and rechecks each target zone before an attempt or loading retry to detect new or moved objects. Observed zones stay protected until the run ends. The next run starts fresh. Neighboring terrain edits and border repairs can still affect a protected zone, as with treasure protection.
+
+This switch is independent of `EpicLootProtection`, uses ServerSync, and supports server cfg hot reload. Changes apply to the next run. Set it to false to disable both bounty-zone protection and bounty-object deletion immunity. No EpicLoot dependency is required.
+
+EpicLoot can leave tagged creatures behind when a bounty is abandoned. Those objects continue to protect their zones while the tags remain. FreshWorld does not infer quest status, remove abandoned targets, alter player progress, grant rewards, or repair previously lost targets. Marker recognition was checked against EpicLoot 0.14.10.
 
 ## Manual commands and permissions
 

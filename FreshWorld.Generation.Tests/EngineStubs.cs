@@ -190,7 +190,7 @@ namespace FreshWorld.Engine
         public static bool IsGenerated(Vector2s zone) => ZoneSystem.instance.Generated.Contains(zone);
         public static List<ZDO> GetZDOs(Vector2s zone) => Objects.TryGetValue(zone, out var entries) ? new(entries) : new();
         public static void RemoveZDO(ZDO zdo) => Removed.Add(zdo);
-        public static void RemoveZDO(ZDO zdo, bool protectEpicLoot) => Removed.Add(zdo);
+        public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties) => Removed.Add(zdo);
         public static bool TryGetRoot(Vector2s zone, out GameObject root) => ZoneSystem.instance.Roots.TryGetValue(zone, out root!);
         public static void PokeZone(Vector2s zone) => Pokes++;
         public static string DescribeZoneLoad(Vector2s zone) =>
