@@ -16,6 +16,7 @@ public static class StableHash
 }
 public sealed class ZDO(string prefab, Vector3 position)
 {
+    public bool IsValid() => true;
     public readonly string Name = prefab;
     public int GetPrefab() => Name.GetStableHashCode();
     public Vector3 GetPosition() => position;
@@ -58,6 +59,7 @@ public struct PrefabReference(bool valid, string? name, GameObject? asset = null
 }
 public sealed class ZoneSystem
 {
+    public static Vector2s GetZone(Vector3 position) => new((int)Math.Floor((position.x + 32) / 64), (int)Math.Floor((position.z + 32) / 64));
     public enum SpawnMode { Ghost }
     private sealed class ClearArea(Vector3 center, float radius)
     {
@@ -191,6 +193,11 @@ namespace FreshWorld.Engine
         public static List<ZDO> GetZDOs(Vector2s zone) => Objects.TryGetValue(zone, out var entries) ? new(entries) : new();
         public static void RemoveZDO(ZDO zdo) => Removed.Add(zdo);
         public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties) => Removed.Add(zdo);
+        public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected)
+        {
+            if (alwaysProtected?.IsProtectedObject(zdo) != true) Removed.Add(zdo);
+        }
+        public static IEnumerable<ZDO> AllZDOs() => Objects.Values.SelectMany(items => items);
         public static bool TryGetRoot(Vector2s zone, out GameObject root) => ZoneSystem.instance.Roots.TryGetValue(zone, out root!);
         public static void PokeZone(Vector2s zone) => Pokes++;
         public static string DescribeZoneLoad(Vector2s zone) =>

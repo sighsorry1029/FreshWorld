@@ -26,11 +26,13 @@ internal sealed class MaintenancePipeline
     private readonly HashSet<Vector2s> _playerZones = new();
     private readonly EpicLootProtection _epicLoot;
     private readonly JotunInvasionProtection _invasions = new();
+    private readonly AlwaysProtectedObjects _alwaysProtected;
     private ITrackedOperation? _activeOperation;
 
     public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn)
     {
         _options = options;
+        _alwaysProtected = new AlwaysProtectedObjects(options.AlwaysProtectedPrefabs);
         _epicLoot = new EpicLootProtection(options.EpicLootProtectionEnabled, options.EpicLootBountyProtectionEnabled);
         _includeVegetation = includeVegetation;
         _log = log;
@@ -58,7 +60,8 @@ internal sealed class MaintenancePipeline
             var protectedZones = ProtectedSnapshot(_options.ZoneSafeZones, generated);
             var epicLootZones = _epicLoot.Capture();
             var invasionAreas = _invasions.Capture();
-            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionAreas} Jotun invasion areas protected.");
+            var alwaysProtectedZones = _alwaysProtected.Capture();
+            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionAreas} Jotun invasion areas protected; {alwaysProtectedZones} zones protected by AlwaysProtectedPrefabs.");
 
             if (_options.ZonesEnabled)
             {
@@ -211,7 +214,7 @@ internal sealed class MaintenancePipeline
         // Called before every attempt, including retries after loading. Once observed, a player's
         // zone and its eight neighbors stay excluded for this run, even after the player moves.
         GameWorld.CollectPlayerZones(_playerZones);
-        if (!_invasions.CanResetZone(zone)) return false;
+        if (!CanResetTerrain(zone)) return false;
         // Keep recorded positions separate from this fixed protection policy. Probe at most nine
         // coordinates without allocating a larger set, and never wrap the native short boundaries.
         for (var x = Math.Max(short.MinValue, zone.x - 1); x <= Math.Min(short.MaxValue, zone.x + 1); x++)
@@ -224,13 +227,18 @@ internal sealed class MaintenancePipeline
         return !BaseProtection.GetExcluded(safeZones).Contains(zone);
     }
 
+    // Only these policies also protect terrain tiles. Keep ordinary base/player/EpicLoot rules separate.
+    private bool CanResetTerrain(Vector2s zone) =>
+        _invasions.CanResetZone(zone) && _alwaysProtected.CanResetZone(zone);
+
     private OperationParameters Parameters(int safeZones) =>
         new()
         {
             SafeZones = safeZones,
             ProtectEpicLoot = _options.EpicLootProtectionEnabled,
             ProtectEpicLootBounties = _options.EpicLootBountyProtectionEnabled,
-            CanResetTerrain = _invasions.CanResetZone
+            CanResetTerrain = CanResetTerrain,
+            AlwaysProtected = _alwaysProtected
         };
 
     private HashSet<string> ResolveIds(string kind, IEnumerable<string> configured, IEnumerable<string> available)

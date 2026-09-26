@@ -16,7 +16,7 @@ internal static class ConfigBindingRegression
         "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds",
         "Reset.LocationIds", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
         "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
-        "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection"
+        "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.AlwaysProtectedPrefabs"
     };
 
     internal static int Run()
@@ -26,7 +26,7 @@ internal static class ConfigBindingRegression
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 17 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all 18 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
@@ -40,6 +40,9 @@ internal static class ConfigBindingRegression
             ("General.GameDayInterval", "not-a-number"),
             ("Reset.ResourceTerrainRadius", "NaN"),
             ("Protection.ZoneSafeZones", "3"),
+            ("Protection.ZoneSafeZones", "0"),
+            ("Protection.AlwaysProtectedPrefabs", "Player_tombstone,*"),
+            ("Protection.AlwaysProtectedPrefabs", "Player_tombstone,Player_tombstone"),
             ("Protection.ZoneSafeZones", "-1"),
             ("Protection.ResourceSafeZones", "3"),
             ("Protection.ResourceSafeZones", "-1"),
@@ -73,12 +76,13 @@ internal static class ConfigBindingRegression
             "The existing schedule was replaced by defaults during Bind.");
         Require(!settings.Options.ZonesEnabled && settings.Options.VegetationEnabled && settings.Options.LocationsEnabled,
             "The existing stage switches were replaced by defaults during Bind.");
-        Require(settings.Options.ZoneSafeZones == 0 && settings.Options.VegetationSafeZones == 1 && settings.Options.LocationSafeZones == 2 &&
+        Require(settings.Options.ZoneSafeZones == 1 && settings.Options.VegetationSafeZones == 1 && settings.Options.LocationSafeZones == 2 &&
             settings.Options.VegetationTerrainRadius == 7.5f, "The existing protection or terrain values were changed.");
         Require(settings.Options.VegetationIds.SequenceEqual(new[] { "Beech1", "Birch1" }) &&
             settings.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper" }) &&
             settings.Options.LocationIds.SequenceEqual(new[] { "Hildir_cave" }) &&
-            settings.Options.PieceBlacklist.SequenceEqual(new[] { "piece_beehive", "piece_workbench" }),
+            settings.Options.PieceBlacklist.SequenceEqual(new[] { "piece_beehive", "piece_workbench" }) &&
+            settings.Options.AlwaysProtectedPrefabs.SequenceEqual(new[] { "Player_tombstone", "custom_marker" }),
             "The existing exact-ID lists were changed.");
         fixture.File.Save();
         AssertSavedValues(fixture.Path, values);
@@ -102,6 +106,7 @@ internal static class ConfigBindingRegression
         values["Protection.ResourceSafeZones"] = "0";
         values["Protection.LocationSafeZones"] = "1";
         values["Protection.PieceBlacklist"] = "";
+        values["Protection.AlwaysProtectedPrefabs"] = "";
         values["Protection.EpicLootProtection"] = "false";
         values["Protection.EpicLootBountyProtection"] = "true";
         fixture.Reload(values);
@@ -112,10 +117,10 @@ internal static class ConfigBindingRegression
             "Reload did not apply the file's daily schedule.");
         Require(after.Options.ZonesEnabled && !after.Options.VegetationEnabled && !after.Options.LocationsEnabled &&
             after.Options.ZoneSafeZones == 2 && after.Options.VegetationSafeZones == 0 && after.Options.LocationSafeZones == 1 &&
-            after.Options.VegetationTerrainRadius == 0 && after.Options.PieceBlacklist.Length == 0,
+            after.Options.VegetationTerrainRadius == 0 && after.Options.PieceBlacklist.Length == 0 && after.Options.AlwaysProtectedPrefabs.Length == 0,
             "Reload clamped, defaulted, or retained earlier values.");
         Require(before.Schedule.Mode == ScheduleMode.GameDays && before.Options.LocationSafeZones == 2 &&
-            before.Options.PieceBlacklist.Length == 2, "Reload mutated the already captured snapshot.");
+            before.Options.PieceBlacklist.Length == 2 && before.Options.AlwaysProtectedPrefabs.Length == 2, "Reload mutated the already captured snapshot.");
         Require(before.Options.EpicLootProtectionEnabled && !before.Options.EpicLootBountyProtectionEnabled &&
             !after.Options.EpicLootProtectionEnabled && after.Options.EpicLootBountyProtectionEnabled,
             "Reload changed the previous EpicLoot snapshot or coupled its two switches.");
@@ -127,7 +132,7 @@ internal static class ConfigBindingRegression
     {
         using var fixture = new Fixture(ValidValues());
         var actual = fixture.File.Keys.Select(key => key.Section + "." + key.Key).OrderBy(key => key, StringComparer.Ordinal);
-        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 17-key config schema changed.");
+        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 18-key config schema changed.");
         foreach (var definition in fixture.File.Keys)
         {
             var entry = fixture.File[definition];
@@ -165,7 +170,8 @@ internal static class ConfigBindingRegression
 
     private static void AssertChoices(ConfigEntryBase entry, object[]? choices, string key)
     {
-        var expected = key == "General.Mode" ? new[] { "GameDays", "DailyTimes" } : new[] { "0", "1", "2" };
+        var expected = key == "General.Mode" ? new[] { "GameDays", "DailyTimes" } :
+            key == "Protection.ZoneSafeZones" ? new[] { "1", "2" } : new[] { "0", "1", "2" };
         Require(choices != null && choices.All(choice => entry.SettingType.IsInstanceOfType(choice)) &&
             choices.Select(choice => TomlTypeConverter.ConvertToString(choice, entry.SettingType)).SequenceEqual(expected),
             key + " must expose native choices of its own lossless setting type.");
@@ -301,10 +307,11 @@ internal static class ConfigBindingRegression
         ["Reset.TerrainResourceIds"] = "rock4_copper",
         ["Reset.LocationIds"] = "Hildir_cave",
         ["Reset.ResourceTerrainRadius"] = "7.5",
-        ["Protection.ZoneSafeZones"] = "0",
+        ["Protection.ZoneSafeZones"] = "1",
         ["Protection.ResourceSafeZones"] = "1",
         ["Protection.LocationSafeZones"] = "2",
         ["Protection.PieceBlacklist"] = "piece_beehive,piece_workbench",
+        ["Protection.AlwaysProtectedPrefabs"] = "Player_tombstone,custom_marker",
         ["Protection.EpicLootProtection"] = "true",
         ["Protection.EpicLootBountyProtection"] = "false"
     };

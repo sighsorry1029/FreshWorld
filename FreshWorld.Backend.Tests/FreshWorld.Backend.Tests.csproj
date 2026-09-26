@@ -13,6 +13,7 @@
     <Compile Include="../FreshWorld/Engine/Operations.cs" Link="Production/Operations.cs" />
     <Compile Include="../FreshWorld/Engine/EpicLootProtection.cs" Link="Production/EpicLootProtection.cs" />
     <Compile Include="../FreshWorld/Engine/JotunInvasionProtection.cs" Link="Production/JotunInvasionProtection.cs" />
+    <Compile Include="../FreshWorld/Engine/AlwaysProtectedObjects.cs" Link="Production/AlwaysProtectedObjects.cs" />
     <Compile Include="../FreshWorld.World.Tests/PersistentEventStub.cs" Link="Boundary/PersistentEventStub.cs" />
     <Compile Include="../FreshWorld/Runtime/GuardedCoroutine.cs" Link="Production/GuardedCoroutine.cs" />
   </ItemGroup>

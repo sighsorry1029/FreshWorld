@@ -114,22 +114,23 @@ This protection skips direct targets; it does not clip terrain edits to the prot
 ZoneSafeZones = 1
 ResourceSafeZones = 0
 LocationSafeZones = 0
+AlwaysProtectedPrefabs = Player_tombstone
 EpicLootProtection = true
 EpicLootBountyProtection = false
 PieceBlacklist = fire_pit
 ~~~
 
-The three SafeZones settings independently control additional base-marker protection and accept only these values. They do not change the fixed 3 x 3 player protection:
+The three SafeZones settings independently control additional base-marker protection. ZoneSafeZones accepts only **1 or 2**; ResourceSafeZones and LocationSafeZones also accept **0**. They do not change the fixed 3 x 3 player protection or AlwaysProtectedPrefabs:
 
 | Value | Protection for that stage |
 |---|---|
-| 0 | No protection: ignore protection from base markers. |
+| 0 | Resources and locations only: ignore protection from base markers. |
 | 1 | Marker zone: protect the zone containing a marker. |
 | 2 | 3 x 3: protect the marker's zone and its eight neighbors. |
 
-Other values, including 3 or higher in an existing cfg, are invalid and prevent new work until corrected. FreshWorld does not convert them automatically.
+ZoneSafeZones=0 is invalid, including in an existing cfg. Set it to 1 or 2 explicitly before running maintenance. Invalid values prevent new work and are not converted or clamped. Configuration Manager offers only 1 and 2 for zones, and server-side validation also rejects 0 from direct cfg edits or administrator clients.
 
-**The default LocationSafeZones=0 can remove player-built pieces inside a selected location.** It replaces the old Force behavior; there is no separate Force option. ZoneSafeZones=0 disables marker protection for the entire zone-reset stage, which has a different and broader scope.
+**The default LocationSafeZones=0 can remove player-built pieces inside a selected location.** It replaces the old Force behavior; there is no separate Force option. AlwaysProtectedPrefabs and the independent player, invasion, and enabled EpicLoot protections still apply.
 
 ResourceSafeZones=0 allows the selected resource supplements in retained base zones. The resource stage does not directly select arbitrary player-built pieces for deletion, but terrain restoration can change the ground supporting them.
 
@@ -145,9 +146,19 @@ FreshWorld checks saved world objects without loading their zones. Each protecti
 
 Ships built with the hammer have creator metadata and qualify automatically unless blacklisted. Ships created with the vanilla spawn command lack that metadata and are not protection markers. Preserving a ship does not guarantee that terrain restoration will preserve the ground around it.
 
-Player_tombstone is a separate built-in marker. Tombstones store a character/profile owner ID in s_owner, while placed buildings use s_creator. FreshWorld therefore checks tombstones without the building-creator requirement. PieceBlacklist does not disable this separate marker, even if it contains Player_tombstone.
+Player_tombstone is a separate built-in base marker and is also the default AlwaysProtectedPrefabs entry. Tombstones store a character/profile owner ID in s_owner, while placed buildings use s_creator. FreshWorld therefore checks tombstones without the building-creator requirement. PieceBlacklist does not disable either rule. Removing Player_tombstone from AlwaysProtectedPrefabs leaves its existing SafeZones-based marker protection in place, including the 3 x 3 range when SafeZones=2.
 
-**All markers, including automatically detected Pieces and tombstones, protect zones only when that stage's SafeZones value is greater than 0.** SafeZones=0 bypasses this protection; it does not grant individual objects deletion immunity. Each stage keeps its own SafeZones policy. Terrain edits from outside a protected area can still cross its boundary, as described above.
+**Base-marker protection applies when that stage's SafeZones value is greater than 0.** ResourceSafeZones=0 and LocationSafeZones=0 bypass base markers, but not AlwaysProtectedPrefabs. Each stage keeps its own SafeZones policy. Base markers alone do not grant individual objects deletion immunity or stop terrain edits from outside their protected area.
+
+## Always-protected prefabs
+
+`AlwaysProtectedPrefabs` is a server-synced list of exact prefab IDs, defaulting to `Player_tombstone`. Each matching object's own zone (1 x 1) is excluded from direct zone, resource, and location resets, regardless of SafeZones or PieceBlacklist. No Piece component, creator metadata, loaded scene object, or online player is required. Natural and command-spawned instances of a listed prefab qualify too. An empty list disables this additional policy.
+
+Listed objects cannot be directly or recursively deleted by FreshWorld. Their protected terrain tiles also skip FreshWorld terrain restoration and border repairs requested from neighboring zones. Native resource or location placement from outside a protected zone can still cross its boundary; the list does not block other mods, player actions, or ordinary damage.
+
+FreshWorld captures the initial objects after saving and rechecks each target zone before an attempt or loading retry. Observed zones remain protected for the current run, even if the object moves or disappears. The next run starts fresh. Settings changed through cfg hot reload or an administrator's Configuration Manager apply to the next run; they cannot change an active run's protection.
+
+This list is independent of the EpicLoot switches. A listed EpicLoot prefab remains protected by this rule even if its EpicLoot-specific protection is disabled. Ordinary base markers and the built-in Jotun invasion protection remain separate.
 
 ## Jotun invasions
 
@@ -163,7 +174,7 @@ This prevents future FreshWorld resets from removing invasion objectives. It doe
 
 ## EpicLoot treasure maps
 
-With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, even with all SafeZones settings set to 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.
+With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, including when ResourceSafeZones or LocationSafeZones is 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.
 
 Neighboring zones remain eligible for restoration, including resource and location placement, terrain edits, and terrain-border repairs that cross into the treasure zone. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty protection has its own setting below. Existing player, base, and tombstone rules remain separate.
 

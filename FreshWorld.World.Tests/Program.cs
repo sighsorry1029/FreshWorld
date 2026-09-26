@@ -61,7 +61,11 @@ var tests = new (string Name, Action Body)[]
     ("invasion areas survive completion and movement only for the current run", InvasionLifetime),
     ("missing or invalid persistent event data refuses an unsafe reset", InvalidInvasionData),
     ("core and outer ice survive loaded unloaded and recursive deletion without ownership changes", InvasionDeletion),
-    ("zone reset border cleanup forwards the invasion terrain filter", InvasionBorders)
+    ("zone reset border cleanup forwards the invasion terrain filter", InvasionBorders),
+    ("always-protected exact IDs override blacklist without Piece creator or loaded components", AlwaysProtectedMarkers),
+    ("always-protected observations survive movement and removal only for one run", AlwaysProtectedLifetime),
+    ("always-protected objects survive direct and recursive deletion before ownership changes", AlwaysProtectedDeletion),
+    ("always-protected neighbor tiles are excluded from zone border cleanup", AlwaysProtectedBorders)
 };
 var failed = 0;
 foreach (var (name, body) in tests)
@@ -1127,6 +1131,71 @@ static void InvasionBorders()
     var reset = new ProbeReset(new() { CanResetTerrain = protection.CanResetZone });
     True(reset.Run(new(3, 0))); reset.Finish();
     True(TerrainResetter.Borders != null && !TerrainResetter.Borders.ContainsKey(protectedZone));
+}
+
+static void AlwaysProtectedMarkers()
+{
+    var config = new FreshWorldConfig(new ConfigFile()).Capture();
+    var tombstone = new ZDO(1, "Player_tombstone", new()) { Creator = 0 };
+    var custom = new ZDO(2, "custom_marker", new(128, 0, 0)) { Creator = 0 };
+    ZDOMan.instance.Add(tombstone); ZDOMan.instance.Add(custom);
+    BaseProtection.Configure(["custom_marker"], config.Options.ProtectedObjects);
+    var protection = new AlwaysProtectedObjects(config.Options.AlwaysProtectedPrefabs.Concat(["custom_marker"]));
+    Equal(2, protection.Capture());
+    True(!protection.CanResetZone(new(0, 0)) && !protection.CanResetZone(new(2, 0)));
+    True(protection.CanResetZone(new(1, 0))); // No implicit 3x3 expansion.
+    True(!protection.IsProtectedObject(new(3, "player_tombstone", new())));
+    True(!protection.IsProtectedObject(new(4, "custom_marker_extra", new())));
+    tombstone.Valid = false; True(!protection.IsProtectedObject(tombstone)); tombstone.Valid = true;
+    True(!BaseProtection.GetExcluded(0).Contains(new(0, 0)));
+    True(BaseProtection.GetExcluded(2).Contains(new(1, 1))); // Existing tombstone marker expansion is retained.
+    True(new AlwaysProtectedObjects([]).CanResetZone(new(0, 0)));
+}
+
+static void AlwaysProtectedLifetime()
+{
+    string[] ids = ["custom_marker"];
+    var protection = new AlwaysProtectedObjects(ids); ids[0] = "changed";
+    Equal(0, protection.Capture());
+    var target = new ZDO(1, "custom_marker", new()); ZDOMan.instance.Add(target);
+    True(!protection.CanResetZone(new(0, 0))); // Created after the initial snapshot.
+    target.SetPosition(new(128, 0, 0)); ZDOMan.instance.ClearObjects(); ZDOMan.instance.Add(target);
+    True(!protection.CanResetZone(new(2, 0)) && !protection.CanResetZone(new(0, 0)));
+    ZDOMan.instance.ClearObjects();
+    True(!protection.CanResetZone(new(0, 0)) && !protection.CanResetZone(new(2, 0)));
+    var nextRun = new AlwaysProtectedObjects(["custom_marker"]);
+    True(nextRun.CanResetZone(new(0, 0)) && nextRun.CanResetZone(new(2, 0)));
+}
+
+static void AlwaysProtectedDeletion()
+{
+    foreach (var loaded in new[] { true, false })
+    foreach (var enabled in new[] { true, false })
+    {
+        Reset();
+        var protection = new AlwaysProtectedObjects(enabled ? ["Player_tombstone"] : []);
+        var tombstone = new ZDO(1, "Player_tombstone", new(640, 0, 0)) { Owner = 123 };
+        var parent = new ZDO(2, "spawner", new()) { Spawned = tombstone.m_uid };
+        ZDOMan.instance.Add(tombstone); ZDOMan.instance.Add(parent);
+        if (loaded) ZNetScene.instance.Add(tombstone, new(tombstone));
+        GameWorld.RemoveZDO(parent, false, false, protection);
+        True(!parent.Valid); Equal(enabled, tombstone.Valid);
+        if (enabled)
+        {
+            GameWorld.RemoveZDO(tombstone, true, true, protection);
+            True(tombstone.Valid); Equal(123L, tombstone.Owner); Equal(0, ZNetScene.instance.DestroyCalls);
+        }
+    }
+}
+
+static void AlwaysProtectedBorders()
+{
+    var target = new ZDO(1, "Player_tombstone", new()); ZDOMan.instance.Add(target);
+    ZoneSystem.instance.AddGenerated(new(0, 0));
+    var protection = new AlwaysProtectedObjects(["Player_tombstone"]);
+    var reset = new ProbeReset(new() { CanResetTerrain = protection.CanResetZone, AlwaysProtected = protection });
+    True(reset.Run(new(1, 0))); reset.Finish();
+    True(target.Valid && TerrainResetter.Borders != null && !TerrainResetter.Borders.ContainsKey(new(0, 0)));
 }
 
 static void True(bool condition) { if (!condition) throw new Exception("Assertion failed."); }

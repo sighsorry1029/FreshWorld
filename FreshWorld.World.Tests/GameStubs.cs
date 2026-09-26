@@ -316,6 +316,7 @@ namespace FreshWorld.Engine
         public bool ProtectEpicLoot { get; set; } = true;
         public bool ProtectEpicLootBounties { get; set; }
         public Func<Vector2s, bool>? CanResetTerrain { get; set; }
+        public AlwaysProtectedObjects? AlwaysProtected { get; set; }
     }
     internal abstract class ZoneOperation
     {

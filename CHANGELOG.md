@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0
+
+- Restricted `ZoneSafeZones` to 1 or 2. Existing values of 0 must be changed before maintenance can run; resource and location protection still allow 0.
+- Added server-synced `AlwaysProtectedPrefabs`, defaulting to `Player_tombstone`. Listed objects and their own zones are protected regardless of SafeZones or PieceBlacklist, without requiring a Piece component or creator.
+- Protected listed objects from direct and recursive deletion, and their terrain tiles from restoration and border repairs, including requests from neighboring zones. Native placement from neighboring zones can still cross the boundary.
+- Kept observed zones protected until the run ends and applied config changes to the next run. Existing tombstone marker protection and EpicLoot settings remain unchanged.
+
 ## 1.0.10
 
 - Protected active Jotun invasion areas from direct resets, terrain restoration, and border repairs, regardless of SafeZones settings.

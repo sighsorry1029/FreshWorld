@@ -39,7 +39,7 @@ internal static class ConfigPresentationRegressions
         {
             ("General", new[] { "Enabled", "Mode", "GameDayInterval", "DailyTimes" }, 300),
             ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds" }, 200),
-            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "EpicLootProtection", "EpicLootBountyProtection", "PieceBlacklist" }, 100)
+            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "AlwaysProtectedPrefabs", "EpicLootProtection", "EpicLootBountyProtection", "PieceBlacklist" }, 100)
         };
         foreach (var (section, keys, categoryOrder) in expected)
         {
@@ -48,7 +48,7 @@ internal static class ConfigPresentationRegressions
             Require(entries.All(entry => Metadata(entry).CategoryOrder == categoryOrder && entry.Description.AcceptableValues == null), section + " metadata");
         }
         Require(Metadata(file.Get("General", "Enabled")).DispName == "Automatic Runs", "Display name must not rename the cfg key.");
-        Require(file.BoundKeys.Count() == 17, "Unexpected new settings.");
+        Require(file.BoundKeys.Count() == 18, "Unexpected new settings.");
     }
 
     private static void DrawWithoutEdits()
@@ -82,7 +82,7 @@ internal static class ConfigPresentationRegressions
 
         file.Set("Protection", "ZoneSafeZones", "3");
         var protection = file.Get("Protection", "ZoneSafeZones");
-        protection.BoxedValue = Metadata(protection).AcceptableValues![2];
+        protection.BoxedValue = Metadata(protection).AcceptableValues![1];
         var snapshot = config.Capture();
         Require(snapshot.Options.ZoneSafeZones == 2 && snapshot.Options.VegetationSafeZones == 0 && snapshot.Options.LocationSafeZones == 0,
             "Selecting protection changed another stage or failed to repair the invalid value.");
@@ -131,7 +131,7 @@ internal static class ConfigPresentationRegressions
         {
             ("General", "Mode", new[] { "GameDays", "DailyTimes" },
                 new[] { "1", "0", "ManualOnly", "" }, " dailytimes ", "DailyTimes"),
-            ("Protection", "ZoneSafeZones", new[] { "0 = No protection", "1 = Marker zone", "2 = 3×3 zones" },
+            ("Protection", "ZoneSafeZones", new[] { "1 = Marker zone", "2 = 3×3 zones" },
                 new[] { "3", "-1", "MarkerZone", "GameDays", "0 = No protection", "" }, " 01 ", "1 = Marker zone")
         };
         foreach (var (section, key, labels, invalidValues, validRaw, validLabel) in cases)

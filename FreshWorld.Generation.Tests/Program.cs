@@ -21,6 +21,7 @@ var tests = new (string Name, Action Test)[]
     ("protection refusal prevents native object terrain and placement changes before and after loading", ProtectedGeneration),
     ("empty IDs cannot expand a native reset", EmptyIds),
     ("resource and location terrain restoration forward the invasion guard", TerrainGuardForwarding),
+    ("resource and location clearing forward configured object deletion protection", ObjectGuardForwarding),
 };
 int failures = 0;
 foreach (var test in tests)
@@ -329,6 +330,23 @@ static void TerrainGuardForwarding()
         using var runner = Start(operation, errors, finishes); Drain(runner);
         Success(errors, finishes);
         Equal(true, ReferenceEquals(filter, TerrainResetter.LastTerrainFilter));
+    }
+}
+
+static void ObjectGuardForwarding()
+{
+    foreach (var vegetation in new[] { true, false })
+    {
+        Reset();
+        var target = new ZDO("rock4_copper", new());
+        GameWorld.Objects[Zone()] = new() { target };
+        var args = new OperationParameters { AlwaysProtected = new AlwaysProtectedObjects(["rock4_copper"]) };
+        ITrackedOperation operation = vegetation
+            ? new TrackedResetVegetation(_ => { }, new() { "rock4_copper" }, args)
+            : new TrackedRegenerateLocations(_ => { }, new() { "Hildir_cave" }, args);
+        var errors = new List<Exception>(); var finishes = new List<bool>();
+        using var runner = Start(operation, errors, finishes); Drain(runner);
+        Success(errors, finishes); Equal(false, GameWorld.Removed.Contains(target));
     }
 }
 

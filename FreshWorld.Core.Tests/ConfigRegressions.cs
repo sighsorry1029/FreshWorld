@@ -19,13 +19,13 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact seventeen bindings in three sections and game-day defaults", () =>
+        Check("exact eighteen bindings in three sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.ResourceTerrainRadius",
-                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.PieceBlacklist" };
-            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the seventeen-key design");
+                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.PieceBlacklist" };
+            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the eighteen-key design");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
             Assert(snapshot.Options.VegetationIds.Length == 0 && snapshot.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper", "silvervein" }) &&
@@ -37,6 +37,7 @@ internal static class ConfigRegressions
             Assert(snapshot.Options.PieceBlacklist.SequenceEqual(new[] { "fire_pit" }),
                 "only campfires should be excluded from automatic Piece markers by default");
             Assert(snapshot.Options.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }), "fixed tombstone marker changed");
+            Assert(snapshot.Options.AlwaysProtectedPrefabs.SequenceEqual(new[] { "Player_tombstone" }), "always-protected default changed");
             Assert(snapshot.Options.EpicLootProtectionEnabled, "EpicLoot protection default changed");
             Assert(!snapshot.Options.EpicLootBountyProtectionEnabled, "EpicLoot bounty protection must default to disabled");
             Assert(snapshot.Options.VegetationTerrainRadius == 20 && !snapshot.Schedule.RunMissedOnWorldStart, "terrain and missed-run policy");
@@ -156,6 +157,31 @@ internal static class ConfigRegressions
             Assert(options.ZoneSafeZones == 2 && options.VegetationSafeZones == 1 && options.LocationSafeZones == 0, "protection ranges interfered");
             Assert(options.VegetationTerrainRadius == 0 && options.VegetationEnabled && options.LocationsEnabled, "zero disabled a stage");
         });
+        Check("zone protection rejects zero without rewriting it while supplements still accept zero", () =>
+        {
+            foreach (var enabled in new[] { "true", "false" })
+            {
+                var file = new ConfigFile(); var cfg = new FreshWorldConfig(file);
+                file.Set("Reset", "Zones", enabled); file.Set("Protection", "ZoneSafeZones", "0");
+                Invalid(() => cfg.Capture());
+                Assert(file.Get("Protection", "ZoneSafeZones").GetSerializedValue() == "0" && file.SaveCount == 0, "invalid zone zero was rewritten");
+                file.Set("Protection", "ZoneSafeZones", "1");
+                Assert(cfg.Capture().Options.VegetationSafeZones == 0 && cfg.Capture().Options.LocationSafeZones == 0, "supplement zero was rejected");
+            }
+        });
+        Check("always-protected list keeps immutable edits and explicit empty values independently of base markers", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file);
+            file.Set("Protection", "AlwaysProtectedPrefabs", " Player_tombstone,custom_marker ");
+            file.Set("Protection", "PieceBlacklist", "custom_marker");
+            var first = cfg.Capture().Options;
+            first.AlwaysProtectedPrefabs[0] = "changed";
+            file.Set("Protection", "AlwaysProtectedPrefabs", "");
+            var second = cfg.Capture().Options;
+            Assert(first.AlwaysProtectedPrefabs.SequenceEqual(new[] { "Player_tombstone", "custom_marker" }), "old snapshot or returned array changed");
+            Assert(second.AlwaysProtectedPrefabs.Length == 0, "empty list restored defaults");
+            Assert(second.ProtectedObjects.SequenceEqual(new[] { "Player_tombstone" }) && second.PieceBlacklist.SequenceEqual(new[] { "custom_marker" }), "independent marker policy changed");
+        });
         Check("stage switches and automatic scheduling toggle preserve configured lists", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file);
@@ -170,7 +196,7 @@ internal static class ConfigRegressions
         });
         Check("wildcards commands empty entries duplicates and invalid enum names rejected", () =>
         {
-            foreach (var key in new[] { ("Reset", "ResourceIds"), ("Reset", "TerrainResourceIds"), ("Reset", "LocationIds"), ("Protection", "PieceBlacklist") })
+            foreach (var key in new[] { ("Reset", "ResourceIds"), ("Reset", "TerrainResourceIds"), ("Reset", "LocationIds"), ("Protection", "PieceBlacklist"), ("Protection", "AlwaysProtectedPrefabs") })
             foreach (var value in new[] { "*", "rock4_*", "rock4_copper start", "rock4_copper;save", "rock4_copper,", "silvervein,silvervein" })
             {
                 var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); file.Set(key.Item1, key.Item2, value);

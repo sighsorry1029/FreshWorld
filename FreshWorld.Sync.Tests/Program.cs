@@ -113,7 +113,7 @@ public static class Program
         Require(((Array)Call(versionType, null, "GetFailedServer", new ZRpc(new TestSocket("Steam_222")))!).Length == 0,
             "The server requires an unmodded peer to complete FreshWorld's version handshake.");
         Require((bool)syncType.GetProperty("IsLocked")!.GetValue(sync)!, "Administrator-only policy is not fixed.");
-        Require(file.Count == 17, "Integration did not register the expected config keys.");
+        Require(file.Count == 18, "Integration did not register the expected config keys.");
         var broadcast = AccessTools.Method(syncType, "Broadcast", new[] { typeof(long), typeof(ConfigEntryBase[]) });
         // Capture server sends without invoking Unity coroutines; run the real client-send prefix separately.
         harmony.Patch(broadcast, prefix: new HarmonyMethod(typeof(Program), nameof(RecordBroadcast)) { priority = Priority.Last });
@@ -124,6 +124,8 @@ public static class Program
         var radius = file[new ConfigDefinition("Reset", "ResourceTerrainRadius")];
         var mode = file[new ConfigDefinition("General", "Mode")];
         var blacklist = file[new ConfigDefinition("Protection", "PieceBlacklist")];
+        var alwaysProtected = file[new ConfigDefinition("Protection", "AlwaysProtectedPrefabs")];
+        Require(alwaysProtected.GetSerializedValue() == "Player_tombstone", "Always-protected default changed.");
         var epicLoot = file[new ConfigDefinition("Protection", "EpicLootProtection")];
         var bounty = file[new ConfigDefinition("Protection", "EpicLootBountyProtection")];
         Require(epicLoot.GetSerializedValue() == "true", "EpicLoot protection default changed.");
@@ -143,6 +145,8 @@ public static class Program
         foreach (var entry in file.Select(pair => pair.Value)) Call(adapterType, adapter, "ValidateEdit", Edit(entry, entry.GetSerializedValue()));
         Require(true, "All registered setting types round trip through the real serializer.");
         Reject(Edit(zone, "3")); Reject(Edit(radius, "NaN")); Reject(Edit(mode, "ManualOnly"));
+        Reject(Edit(zone, "0"));
+        Reject(Edit(alwaysProtected, "Player_tombstone,*")); Reject(Edit(alwaysProtected, "Player_tombstone,Player_tombstone"));
         Reject(Edit(epicLoot, "invalid"));
         Reject(Edit(bounty, "invalid"));
         Reject(Edit(blacklist, "fire_pit,*")); Reject(Edit(blacklist, "fire_pit,fire_pit"));
@@ -186,10 +190,16 @@ public static class Program
         Call(adapterType, null, "LeaveRpc", scopeArguments[1]);
         Require(ReferenceEquals(Get(adapterType, null, "receivingRpc"), peer.m_rpc), "Nested RPC did not restore outer identity.");
         ReceiveClient(peer.m_uid, Edit(zone, "3"));
+        ReceiveClient(peer.m_uid, Edit(zone, "0"));
         Require(zone.GetSerializedValue() == "1", "Invalid administrator edit was accepted.");
         ReceiveClient(peer.m_uid, valid);
         Require(zone.GetSerializedValue() == "2" && File.ReadAllText(file.ConfigFilePath).Contains("ZoneSafeZones = 2"), "Valid edit was not saved on the server.");
         Require(broadcasts > 0 && changes > 0, "Accepted values were not redistributed or queued for application.");
+        ReceiveClient(peer.m_uid, Edit(alwaysProtected, "Player_tombstone,custom_marker"));
+        Require(alwaysProtected.GetSerializedValue() == "Player_tombstone,custom_marker" &&
+            File.ReadAllText(file.ConfigFilePath).Contains("AlwaysProtectedPrefabs = Player_tombstone,custom_marker"), "Administrator always-protected edit was not saved.");
+        ReceiveClient(peer.m_uid, Edit(alwaysProtected, "Player_tombstone,*"));
+        Require(alwaysProtected.GetSerializedValue() == "Player_tombstone,custom_marker", "Invalid administrator list edit changed accepted values.");
         ReceiveClient(peer.m_uid, Edit(blacklist, "fire_pit,woodwall"));
         Require(blacklist.GetSerializedValue() == "fire_pit,woodwall" &&
             File.ReadAllText(file.ConfigFilePath).Contains("PieceBlacklist = fire_pit,woodwall"), "Administrator blacklist edit was not saved.");
@@ -201,6 +211,7 @@ public static class Program
         Require(bounty.GetSerializedValue() == "true" &&
             File.ReadAllText(file.ConfigFilePath).Contains("EpicLootBountyProtection = true"), "Administrator bounty edit was not saved.");
         var disk = File.ReadAllText(file.ConfigFilePath).Replace("ZoneSafeZones = 2", "ZoneSafeZones = 1")
+            .Replace("AlwaysProtectedPrefabs = Player_tombstone,custom_marker", "AlwaysProtectedPrefabs = ")
             .Replace("PieceBlacklist = fire_pit,woodwall", "PieceBlacklist = ")
             .Replace("EpicLootProtection = false", "EpicLootProtection = true")
             .Replace("EpicLootBountyProtection = true", "EpicLootBountyProtection = false");
@@ -209,6 +220,7 @@ public static class Program
         Call(adapterType, adapter, "ReloadFile");
         Require(zone.GetSerializedValue() == "1" && broadcasts == oldBroadcasts && file.SaveOnConfigSet, "Reload sent partial values or left saving disabled.");
         Require(blacklist.GetSerializedValue() == "", "Reload restored default blacklist entries over an empty value.");
+        Require(alwaysProtected.GetSerializedValue() == "", "Reload restored default always-protected entries over an empty value.");
         Require(epicLoot.GetSerializedValue() == "true", "Reload did not apply EpicLoot protection.");
         Require(bounty.GetSerializedValue() == "false", "Reload did not apply bounty protection.");
         Call(adapterType, adapter, "Publish", 0L);

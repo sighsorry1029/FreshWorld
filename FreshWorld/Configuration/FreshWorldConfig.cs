@@ -29,6 +29,8 @@ namespace FreshWorld.Configuration
         public string[] PieceBlacklist => (string[])pieceBlacklist.Clone();
         private readonly string[] protectedObjects;
         public string[] ProtectedObjects => (string[])protectedObjects.Clone();
+        private readonly string[] alwaysProtectedPrefabs;
+        public string[] AlwaysProtectedPrefabs => (string[])alwaysProtectedPrefabs.Clone();
         public bool VegetationEnabled { get; }
         private readonly string[] vegetationIds;
         public string[] VegetationIds => (string[])vegetationIds.Clone();
@@ -50,11 +52,12 @@ namespace FreshWorld.Configuration
             string[] pieceBlacklist, string[] protectedObjects,
             bool vegetationEnabled, string[] vegetationIds, string[] terrainVegetationIds, float vegetationTerrainRadius,
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
-            bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled)
+            bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled, string[] alwaysProtectedPrefabs)
         {
             ZonesEnabled = zonesEnabled; ZoneSafeZones = zoneSafeZones;
             this.pieceBlacklist = (string[])pieceBlacklist.Clone();
             this.protectedObjects = (string[])protectedObjects.Clone();
+            this.alwaysProtectedPrefabs = (string[])alwaysProtectedPrefabs.Clone();
             VegetationEnabled = vegetationEnabled; this.vegetationIds = (string[])vegetationIds.Clone();
             this.terrainVegetationIds = (string[])terrainVegetationIds.Clone();
             VegetationTerrainRadius = vegetationTerrainRadius; VegetationSafeZones = vegetationSafeZones;
@@ -68,6 +71,7 @@ namespace FreshWorld.Configuration
     public sealed class FreshWorldConfig
     {
         public const string DefaultPieceBlacklist = "fire_pit";
+        public const string DefaultAlwaysProtectedPrefabs = "Player_tombstone";
         public const string DefaultLocations = "Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress";
         private static readonly Regex ExactId = new Regex(@"^[A-Za-z0-9_]+(?::[A-Za-z0-9_]+)*$", RegexOptions.CultureInvariant);
         // Preserve raw scalar text: BepInEx's bool/enum deserializers can silently retain/default invalid input.
@@ -75,7 +79,7 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<string> enabled, zonesEnabled, vegetationEnabled, locationsEnabled;
         private readonly ConfigEntry<string> dailyTimes, gameDayInterval, vegetationIds, terrainVegetationIds, locationIds;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
-        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection;
+        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
 
         public FreshWorldConfig(ConfigFile config)
@@ -119,14 +123,17 @@ namespace FreshWorld.Configuration
                 100);
 
             zoneSafeZones = Bind("Protection", "ZoneSafeZones", new ConfigChoice<SafeZoneRange>("1"),
-                "Zone reset marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 can allow player structures to be deleted. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain and border edits from outside this area can still affect it.",
-                400, choices: ConfigPresentation.SafeZoneChoices);
+                "Zone reset marker protection: 1 = Marker zone, 2 = 3x3 zones. Only 1 or 2 is allowed; 0 is rejected without conversion. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain and border edits from outside this area can still affect it.",
+                400, choices: ConfigPresentation.ZoneSafeZoneChoices);
             vegetationSafeZones = Bind("Protection", "ResourceSafeZones", new ConfigChoice<SafeZoneRange>("0"),
                 "Marker protection for both resource groups: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 permits resource and terrain restoration inside base zones. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 300, choices: ConfigPresentation.SafeZoneChoices);
             locationSafeZones = Bind("Protection", "LocationSafeZones", new ConfigChoice<SafeZoneRange>("0"),
                 "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 bypasses base protection and can delete player pieces inside locations. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 200, choices: ConfigPresentation.SafeZoneChoices);
+            alwaysProtectedPrefabs = Bind("Protection", "AlwaysProtectedPrefabs", DefaultAlwaysProtectedPrefabs,
+                "Comma-separated exact prefab IDs that FreshWorld must preserve, regardless of SafeZones or PieceBlacklist. Each object's own zone is excluded from all direct reset stages, terrain restoration, and border repairs. No Piece component or creator is required. Objects are also protected from direct and recursive deletion. Observed zones stay protected until the run ends. Empty disables this list; ordinary marker protection still applies. Native placement from neighboring zones can cross the boundary. Changes apply to the next run.",
+                180);
             epicLootProtection = Bind("Protection", "EpicLootProtection", "true",
                 "Protect unfound EpicLoot treasure chests and pending treasure controllers in their own zones, even when SafeZones=0. Also prevent FreshWorld from deleting those objects through a reset in another zone. Set false to disable both protections on the next run. EpicLoot is optional.",
                 150, ConfigPresentation.DrawToggle);
@@ -134,7 +141,7 @@ namespace FreshWorld.Configuration
                 "Protect pending EpicLoot bounty controllers, targets, and their adds. Each object's current zone is excluded from direct resets, even when SafeZones=0, and FreshWorld cannot delete the object. Neighboring terrain edits can still reach it. Abandoned bounty objects remain protected while their tags exist. Changes apply to the next run. EpicLoot is optional.",
                 140, ConfigPresentation.DrawToggle);
             pieceBlacklist = Bind("Protection", "PieceBlacklist", DefaultPieceBlacklist,
-                "Comma-separated exact prefab IDs excluded from automatic base markers. Other Pieces with creator != 0 protect their zones when the stage's SafeZones > 0. Default fire_pit prevents lone campfires from protecting zones. Empty excludes no Pieces. Excluded Pieces can still share protection from other markers. Player_tombstone remains a separate marker unaffected by this list.",
+                "Comma-separated exact prefab IDs excluded from automatic base markers. Other Pieces with creator != 0 protect their zones when the stage's SafeZones > 0. Default fire_pit prevents lone campfires from protecting zones. Empty excludes no Pieces. Excluded Pieces can still share protection from other markers. Player_tombstone remains a separate base marker. AlwaysProtectedPrefabs overrides this blacklist.",
                 100);
 
             ConfigEntry<T> Bind<T>(string section, string key, T value, string description, int order,
@@ -166,7 +173,7 @@ namespace FreshWorld.Configuration
             catch (Exception ex) when (ex is ArgumentException || ex is TimeZoneNotFoundException || ex is InvalidTimeZoneException)
             { throw new ArgumentException("Invalid [General] schedule: " + ex.Message, ex); }
 
-            var zoneProtection = ReadSafeZoneRange(Value(zoneSafeZones), "Protection.ZoneSafeZones");
+            var zoneProtection = ReadSafeZoneRange(Value(zoneSafeZones), "Protection.ZoneSafeZones", allowZero: false);
             var vegetationProtection = ReadSafeZoneRange(Value(vegetationSafeZones), "Protection.ResourceSafeZones");
             var locationProtection = ReadSafeZoneRange(Value(locationSafeZones), "Protection.LocationSafeZones");
             var terrain = ReadFloat(Value(terrainRadius), "Reset.ResourceTerrainRadius");
@@ -182,7 +189,8 @@ namespace FreshWorld.Configuration
                 ReadBool(Value(vegetationEnabled), "Reset.Resources"), vegetation, terrainVegetation, terrain, vegetationProtection,
                 ReadBool(Value(locationsEnabled), "Reset.Locations"), locations, locationProtection,
                 ReadBool(Value(epicLootProtection), "Protection.EpicLootProtection"),
-                ReadBool(Value(epicLootBountyProtection), "Protection.EpicLootBountyProtection"));
+                ReadBool(Value(epicLootBountyProtection), "Protection.EpicLootBountyProtection"),
+                OptionalIds(Value(alwaysProtectedPrefabs), "Protection.AlwaysProtectedPrefabs"));
             return new RuntimeSettings(schedule, options);
         }
         private static bool ReadBool(string text, string key)
@@ -190,12 +198,14 @@ namespace FreshWorld.Configuration
             if (!bool.TryParse(text, out var value)) throw new ArgumentException(key + " must be true or false.");
             return value;
         }
-        private static int ReadSafeZoneRange(ConfigChoice<SafeZoneRange> entry, string key)
+        private static int ReadSafeZoneRange(ConfigChoice<SafeZoneRange> entry, string key, bool allowZero = true)
         {
             if (!int.TryParse(entry.Raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
                 throw new ArgumentException(key + " must be an integer.");
-            if (!Enum.IsDefined(typeof(SafeZoneRange), value))
-                throw new ArgumentException(key + " must be 0 (No protection), 1 (Marker zone), or 2 (3x3 zones).");
+            if (!Enum.IsDefined(typeof(SafeZoneRange), value) || (!allowZero && value == 0))
+                throw new ArgumentException(key + (allowZero
+                    ? " must be 0 (No protection), 1 (Marker zone), or 2 (3x3 zones)."
+                    : " must be 1 (Marker zone) or 2 (3x3 zones). Change 0 explicitly before running maintenance."));
             return value;
         }
         private static float ReadFloat(string text, string key)

@@ -22,6 +22,7 @@ internal static class ConfigPresentation
     // Metadata only: BepInEx receives no acceptable-value constraint and never clamps raw input.
     internal static object[] ModeChoices => new object[] { new ConfigChoice<ScheduleMode>("GameDays"), new ConfigChoice<ScheduleMode>("DailyTimes") };
     internal static object[] SafeZoneChoices => new object[] { new ConfigChoice<SafeZoneRange>("0"), new ConfigChoice<SafeZoneRange>("1"), new ConfigChoice<SafeZoneRange>("2") };
+    internal static object[] ZoneSafeZoneChoices => new object[] { new ConfigChoice<SafeZoneRange>("1"), new ConfigChoice<SafeZoneRange>("2") };
 
     internal static void DrawToggle(ConfigEntryBase entry)
     {

@@ -33,7 +33,7 @@ internal class ResetZones : ZoneOperation
         foreach (var zdo in GameWorld.GetZDOs(zone))
         {
             if (zdo == null || !zdo.IsValid()) continue;
-            if (ZoneSystem.GetZone(zdo.GetPosition()) == zone) GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties);
+            if (ZoneSystem.GetZone(zdo.GetPosition()) == zone) GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
         }
 
         if (world.m_locationInstances.TryGetValue(zone, out var location))

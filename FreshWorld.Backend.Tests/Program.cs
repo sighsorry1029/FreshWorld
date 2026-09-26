@@ -62,7 +62,10 @@ var tests = new (string Name, Action Body)[]
     ("invasion protection overrides SafeZones zero for all stages and ends on the next run", InvasionStages),
     ("invasion snapshot is taken after saving and also supplies the terrain guard", InvasionAfterSave),
     ("invasions starting during resource or location loading cancel the pending attempt", InvasionDuringLoad),
-    ("missing invasion state stops maintenance before world mutation", InvasionUnavailable)
+    ("missing invasion state stops maintenance before world mutation", InvasionUnavailable),
+    ("always-protected zones survive every stage and terrain requests independently of other policies", AlwaysProtectedStages),
+    ("always-protected targets arriving during loading cancel mutation and release the load", AlwaysProtectedDuringLoad),
+    ("always-protected snapshot uses world objects after the save completes", AlwaysProtectedAfterSave)
 };
 
 var failures = 0;
@@ -1062,6 +1065,68 @@ static void InvasionUnavailable()
     True(!result.Success); Equal(1, result.Errors.Count);
     True(result.Errors[0].Message.Contains("persistent event data"));
     True(!Fake.Calls.Any(call => call.Contains(".change:")));
+}
+
+static void AlwaysProtectedStages()
+{
+    foreach (var zoneReset in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0, marker: true); Fake.AddZone(1, marker: true); Fake.AddZone(4);
+        ZoneSystem.instance.m_vegetation.Add(new("copper")); ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+        ZDOMan.instance.Objects.Add(new() { Prefab = "Player_tombstone", Zone = new(0, 0) });
+        Fake.OnStart = _ => ZDOMan.instance.Objects.Clear();
+        var options = new RunOptions
+        {
+            ZonesEnabled = zoneReset, ZoneSafeZones = 1, VegetationSafeZones = 0, LocationSafeZones = 0,
+            VegetationIds = ["raspberry"], PieceBlacklist = ["Player_tombstone"],
+            EpicLootProtectionEnabled = false, EpicLootBountyProtectionEnabled = false
+        };
+        True(Run(options).Success);
+        True(!Fake.Calls.Any(call => call.EndsWith("change:0")));
+        True(Fake.Calls.Contains("locations.change:1"));
+        True(Fake.VegetationPasses.All(pass => pass.ChangedZones.Contains(1) && !pass.ChangedZones.Contains(0)));
+        foreach (var args in Fake.Arguments.Values)
+        {
+            True(args.AlwaysProtected != null && !args.CanResetTerrain!(new(0, 0)));
+            True(args.CanResetTerrain!(new(1, 0))); // Ordinary base-marker terrain policy is unchanged.
+        }
+        Fake.Calls.Clear(); True(Run(options).Success);
+        True(Fake.Calls.Contains("locations.change:0"));
+    }
+}
+
+static void AlwaysProtectedDuringLoad()
+{
+    foreach (var resources in new[] { true, false })
+    foreach (var sameZone in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        using var lease = MaintenanceGate.Acquire(); var completed = new List<bool>();
+        using var runner = NewRunner(new()
+        {
+            ZonesEnabled = false, VegetationEnabled = resources, LocationsEnabled = !resources,
+            AlwaysProtectedPrefabs = ["custom_marker"]
+        }, completed);
+        True(runner.MoveNext()); True(GameWorld.Pending.Contains(new(0, 0)));
+        ZDOMan.instance.Objects.Add(new() { Prefab = "custom_marker", Zone = sameZone ? new(0, 0) : new(1, 0) });
+        Drain(runner); Sequence([true], completed);
+        Equal(!sameZone, Fake.Calls.Any(IsSupplementChange)); Equal(0, GameWorld.Pending.Count);
+        var args = Fake.Arguments[resources ? "vegetation" : "locations"];
+        True(!args.CanResetTerrain!(sameZone ? new(0, 0) : new(1, 0))); // New neighboring object also blocks terrain writes.
+    }
+}
+
+static void AlwaysProtectedAfterSave()
+{
+    Fake.AddZone(0); Fake.HoldSave = true;
+    using var lease = MaintenanceGate.Acquire(); var completed = new List<bool>();
+    using var runner = NewRunner(new() { VegetationEnabled = false, LocationsEnabled = false }, completed, advancePastSave: false);
+    True(runner.MoveNext());
+    ZDOMan.instance.Objects.Add(new() { Prefab = "Player_tombstone", Zone = new(0, 0) });
+    ZNet.instance.Saving = false;
+    Fake.OnStart = _ => ZDOMan.instance.Objects.Clear();
+    Drain(runner); Sequence([true], completed);
+    True(!Fake.Calls.Contains("zones.change:0"));
 }
 
 static (bool Success, List<Exception> Errors, List<string> Warnings) Run(RunOptions options, bool includeVegetation = true)

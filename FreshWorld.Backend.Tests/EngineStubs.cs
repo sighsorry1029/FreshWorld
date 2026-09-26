@@ -213,6 +213,7 @@ namespace FreshWorld.Configuration
         public int ZoneSafeZones { get; set; } = 1;
         public string[] PieceBlacklist { get; set; } = [];
         public string[] ProtectedObjects { get; set; } = [];
+        public string[] AlwaysProtectedPrefabs { get; set; } = ["Player_tombstone"];
         public bool VegetationEnabled { get; set; } = true;
         public string[] TerrainVegetationIds { get; set; } = ["copper"];
         public string[] VegetationIds { get; set; } = [];

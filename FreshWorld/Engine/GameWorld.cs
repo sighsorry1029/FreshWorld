@@ -104,11 +104,15 @@ internal static class GameWorld
     public static void RemoveZDO(ZDO zdo) => RemoveZDO(zdo, true, false);
 
     public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties) =>
-        RemoveZDO(zdo, null, protectEpicLoot, protectEpicLootBounties);
+        RemoveZDO(zdo, protectEpicLoot, protectEpicLootBounties, null);
 
-    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot, bool protectEpicLootBounties)
+    public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected) =>
+        RemoveZDO(zdo, null, protectEpicLoot, protectEpicLootBounties, alwaysProtected);
+
+    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected)
     {
         if (zdo == null || !zdo.IsValid() || IsPlayer(zdo) ||
+            alwaysProtected?.IsProtectedObject(zdo) == true ||
             JotunInvasionProtection.IsProtectedObject(zdo) ||
             EpicLootProtection.IsProtectedObject(zdo, protectEpicLoot, protectEpicLootBounties)) return;
         if (visited != null && !visited.Add(zdo.m_uid)) return;
@@ -119,7 +123,7 @@ internal static class GameWorld
         {
             // A corrupt/modded connection cycle must not recurse forever while cleaning a zone.
             visited ??= new HashSet<ZDOID> { zdo.m_uid };
-            RemoveZDO(child, visited, protectEpicLoot, protectEpicLootBounties);
+            RemoveZDO(child, visited, protectEpicLoot, protectEpicLootBounties, alwaysProtected);
         }
         if (!zdo.IsValid()) return;
         var scene = ZNetScene.instance;
