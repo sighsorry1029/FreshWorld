@@ -40,7 +40,7 @@ namespace FreshWorld.Engine
             }
         }
 
-        public static void Execute(Vector3 position, float radius)
+        public static void Execute(Vector3 position, float radius, Func<Vector2s, bool>? canResetZone = null)
         {
             if (float.IsNaN(radius) || float.IsInfinity(radius) || radius < 0) throw new ArgumentOutOfRangeException(nameof(radius));
             if (radius == 0) return;
@@ -53,6 +53,7 @@ namespace FreshWorld.Engine
             var pending = new List<KeyValuePair<ZDO, byte[]>>();
             void PrepareZone(Vector2s zone)
             {
+                if (canResetZone != null && !canResetZone(zone)) return;
                 var tile = ZoneSystem.GetZonePos(zone);
                 foreach (var zdo in records[zone])
                     PrepareTerrainEdit(zdo, bytes => TerrainDataCodec.ResetCircle(bytes, tile.x, tile.z, position.x, position.z, radius), pending);
@@ -74,7 +75,7 @@ namespace FreshWorld.Engine
             Apply(pending);
         }
 
-        public static void ResetBorders(IReadOnlyDictionary<Vector2s, BorderDirection> directions)
+        public static void ResetBorders(IReadOnlyDictionary<Vector2s, BorderDirection> directions, Func<Vector2s, bool>? canResetZone = null)
         {
             if (directions == null) throw new ArgumentNullException(nameof(directions));
             if (directions.Count == 0) return;
@@ -84,6 +85,7 @@ namespace FreshWorld.Engine
             foreach (var pair in directions)
             {
                 if (pair.Value == BorderDirection.None) continue;
+                if (canResetZone != null && !canResetZone(pair.Key)) continue;
                 var tile = ZoneSystem.GetZonePos(pair.Key);
                 foreach (var zdo in records[pair.Key])
                     PrepareTerrainEdit(zdo, bytes => TerrainDataCodec.ResetBorders(bytes, pair.Value, tile.x, tile.z), pending);

@@ -56,7 +56,12 @@ var tests = new (string Name, Action Body)[]
     ("bounty controllers require their own pending payload and targets require only BountyID", BountyMarkers),
     ("treasure and bounty options independently control zones and object deletion", EpicLootOptions),
     ("bounty leaders and adds protect their own moving sectors for one run", BountyMovement),
-    ("late bounty targets and recursive children survive direct deletion", BountyDeletion)
+    ("late bounty targets and recursive children survive direct deletion", BountyDeletion),
+    ("invasion circles protect intersecting zones including edges and corners", InvasionGeometry),
+    ("invasion areas survive completion and movement only for the current run", InvasionLifetime),
+    ("missing or invalid persistent event data refuses an unsafe reset", InvalidInvasionData),
+    ("core and outer ice survive loaded unloaded and recursive deletion without ownership changes", InvasionDeletion),
+    ("zone reset border cleanup forwards the invasion terrain filter", InvasionBorders)
 };
 var failed = 0;
 foreach (var (name, body) in tests)
@@ -72,6 +77,7 @@ static void Reset()
 {
     ZDOMan.instance = new(); ZNetScene.instance = new(); ZNet.instance = new();
     ZoneSystem.instance = new(); Player.m_localPlayer = null;
+    PersistentEventSystem.instance = new();
     Minimap.instance = new(); ClutterSystem.instance = new(); ZRoutedRpc.instance = new();
     Heightmap.Reset(); TerrainResetter.Borders = null;
     UnityEngine.Object.ResetDestroyCallbacks();
@@ -1026,6 +1032,103 @@ static void BountyDeletion()
     }
 }
 
+static void InvasionGeometry()
+{
+    var events = PersistentEventSystem.instance.m_activePersistentEvents.list;
+    events.Add(new() { position = new(0, 0, 0), radius = 100 });
+    var protection = new JotunInvasionProtection();
+    Equal(1, protection.Capture()); Equal(1, protection.Capture());
+    foreach (var zone in new Vector2s[] { new(0, 0), new(2, 0), new(-2, 0), new(0, 2), new(0, -2), new(1, 1) })
+        True(!protection.CanResetZone(zone));
+    True(protection.CanResetZone(new(2, 2))); True(protection.CanResetZone(new(3, 0)));
+    events[0].radius = 300;
+    True(!new JotunInvasionProtection().CanResetZone(new(5, 0)));
+    True(new JotunInvasionProtection().CanResetZone(new(6, 0)));
+    // The nearest corner of zone (1,1) is exactly 60/80m away: tangent to a 100m circle.
+    events[0].position = new(-28, 0, -48); events[0].radius = 100;
+    True(!new JotunInvasionProtection().CanResetZone(new(1, 1)));
+    events[0].radius = 99.9f;
+    True(new JotunInvasionProtection().CanResetZone(new(1, 1)));
+    foreach (var edge in new[] { short.MinValue, short.MaxValue })
+    {
+        events[0].position = new(edge * 64f, 0, edge * 64f); events[0].radius = 100;
+        var boundary = new JotunInvasionProtection();
+        True(!boundary.CanResetZone(new(edge, edge)));
+        True(boundary.CanResetZone(new(edge == short.MinValue ? short.MaxValue : short.MinValue, edge)));
+    }
+}
+
+static void InvasionLifetime()
+{
+    var system = PersistentEventSystem.instance;
+    system.m_possibleEvents.Add(new() { internalName = "another_event" });
+    system.m_activePersistentEvents.list.Add(new() { sourceEventId = 1, position = new(), radius = 300 });
+    var protection = new JotunInvasionProtection();
+    Equal(0, protection.Capture()); True(protection.CanResetZone(new(0, 0)));
+    var active = new PersistentEventSystem.ActivePersistentEvent { position = new(), radius = 100 };
+    system.m_activePersistentEvents.list.Add(active);
+    True(!protection.CanResetZone(new(2, 0))); // Late event, with its center outside the target zone.
+    active.position = new(640, 0, 0);
+    True(!protection.CanResetZone(new(10, 0))); True(!protection.CanResetZone(new(0, 0)));
+    system.m_activePersistentEvents.list.Clear();
+    True(!protection.CanResetZone(new(0, 0))); True(!protection.CanResetZone(new(10, 0)));
+    True(new JotunInvasionProtection().CanResetZone(new(0, 0)));
+    PersistentEventSystem.instance = new();
+    Equal(0, new JotunInvasionProtection().Capture());
+}
+
+static void InvalidInvasionData()
+{
+    PersistentEventSystem.instance = null!;
+    Throws<InvalidOperationException>(() => new JotunInvasionProtection().CanResetZone(new()));
+    PersistentEventSystem.instance = new();
+    var active = new PersistentEventSystem.ActivePersistentEvent { sourceEventId = 1, radius = 100 };
+    PersistentEventSystem.instance.m_activePersistentEvents.list.Add(active);
+    Throws<InvalidOperationException>(() => new JotunInvasionProtection().Capture());
+    active.sourceEventId = 0;
+    foreach (var radius in new[] { 0f, -1f, float.NaN, float.PositiveInfinity })
+    {
+        active.radius = radius;
+        Throws<InvalidOperationException>(() => new JotunInvasionProtection().Capture());
+    }
+    active.radius = 100; active.position = new(float.NaN, 0, 0);
+    Throws<InvalidOperationException>(() => new JotunInvasionProtection().Capture());
+}
+
+static void InvasionDeletion()
+{
+    foreach (var prefab in new[] { "BlackIce_Core", "BlackIce_Core_outer" })
+    foreach (var loaded in new[] { true, false })
+    {
+        Reset();
+        var ice = new ZDO(1, prefab, new(640, 0, 0));
+        var child = new ZDO(2, "ordinary", new()) { Owner = 222 };
+        ice.Owner = 111; ice.Spawned = child.m_uid;
+        ZDOMan.instance.Add(ice); ZDOMan.instance.Add(child);
+        if (loaded) ZNetScene.instance.Add(ice, new(ice));
+        GameWorld.RemoveZDO(ice, false, false);
+        True(ice.Valid && child.Valid); Equal(111L, ice.Owner); Equal(222L, child.Owner);
+        var parent = new ZDO(3, "spawner", new()) { Spawned = ice.m_uid };
+        ZDOMan.instance.Add(parent); GameWorld.RemoveZDO(parent, false, false);
+        True(!parent.Valid && ice.Valid && child.Valid); Equal(111L, ice.Owner);
+        Equal(0, ZNetScene.instance.DestroyCalls);
+        var start = new ZDO(4, "BlackIce_Start", new());
+        ZDOMan.instance.Add(start); GameWorld.RemoveZDO(start, false, false);
+        True(!start.Valid); // Starting ice is not part of the active-invasion object policy.
+    }
+}
+
+static void InvasionBorders()
+{
+    var protectedZone = new Vector2s(2, 0);
+    ZoneSystem.instance.AddGenerated(protectedZone);
+    PersistentEventSystem.instance.m_activePersistentEvents.list.Add(new() { position = new(), radius = 100 });
+    var protection = new JotunInvasionProtection();
+    var reset = new ProbeReset(new() { CanResetTerrain = protection.CanResetZone });
+    True(reset.Run(new(3, 0))); reset.Finish();
+    True(TerrainResetter.Borders != null && !TerrainResetter.Borders.ContainsKey(protectedZone));
+}
+
 static void True(bool condition) { if (!condition) throw new Exception("Assertion failed."); }
 static void Equal<T>(T expected, T actual)
 {
@@ -1037,7 +1140,7 @@ static void Throws<T>(Action action) where T : Exception
     catch (T) { return; }
     throw new Exception("Expected " + typeof(T).Name);
 }
-sealed class ProbeReset() : ResetZones(_ => { }, new())
+sealed class ProbeReset(OperationParameters? args = null) : ResetZones(_ => { }, args ?? new())
 {
     public bool Run(Vector2s zone) => ExecuteZone(zone);
     public void Finish() => OnEnd();

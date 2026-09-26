@@ -8,5 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../FreshWorld/Engine/TerrainDataCodec.cs" Link="TerrainDataCodec.cs" />
+    <Compile Include="../FreshWorld/Engine/TerrainResetter.cs" Link="TerrainResetter.cs" />
   </ItemGroup>
 </Project>

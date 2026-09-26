@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.10
+
+- Protected active Jotun invasion areas from direct resets, terrain restoration, and border repairs, regardless of SafeZones settings.
+- Prevented FreshWorld from deleting invasion cores and their outer ice. Newly started invasions are detected during maintenance; observed areas stay protected until the run ends.
+- Stopped maintenance when persistent event data is unavailable or invalid. This update does not restore previously lost invasion objectives.
+- Updated the BepInExPack dependency to 5.4.2351.
+
 ## 1.0.9
 
 - Added independent, server-synced `EpicLootBountyProtection`, disabled by default. When enabled, pending bounty controllers, targets, and their adds protect their own zones and cannot be deleted by FreshWorld.

@@ -315,6 +315,7 @@ namespace FreshWorld.Engine
     {
         public bool ProtectEpicLoot { get; set; } = true;
         public bool ProtectEpicLootBounties { get; set; }
+        public Func<Vector2s, bool>? CanResetTerrain { get; set; }
     }
     internal abstract class ZoneOperation
     {
@@ -330,6 +331,7 @@ namespace FreshWorld.Engine
     internal static class TerrainResetter
     {
         public static Dictionary<Vector2s, BorderDirection>? Borders;
-        public static void ResetBorders(IReadOnlyDictionary<Vector2s, BorderDirection> borders) => Borders = new(borders);
+        public static void ResetBorders(IReadOnlyDictionary<Vector2s, BorderDirection> borders, Func<Vector2s, bool>? canResetZone = null) =>
+            Borders = borders.Where(pair => canResetZone == null || canResetZone(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value);
     }
 }

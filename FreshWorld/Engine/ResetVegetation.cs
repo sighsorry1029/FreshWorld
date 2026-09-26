@@ -78,7 +78,7 @@ internal class ResetVegetation : ZoneOperation
                 if (Args.TerrainReset > 0)
                 {
                     _terrainTouched = true;
-                    TerrainResetter.Execute(spawned.transform.position, Args.TerrainReset);
+                    TerrainResetter.Execute(spawned.transform.position, Args.TerrainReset, Args.CanResetTerrain);
                 }
             }
             NativePlacement.DestroyCreatedObjects(temporary, originalObjects);

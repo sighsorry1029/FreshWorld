@@ -54,6 +54,7 @@ internal static class Program
     {
         try
         {
+            TerrainResetter.Active = false;
             Test("radius clears local height and paint while preserving outside payloads", () =>
             {
                 var center = 32 * 65 + 32; var remote = 10 * 65 + 10;
@@ -148,7 +149,55 @@ internal static class Program
                 Reject(() => TerrainDataCodec.ResetBorders(source, BorderDirection.West));
                 Assert(Read(source).Height.Count == 1 && Read(source).Operations == int.MaxValue, "overflow mutated input");
             });
-            Console.WriteLine($"All {count} terrain codec regression checks passed.");
+            Test("terrain circles skip protected tiles without decoding claiming or rewriting them", () =>
+            {
+                foreach (var radius in new[] { 80f, 600f }) // Bucket lookup and large-radius scan paths.
+                {
+                    GameWorld.Objects.Clear(); TerrainResetter.InvalidateCache();
+                    var source = Create(new[] { 32 * 65 + 32 });
+                    var protectedTile = new ZDO(new(0, 0, 0), new byte[] { 255 }); // Invalid data must never be read.
+                    var outside = new ZDO(new(64, 0, 0), source);
+                    GameWorld.Objects.Add(protectedTile); GameWorld.Objects.Add(outside);
+                    TerrainResetter.Execute(new(64, 0, 0), radius, zone => zone != new Vector2s(0, 0));
+                    Assert(protectedTile.Writes == 0 && protectedTile.Owner == 0, "protected tile mutated");
+                    Assert(outside.Writes == 1 && outside.Owner == 42 && Read(outside.Data).Height.Count == 0, "outside tile not restored");
+                }
+            });
+            Test("border repair skips protected neighbors but repairs eligible seams", () =>
+            {
+                GameWorld.Objects.Clear(); TerrainResetter.InvalidateCache();
+                var source = Create(new[] { 0, 32 * 65 + 32 });
+                var protectedTile = new ZDO(new(0, 0, 0), source);
+                var outside = new ZDO(new(64, 0, 0), source);
+                GameWorld.Objects.Add(protectedTile); GameWorld.Objects.Add(outside);
+                var directions = new Dictionary<Vector2s, BorderDirection>
+                {
+                    [new(0, 0)] = BorderDirection.West, [new(1, 0)] = BorderDirection.West
+                };
+                TerrainResetter.ResetBorders(directions, zone => zone != new Vector2s(0, 0));
+                Assert(protectedTile.Writes == 0 && ReferenceEquals(source, protectedTile.Data) && protectedTile.Owner == 0, "protected seam changed");
+                Assert(outside.Writes == 1 && Read(outside.Data).Height.Count == 1, "eligible seam not repaired");
+                TerrainResetter.ResetBorders(directions); // No filter preserves the existing adapter contract.
+                Assert(protectedTile.Writes == 1, "unfiltered repair unexpectedly blocked");
+            });
+            Test("terrain guard failure aborts the entire pending write batch", () =>
+            {
+                GameWorld.Objects.Clear(); TerrainResetter.InvalidateCache();
+                var source = Create(new[] { 0 });
+                var first = new ZDO(new(), source); var second = new ZDO(new(64, 0, 0), source);
+                GameWorld.Objects.Add(first); GameWorld.Objects.Add(second);
+                try
+                {
+                    TerrainResetter.ResetBorders(new Dictionary<Vector2s, BorderDirection>
+                    {
+                        [new(0, 0)] = BorderDirection.West, [new(1, 0)] = BorderDirection.West
+                    }, zone => zone.x == 0 ? true : throw new InvalidOperationException("missing event state"));
+                    throw new Exception("guard failure was swallowed");
+                }
+                catch (InvalidOperationException) { }
+                Assert(first.Writes == 0 && second.Writes == 0 && first.Owner == 0 && second.Owner == 0, "partial terrain write");
+            });
+            Console.WriteLine($"All {count} terrain regression checks passed.");
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }

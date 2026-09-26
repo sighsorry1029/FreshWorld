@@ -128,6 +128,7 @@ internal static class Fake
         ZoneSystem.instance = new(); ZNet.instance = new(); ZNet.World = new();
         ZNet.m_loadError = false; ZNet.WorldSaveStarted = null;
         ZNetScene.instance = new(); ZDOMan.instance = new(); WorldGenerator.instance = new();
+        PersistentEventSystem.instance = new();
         UnityEngine.Application.Reset();
         UnityEngine.Time.timeScale = 1;
         

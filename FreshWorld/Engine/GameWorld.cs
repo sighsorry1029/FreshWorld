@@ -109,6 +109,7 @@ internal static class GameWorld
     private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot, bool protectEpicLootBounties)
     {
         if (zdo == null || !zdo.IsValid() || IsPlayer(zdo) ||
+            JotunInvasionProtection.IsProtectedObject(zdo) ||
             EpicLootProtection.IsProtectedObject(zdo, protectEpicLoot, protectEpicLootBounties)) return;
         if (visited != null && !visited.Add(zdo.m_uid)) return;
         var manager = ZDOMan.instance;

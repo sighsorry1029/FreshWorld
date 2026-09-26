@@ -62,7 +62,7 @@ internal class ResetZones : ZoneOperation
     {
         var borders = _borders.Where(entry => GameWorld.IsGenerated(entry.Key))
             .ToDictionary(entry => entry.Key, entry => entry.Value);
-        if (borders.Count > 0) TerrainResetter.ResetBorders(borders);
+        if (borders.Count > 0) TerrainResetter.ResetBorders(borders, Args.CanResetTerrain);
         ClutterSystem.instance?.ClearAll();
         GameWorld.RecalculateTerrain();
         if (Minimap.instance != null) UpdateLocationPins(Minimap.instance, 1000);

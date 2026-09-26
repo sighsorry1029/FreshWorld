@@ -11,6 +11,7 @@ internal sealed class OperationParameters
     public float TerrainReset { get; set; }
     public bool ProtectEpicLoot { get; set; } = true;
     public bool ProtectEpicLootBounties { get; set; }
+    public Func<Vector2s, bool>? CanResetTerrain { get; set; }
 }
 
 /// <summary>Typed host-side operations; exceptions propagate to the owning guarded runner.</summary>

@@ -58,7 +58,11 @@ var tests = new (string Name, Action Body)[]
     ("load retries protect new treasures only in the target sector", TreasureDuringLoad),
     ("neighbor treasure does not block resource terrain group or location extents", TreasureNeighbors),
     ("bounty protection independently skips its sectors in every stage", BountyStages),
-    ("bounties created during loading stop only their own sector and release pending loads", BountyDuringLoad)
+    ("bounties created during loading stop only their own sector and release pending loads", BountyDuringLoad),
+    ("invasion protection overrides SafeZones zero for all stages and ends on the next run", InvasionStages),
+    ("invasion snapshot is taken after saving and also supplies the terrain guard", InvasionAfterSave),
+    ("invasions starting during resource or location loading cancel the pending attempt", InvasionDuringLoad),
+    ("missing invasion state stops maintenance before world mutation", InvasionUnavailable)
 };
 
 var failures = 0;
@@ -981,6 +985,83 @@ static void BountyDuringLoad()
         Equal(!sameSector, Fake.Calls.Any(IsSupplementChange));
         Equal(0, GameWorld.Pending.Count);
     }
+}
+
+static void InvasionStages()
+{
+    foreach (var zoneReset in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(2); Fake.AddZone(3);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+        PersistentEventSystem.instance.m_activePersistentEvents.list.Add(new() { position = new(), radius = 100 });
+        Fake.OnStart = _ => PersistentEventSystem.instance.m_activePersistentEvents.list.Clear();
+        var options = new RunOptions
+        {
+            ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationSafeZones = 0, LocationSafeZones = 0,
+            VegetationIds = ["raspberry"], EpicLootProtectionEnabled = false, EpicLootBountyProtectionEnabled = false
+        };
+        True(Run(options).Success);
+        True(!Fake.Calls.Any(call => call.EndsWith("change:0") || call.EndsWith("change:2")));
+        True(Fake.Calls.Any(call => call.EndsWith("change:3")));
+        foreach (var args in Fake.Arguments.Values)
+        {
+            True(args.CanResetTerrain != null);
+            True(!args.CanResetTerrain!(new(2, 0))); // Completed event remains protected through cleanup.
+            True(args.CanResetTerrain(new(3, 0)));
+        }
+        Fake.Calls.Clear();
+        True(Run(options).Success);
+        True(Fake.Calls.Any(call => call.EndsWith("change:0")));
+        True(Fake.Calls.Any(call => call.EndsWith("change:2")));
+    }
+}
+
+static void InvasionAfterSave()
+{
+    Fake.AddZone(0); Fake.HoldSave = true;
+    using var lease = MaintenanceGate.Acquire();
+    var completed = new List<bool>();
+    using var runner = NewRunner(new() { ZoneSafeZones = 0, VegetationEnabled = false, LocationsEnabled = false },
+        completed, advancePastSave: false);
+    True(runner.MoveNext());
+    PersistentEventSystem.instance.m_activePersistentEvents.list.Add(new() { position = new(), radius = 100 });
+    ZNet.instance.Saving = false;
+    Fake.OnStart = _ => PersistentEventSystem.instance.m_activePersistentEvents.list.Clear();
+    Drain(runner); Sequence([true], completed);
+    True(!Fake.Calls.Contains("zones.change:0"));
+    True(!Fake.Arguments["zones"].CanResetTerrain!(new(2, 0)));
+}
+
+static void InvasionDuringLoad()
+{
+    foreach (var resources in new[] { true, false })
+    foreach (var intersects in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        using var lease = MaintenanceGate.Acquire();
+        var completed = new List<bool>();
+        using var runner = NewRunner(new() { ZonesEnabled = false, VegetationEnabled = resources, LocationsEnabled = !resources }, completed);
+        True(runner.MoveNext()); True(GameWorld.Pending.Contains(new(0, 0)));
+        // The nearby center is two zones away; only a full zone/circle intersection catches it.
+        PersistentEventSystem.instance.m_activePersistentEvents.list.Add(new()
+        {
+            position = new(intersects ? 128 : 256, 0, 0), radius = 100
+        });
+        Drain(runner); Sequence([true], completed);
+        Equal(!intersects, Fake.Calls.Any(IsSupplementChange));
+        Equal(0, GameWorld.Pending.Count);
+    }
+}
+
+static void InvasionUnavailable()
+{
+    Fake.AddZone(0);
+    PersistentEventSystem.instance = null!;
+    var result = Run(new() { ZoneSafeZones = 0 });
+    True(!result.Success); Equal(1, result.Errors.Count);
+    True(result.Errors[0].Message.Contains("persistent event data"));
+    True(!Fake.Calls.Any(call => call.Contains(".change:")));
 }
 
 static (bool Success, List<Exception> Errors, List<string> Warnings) Run(RunOptions options, bool includeVegetation = true)

@@ -149,6 +149,18 @@ Player_tombstone is a separate built-in marker. Tombstones store a character/pro
 
 **All markers, including automatically detected Pieces and tombstones, protect zones only when that stage's SafeZones value is greater than 0.** SafeZones=0 bypasses this protection; it does not grant individual objects deletion immunity. Each stage keeps its own SafeZones policy. Terrain edits from outside a protected area can still cross its boundary, as described above.
 
+## Jotun invasions
+
+Active vanilla Jotun invasions are always protected, even with SafeZones=0. FreshWorld skips direct zone, resource, and location resets in every zone that touches the event's actual circular area (normally 100-300 metres in radius). This does not require a player, a building marker, or Jotunn. There is no additional cfg option.
+
+FreshWorld reads active events after the initial save and rechecks them before each target attempt or loading retry. Areas observed during a run stay protected until that run ends. After an invasion completes, its area becomes eligible on the next run, subject to the other protection rules. Missing or invalid event data stops maintenance instead of treating the area as unprotected.
+
+FreshWorld also skips its terrain restoration and border repairs in these protected terrain tiles, including requests from neighboring zones. Existing player, base, and EpicLoot terrain policies are unchanged. Native resource or location placement from outside a protected zone can still extend across its boundary; this protection does not clip generated prefabs or control other mods.
+
+`BlackIce_Core` and `BlackIce_Core_outer` have an additional guard against direct and recursive FreshWorld deletion, including when event metadata is missing. Normal player destruction, invasion completion, and rewards are unchanged. The starting ice in Mörkhalla is not part of this separate object guard.
+
+This prevents future FreshWorld resets from removing invasion objectives. It does not recreate missing ice, repair an already broken invasion, finish events, or grant rewards. A broken event that remains active continues to protect its area until the event is repaired or ended separately.
+
 ## EpicLoot treasure maps
 
 With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, even with all SafeZones settings set to 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.

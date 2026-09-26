@@ -61,7 +61,7 @@ internal class RegenerateLocations : ZoneOperation
         if (terrainRadius > 0)
         {
             _terrainTouched = true;
-            TerrainResetter.Execute(location.m_position, terrainRadius);
+            TerrainResetter.Execute(location.m_position, terrainRadius, Args.CanResetTerrain);
         }
 
         location.m_placed = false;

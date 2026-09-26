@@ -206,7 +206,12 @@ namespace FreshWorld.Engine
     {
         public static bool Active;
         public static readonly List<Vector3> Restored = new();
-        public static void Execute(Vector3 position, float radius) => Restored.Add(position);
+        public static Func<Vector2s, bool>? LastTerrainFilter;
+        public static void Execute(Vector3 position, float radius, Func<Vector2s, bool>? canResetZone = null)
+        {
+            LastTerrainFilter = canResetZone;
+            Restored.Add(position);
+        }
     }
     internal class ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) : ZoneOperation(log, args, candidates)
     {

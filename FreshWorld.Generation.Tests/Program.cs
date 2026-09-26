@@ -20,6 +20,7 @@ var tests = new (string Name, Action Test)[]
     ("canceling an unloaded native operation releases its pending load", Cancellation),
     ("protection refusal prevents native object terrain and placement changes before and after loading", ProtectedGeneration),
     ("empty IDs cannot expand a native reset", EmptyIds),
+    ("resource and location terrain restoration forward the invasion guard", TerrainGuardForwarding),
 };
 int failures = 0;
 foreach (var test in tests)
@@ -38,7 +39,7 @@ static void Reset()
     ZDOMan.instance = new(); ZNetScene.instance = new();
     GameWorld.Objects.Clear(); GameWorld.Removed.Clear();
     GameWorld.Pokes = GameWorld.Releases = GameWorld.Recalculations = 0;
-    TerrainResetter.Active = false; TerrainResetter.Restored.Clear();
+    TerrainResetter.Active = false; TerrainResetter.Restored.Clear(); TerrainResetter.LastTerrainFilter = null;
     UnityEngine.Random.state = new(77); ZNetView.FinishGhostInit(); WearNTear.RandomDamage = false; PrefabReference.AssetReads = 0;
     UnityEngine.Time.timeScale = 1;
     var zone = Zone();
@@ -313,6 +314,24 @@ static void EmptyIds()
     Throws<ArgumentException>(() => new TrackedResetVegetation(_ => { }, new() { " " }, new()));
     Equal(0, ZoneSystem.instance.VegetationCalls); Equal(0, ZoneSystem.instance.LocationCalls);
 }
+static void TerrainGuardForwarding()
+{
+    foreach (var vegetation in new[] { true, false })
+    {
+        Reset();
+        Func<Vector2s, bool> filter = zone => zone.x != 1;
+        var args = new OperationParameters { TerrainReset = 20, CanResetTerrain = filter };
+        ZoneSystem.instance.VegetationPlacement = (_, objects) => objects.Add(new GameObject("ore"));
+        ITrackedOperation operation = vegetation
+            ? new TrackedResetVegetation(_ => { }, new() { "rock4_copper" }, args)
+            : new TrackedRegenerateLocations(_ => { }, new() { "Hildir_cave" }, args);
+        var errors = new List<Exception>(); var finishes = new List<bool>();
+        using var runner = Start(operation, errors, finishes); Drain(runner);
+        Success(errors, finishes);
+        Equal(true, ReferenceEquals(filter, TerrainResetter.LastTerrainFilter));
+    }
+}
+
 static void Success(List<Exception> errors, List<bool> finishes)
 {
     Equal(0, errors.Count); Sequence(new[] { true }, finishes);
