@@ -2,12 +2,12 @@ using System;
 
 namespace FreshWorld.Commands;
 
-internal enum FreshWorldCommandAction { Run, Status }
+internal enum FreshWorldCommandAction { Run, Status, Invasions }
 
 internal static class CommandSyntax
 {
     public const string Name = "freshworld";
-    public const string Usage = "freshworld — run the host cfg; freshworld status — show status.";
+    public const string Usage = "freshworld — run the host cfg; freshworld status — show status; freshworld invasions — inspect Jotun invasions.";
     public const int MaximumLength = 64;
 
     // Match the entire command token. Invalid arguments to our command must still be intercepted
@@ -32,6 +32,7 @@ internal static class CommandSyntax
         if (parts.Length == 1) return true;
         if (parts.Length != 2) return false;
         if (parts[1].Equals("status", StringComparison.OrdinalIgnoreCase)) action = FreshWorldCommandAction.Status;
+        else if (parts[1].Equals("invasions", StringComparison.OrdinalIgnoreCase)) action = FreshWorldCommandAction.Invasions;
         else return false;
         return true;
     }

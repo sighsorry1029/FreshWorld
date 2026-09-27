@@ -59,10 +59,10 @@ var tests = new (string Name, Action Body)[]
     ("neighbor treasure does not block resource terrain group or location extents", TreasureNeighbors),
     ("bounty protection independently skips its sectors in every stage", BountyStages),
     ("bounties created during loading stop only their own sector and release pending loads", BountyDuringLoad),
-    ("invasion protection overrides SafeZones zero for all stages and ends on the next run", InvasionStages),
-    ("invasion snapshot is taken after saving and also supplies the terrain guard", InvasionAfterSave),
-    ("invasions starting during resource or location loading cancel the pending attempt", InvasionDuringLoad),
-    ("missing invasion state stops maintenance before world mutation", InvasionUnavailable),
+    ("invasion objective zones override SafeZones zero for all stages and remain protected for one run", InvasionStages),
+    ("invasion objective snapshot is taken after saving and also supplies the terrain guard", InvasionAfterSave),
+    ("invasion objectives arriving during resource or location loading cancel only their own zone", InvasionDuringLoad),
+    ("missing invasion event data does not prevent object-based protection or reset other zones", InvasionUnavailable),
     ("always-protected zones survive every stage and terrain requests independently of other policies", AlwaysProtectedStages),
     ("always-protected targets arriving during loading cancel mutation and release the load", AlwaysProtectedDuringLoad),
     ("always-protected snapshot uses world objects after the save completes", AlwaysProtectedAfterSave)
@@ -998,7 +998,9 @@ static void InvasionStages()
         ZoneSystem.instance.m_vegetation.Add(new("copper"));
         ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
         PersistentEventSystem.instance.m_activePersistentEvents.list.Add(new() { position = new(), radius = 100 });
-        Fake.OnStart = _ => PersistentEventSystem.instance.m_activePersistentEvents.list.Clear();
+        ZDOMan.instance.Objects.Add(new() { Prefab = "BlackIce_Core", Zone = new(0, 0) });
+        ZDOMan.instance.Objects.Add(new() { Prefab = "BlackIce_Core_outer", Zone = new(2, 0) });
+        Fake.OnStart = _ => ZDOMan.instance.Objects.Clear();
         var options = new RunOptions
         {
             ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationSafeZones = 0, LocationSafeZones = 0,
@@ -1010,47 +1012,47 @@ static void InvasionStages()
         foreach (var args in Fake.Arguments.Values)
         {
             True(args.CanResetTerrain != null);
-            True(!args.CanResetTerrain!(new(2, 0))); // Completed event remains protected through cleanup.
+            True(!args.CanResetTerrain!(new(2, 0))); // Removed ice remains protected through cleanup.
             True(args.CanResetTerrain(new(3, 0)));
         }
         Fake.Calls.Clear();
         True(Run(options).Success);
-        True(Fake.Calls.Any(call => call.EndsWith("change:0")));
+        True(Fake.Calls.Any(call => call.EndsWith("change:0"))); // Lingering event metadata does not protect empty zones.
         True(Fake.Calls.Any(call => call.EndsWith("change:2")));
     }
 }
 
 static void InvasionAfterSave()
 {
-    Fake.AddZone(0); Fake.HoldSave = true;
+    Fake.AddZone(0); Fake.AddZone(1); Fake.HoldSave = true;
     using var lease = MaintenanceGate.Acquire();
     var completed = new List<bool>();
     using var runner = NewRunner(new() { ZoneSafeZones = 0, VegetationEnabled = false, LocationsEnabled = false },
         completed, advancePastSave: false);
     True(runner.MoveNext());
-    PersistentEventSystem.instance.m_activePersistentEvents.list.Add(new() { position = new(), radius = 100 });
+    ZDOMan.instance.Objects.Add(new() { Prefab = "BlackIce_Core", Zone = new(0, 0) });
     ZNet.instance.Saving = false;
-    Fake.OnStart = _ => PersistentEventSystem.instance.m_activePersistentEvents.list.Clear();
+    Fake.OnStart = _ => ZDOMan.instance.Objects.Clear();
     Drain(runner); Sequence([true], completed);
     True(!Fake.Calls.Contains("zones.change:0"));
-    True(!Fake.Arguments["zones"].CanResetTerrain!(new(2, 0)));
+    True(Fake.Calls.Contains("zones.change:1"));
+    True(!Fake.Arguments["zones"].CanResetTerrain!(new(0, 0)));
+    True(Fake.Arguments["zones"].CanResetTerrain!(new(1, 0)));
 }
 
 static void InvasionDuringLoad()
 {
     foreach (var resources in new[] { true, false })
     foreach (var intersects in new[] { true, false })
+    foreach (var prefab in new[] { "BlackIce_Core", "BlackIce_Core_outer" })
     {
         Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
         using var lease = MaintenanceGate.Acquire();
         var completed = new List<bool>();
         using var runner = NewRunner(new() { ZonesEnabled = false, VegetationEnabled = resources, LocationsEnabled = !resources }, completed);
         True(runner.MoveNext()); True(GameWorld.Pending.Contains(new(0, 0)));
-        // The nearby center is two zones away; only a full zone/circle intersection catches it.
-        PersistentEventSystem.instance.m_activePersistentEvents.list.Add(new()
-        {
-            position = new(intersects ? 128 : 256, 0, 0), radius = 100
-        });
+        // A new objective cancels only its own zone, including the terrain reset group.
+        ZDOMan.instance.Objects.Add(new() { Prefab = prefab, Zone = new(intersects ? 0 : 1, 0) });
         Drain(runner); Sequence([true], completed);
         Equal(!intersects, Fake.Calls.Any(IsSupplementChange));
         Equal(0, GameWorld.Pending.Count);
@@ -1059,12 +1061,13 @@ static void InvasionDuringLoad()
 
 static void InvasionUnavailable()
 {
-    Fake.AddZone(0);
+    Fake.AddZone(0); Fake.AddZone(1);
     PersistentEventSystem.instance = null!;
+    ZDOMan.instance.Objects.Add(new() { Prefab = "BlackIce_Core", Zone = new(0, 0) });
     var result = Run(new() { ZoneSafeZones = 0 });
-    True(!result.Success); Equal(1, result.Errors.Count);
-    True(result.Errors[0].Message.Contains("persistent event data"));
-    True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    True(result.Success); Equal(0, result.Errors.Count);
+    True(!Fake.Calls.Any(call => call.EndsWith("change:0")));
+    True(Fake.Calls.Contains("zones.change:1"));
 }
 
 static void AlwaysProtectedStages()

@@ -87,7 +87,7 @@ internal static class ConfigPresentationRegressions
         Require(snapshot.Options.ZoneSafeZones == 2 && snapshot.Options.VegetationSafeZones == 0 && snapshot.Options.LocationSafeZones == 0,
             "Selecting protection changed another stage or failed to repair the invalid value.");
         Require(protection.GetSerializedValue() == "2", "SafeZones saved its display label instead of its cfg value.");
-        Require(!snapshot.Options.LocationsEnabled && snapshot.Options.LocationIds.Length == 14, "Presentation altered unrelated defaults.");
+        Require(!snapshot.Options.LocationsEnabled && snapshot.Options.LocationIds.Length == 16, "Presentation altered unrelated defaults.");
         Require(snapshot.Options.EpicLootProtectionEnabled, "EpicLoot protection must remain enabled by default.");
         file.Set("Protection", "EpicLootProtection", "false");
         Require(!config.Capture().Options.EpicLootProtectionEnabled && snapshot.Options.EpicLootProtectionEnabled,

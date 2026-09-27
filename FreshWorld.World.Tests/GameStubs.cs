@@ -109,6 +109,7 @@ public class ZNetScene
     public int DestroyCalls;
     public void Add(ZDO zdo, ZNetView view) => m_instances[zdo] = view;
     public bool Has(ZDO zdo) => m_instances.ContainsKey(zdo);
+    public ZNetView? FindInstance(ZDO zdo) => m_instances.GetValueOrDefault(zdo);
     public void Destroy(GameObject go)
     {
         DestroyCalls++;

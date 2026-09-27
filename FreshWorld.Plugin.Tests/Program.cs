@@ -5,6 +5,7 @@ using FreshWorld;
 using FreshWorld.Backend;
 using FreshWorld.Commands;
 using FreshWorld.Core;
+using FreshWorld.Engine;
 using UnityEngine;
 
 internal static class Program
@@ -50,6 +51,9 @@ internal static class Program
             Test("completion is persisted and reported to requester", CompletionNotification);
             Test("backend failure is persisted and reported without retry", FailureNotification);
             Test("status reports idle policy and the last result without reserving or dispatching maintenance", ReadOnlyStatus);
+            Test("invasion inspection is independent of configuration and scheduler admission", InvasionInspection);
+            Test("invasion inspection failure preserves active and pending maintenance", InvasionInspectionFailure);
+            Test("invasion inspection requires a ready world and current authority", InvasionInspectionAuthority);
             Test("plugin shutdown unregisters command and releases backend lease", ShutdownCleansUp);
             Test("plugin shutdown continues after configuration watcher disposal fails", ShutdownSurvivesWatcherFailure);
             System.Console.WriteLine($"Plugin/controller tests passed: {passed}");
@@ -716,6 +720,64 @@ internal static class Program
         Equal(RunStatus.Failed, scheduler.Attempts.Single().Status, "interrupted active run persisted as failure");
     }
 
+    private static void InvasionInspection()
+    {
+        using var f = new Fixture(config => config.Set("General", "Enabled", "false"));
+        f.Plugin.Config.Set("Reset", "ResourceTerrainRadius", "invalid");
+        f.SetField("reloadRequested", 1);
+        f.SetField("sessionFaulted", true);
+        var reloads = f.Plugin.Config.ReloadCount;
+        var saves = f.Plugin.Config.SaveCount;
+        var scheduler = f.Scheduler;
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Invasions, f.Request);
+        Equal(1, JotunInvasionDiagnostics.Calls, "diagnostic dispatched despite maintenance fault");
+        HasReply(f.Request, "core ZDOs=1 (scene=0)");
+        True(f.Plugin.Logger.Messages.Any(line => line.Contains("core ZDOs=1")), "host log contains report");
+        Equal(reloads, f.Plugin.Config.ReloadCount, "inspection must not read cfg");
+        Equal(saves, f.Plugin.Config.SaveCount, "inspection must not save cfg");
+        Equal(1, f.GetField<int>("reloadRequested"), "pending reload remains pending");
+        True(f.GetField<bool>("sessionFaulted"), "inspection must not clear maintenance fault");
+        True(ReferenceEquals(scheduler, f.Scheduler), "scheduler is unchanged");
+        True(f.Scheduler?.PendingRun == null, "inspection did not reserve work");
+        Equal(0, MaintenancePipeline.Created.Count, "inspection did not start reset");
+    }
+
+    private static void InvasionInspectionFailure()
+    {
+        foreach (var active in new[] { false, true })
+        {
+            using var f = new Fixture(skipStartupDelay: active);
+            MaintenancePipeline.HoldFrames = 5;
+            f.Run();
+            var scheduler = f.Scheduler;
+            var pending = f.GetField<object>("pendingManual");
+            var runner = f.GetField<object>("runner");
+            var gate = MaintenanceGate.IsAvailable;
+            JotunInvasionDiagnostics.Fail = true;
+            f.Plugin.HandleCommand(FreshWorldCommandAction.Invasions, f.Request);
+            HasReply(f.Request, "Maintenance state is unchanged");
+            True(!f.GetField<bool>("sessionFaulted"), "read-only failure must not fault maintenance");
+            True(ReferenceEquals(scheduler, f.Scheduler), "scheduler survived diagnostic failure");
+            True(ReferenceEquals(pending, f.GetField<object>("pendingManual")), "pending request preserved");
+            True(ReferenceEquals(runner, f.GetField<object>("runner")), "active coroutine preserved");
+            Equal(gate, MaintenanceGate.IsAvailable, "maintenance lease preserved");
+            Equal(0, MaintenancePipeline.Disposals, "inspection did not dispose active work");
+        }
+    }
+
+    private static void InvasionInspectionAuthority()
+    {
+        using var f = new Fixture();
+        f.Request.Authorized = false;
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Invasions, f.Request);
+        Equal(0, JotunInvasionDiagnostics.Calls, "unauthorized request did not scan");
+        f.Request.Authorized = true;
+        ZNet.m_loadError = true;
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Invasions, f.Request);
+        Equal(0, JotunInvasionDiagnostics.Calls, "unready world did not scan");
+        HasReply(f.Request, "world is not ready");
+    }
+
     private static void ShutdownSurvivesWatcherFailure()
     {
         var f = new Fixture();
@@ -766,6 +828,7 @@ internal static class Program
             ZNetScene.instance = new ZNetScene(); WorldGenerator.instance = new WorldGenerator();
             DungeonDB.instance = new DungeonDB(); Game.instance = new Game(); EnvMan.instance = new EnvMan();
             MaintenancePipeline.Reset();
+            JotunInvasionDiagnostics.Calls = 0; JotunInvasionDiagnostics.Fail = false;
             Plugin = new FreshWorldPlugin();
             configure?.Invoke(Plugin.Config);
             beforeAwake?.Invoke(directory, Net, Plugin.Config);

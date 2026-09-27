@@ -72,7 +72,7 @@ namespace FreshWorld.Configuration
     {
         public const string DefaultPieceBlacklist = "fire_pit";
         public const string DefaultAlwaysProtectedPrefabs = "Player_tombstone";
-        public const string DefaultLocations = "Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress";
+        public const string DefaultLocations = "Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress,TheHole01,MorkBorg";
         private static readonly Regex ExactId = new Regex(@"^[A-Za-z0-9_]+(?::[A-Za-z0-9_]+)*$", RegexOptions.CultureInvariant);
         // Preserve raw scalar text: BepInEx's bool/enum deserializers can silently retain/default invalid input.
         // Capture parses every scalar so malformed config disables new work instead of changing its policy.

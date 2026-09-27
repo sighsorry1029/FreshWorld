@@ -73,7 +73,7 @@ TerrainResourceIds = rock4_copper,silvervein
 ResourceTerrainRadius = 20
 ResourceIds =
 Locations = false
-LocationIds = Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress
+LocationIds = Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress,TheHole01,MorkBorg
 ~~~
 
 Zones, Resources, and Locations switch their respective stages on or off without erasing the ID lists. The extra location stage is disabled by default; set Locations=true to enable it. Existing cfg values are preserved.
@@ -89,7 +89,7 @@ Resources and ResourceSafeZones apply to both groups. Either resource list may b
 
 ResourceTerrainRadius applies **only to TerrainResourceIds**. A value of 0 restores resources from both lists without this terrain operation. It does not disable terrain changes performed by the zone or location stages.
 
-LocationIds uses exact location IDs, with optional :variant suffixes. The default list contains 14 IDs. An empty location list is invalid; use Locations=false to disable that stage while keeping its selection. Resource or location IDs unavailable in the current game are logged and skipped. If no selected IDs are recognized, their stage or group is skipped. The default selection is not a guarantee that every ID exists in every game or mod setup.
+LocationIds uses exact location IDs, with optional :variant suffixes. The default list contains 16 IDs, including TheHole01 and MorkBorg. Existing cfg selections are preserved; add these IDs to an existing list if wanted. An empty location list is invalid; use Locations=false to disable that stage while keeping its selection. Resource or location IDs unavailable in the current game are logged and skipped. If no selected IDs are recognized, their stage or group is skipped. The default selection is not a guarantee that every ID exists in every game or mod setup.
 
 ### Which zones are affected?
 
@@ -162,15 +162,19 @@ This list is independent of the EpicLoot switches. A listed EpicLoot prefab rema
 
 ## Jotun invasions
 
-Active vanilla Jotun invasions are always protected, even with SafeZones=0. FreshWorld skips direct zone, resource, and location resets in every zone that touches the event's actual circular area (normally 100-300 metres in radius). This does not require a player, a building marker, or Jotunn. There is no additional cfg option.
+FreshWorld protects the 1x1 zone containing each `BlackIce_Core` or `BlackIce_Core_outer`, even with SafeZones=0. If they are on opposite sides of a zone border, both zones are protected. Protection depends on the objective objects, not the event's radius or active state. It does not require a player, creator metadata, a building marker, or Jotunn. There is no additional cfg option, and these fixed prefabs do not need to be added to AlwaysProtectedPrefabs.
 
-FreshWorld reads active events after the initial save and rechecks them before each target attempt or loading retry. Areas observed during a run stay protected until that run ends. After an invasion completes, its area becomes eligible on the next run, subject to the other protection rules. Missing or invalid event data stops maintenance instead of treating the area as unprotected.
+FreshWorld captures objective zones after the initial save, including unloaded objects, and checks for arrivals before each target attempt or loading retry. Observed zones stay protected until that run ends. Remaining ice continues to protect its own zone on later runs, even after the event ends. Once the ice is gone, the next run can reset that zone subject to other protection rules. An event record without ice does not protect an area; missing or invalid event metadata does not disable object-based protection or maintenance.
 
 FreshWorld also skips its terrain restoration and border repairs in these protected terrain tiles, including requests from neighboring zones. Existing player, base, and EpicLoot terrain policies are unchanged. Native resource or location placement from outside a protected zone can still extend across its boundary; this protection does not clip generated prefabs or control other mods.
 
 `BlackIce_Core` and `BlackIce_Core_outer` have an additional guard against direct and recursive FreshWorld deletion, including when event metadata is missing. Normal player destruction, invasion completion, and rewards are unchanged. The starting ice in Mörkhalla is not part of this separate object guard.
 
-This prevents future FreshWorld resets from removing invasion objectives. It does not recreate missing ice, repair an already broken invasion, finish events, or grant rewards. A broken event that remains active continues to protect its area until the event is repaired or ended separately.
+Other zones within an active invasion can reset if no other protection applies. Nearby creatures may be removed and later spawn again under the game's normal conditions; their exact timing and arrangement are not preserved. FreshWorld does not recreate missing ice, repair broken events, finish events, or grant rewards. Remaining active event records and orphaned ice require separate diagnosis; narrowing protection does not repair them.
+
+Use `freshworld invasions` to inspect a ready host's current invasion state. It reports each active event's ID, center and radius, core and outer ice ZDO counts inside the area, and the nearest core and outer ice coordinates, zones and horizontal distances. The reported event radius is diagnostic information, not FreshWorld's protection range. ZDO counts include objects in unloaded zones; scene counts show instances on the host, not visibility on a client. This reads current host data, not the save files on disk. The report is also written to the host log.
+
+The report matches ice by position, not event ownership. Overlapping event areas may count the same object. A missing core is a reason to investigate, not proof of which mod removed it; a core ZDO does not prove that the objective works. Ice outside active areas is counted without removing it. Inspection scans the host's ZDO registry once per request and does not load zones, save the world, change ownership, end events, or start restoration. An inspection error leaves maintenance state unchanged.
 
 ## EpicLoot treasure maps
 
@@ -194,18 +198,19 @@ EpicLoot can leave tagged creatures behind when a bounty is abandoned. Those obj
 
 ## Manual commands and permissions
 
-Use the game's F5 console. If it is unavailable, add -console to the game's launch options. Native autocomplete completes the command name and offers only status as its argument. FreshWorld does not require enabling devcommands.
+Use the game's F5 console. If it is unavailable, add -console to the game's launch options. Native autocomplete completes the command name and offers status and invasions as arguments. FreshWorld does not require enabling devcommands.
 
 | Command | Action |
 |---|---|
 | freshworld | Request one restoration using the current host cfg. |
 | freshworld status | Show running or pending work, or the applied policy and last recorded result while idle, without starting restoration. |
+| freshworld invasions | Inspect active Jotun invasions and host objective ZDOs without changing the world. |
 
-Only these two command forms are accepted. Reset settings and protection rules are explained above and in the cfg descriptions.
+Only these three command forms are accepted. Reset settings and protection rules are explained above and in the cfg descriptions.
 
-Manual requests do not wait for the automatic schedule polling interval. They still require a ready world, completion of the initial 30-second grace period, an unpaused host, no conflicting save or maintenance, a valid cfg, and valid authority. The grace period starts once when the world becomes ready; it is not added before every run.
+Manual restoration requests do not wait for the automatic schedule polling interval. They still require a ready world, completion of the initial 30-second grace period, an unpaused host, no conflicting save or maintenance, a valid cfg, and valid authority. The grace period starts once when the world becomes ready; it is not added before every run. Invasion inspection requires a ready world and valid authority, but remains available during maintenance or when reset settings are invalid.
 
-An existing pending or active request is not overwritten. Each requester is limited to one command per second; repeated commands within that second, including status, are silently ignored. The requester receives acceptance, waiting reasons, and completion or failure messages.
+An existing pending or active request is not overwritten. Each requester is limited to one command per second; repeated commands within that second, including status and invasions, are silently ignored. The requester receives acceptance, waiting reasons, and completion or failure messages.
 
 The person hosting a world inside their own game process can run commands without an administrator entry. A dedicated server's own console can also run them without a connected player. This includes authenticated RCON tools that execute the registered command inside the server process without a Valheim player connection. The RCON provider controls its own authentication; FreshWorld receives no RCON identity and continues to validate the active server, world, session, and run state.
 

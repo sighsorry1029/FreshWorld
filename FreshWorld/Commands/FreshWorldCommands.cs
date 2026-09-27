@@ -45,7 +45,7 @@ internal static class FreshWorldCommands
         // prevents the local client action. No client cheat or administrator flag grants access.
         owned = new Terminal.ConsoleCommand(CommandSyntax.Name, CommandSyntax.Usage,
             (Terminal.ConsoleEvent)HandleLocal, isCheat: false, onlyServer: true, hideBehindDevCommands: false,
-            optionsFetcher: () => new List<string> { "status" }, remoteCommand: true);
+            optionsFetcher: () => new List<string> { "status", "invasions" }, remoteCommand: true);
         ClearAutocomplete();
     }
 

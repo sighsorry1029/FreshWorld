@@ -2,7 +2,7 @@ namespace FreshWorld.Commands;
 
 // Transport and Steam/admin identity checks have their own source-linked harness. Here a mutable
 // authority models an authenticated request that can lose authorization while the controller waits.
-internal enum FreshWorldCommandAction { Run, Status }
+internal enum FreshWorldCommandAction { Run, Status, Invasions }
 
 internal sealed class CommandRequestContext(ZNet network, long worldUid, string actor = "remote admin")
 {

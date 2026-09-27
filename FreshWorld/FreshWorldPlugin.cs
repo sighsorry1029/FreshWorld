@@ -20,7 +20,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.1.0";
+        public const string ModVersion = "1.1.1";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -266,6 +266,24 @@ namespace FreshWorld
                 if (!Enum.IsDefined(typeof(FreshWorldCommandAction), action))
                 { context.Reply("Invalid command action."); return; }
                 if (!WorldReady()) { context.Reply("Request rejected: the world is not ready."); return; }
+                if (action == FreshWorldCommandAction.Invasions)
+                {
+                    // Inspection must not attach/reconfigure a scheduler or fault an active reset.
+                    try
+                    {
+                        foreach (var line in JotunInvasionDiagnostics.Describe())
+                        {
+                            Logger.LogInfo(line);
+                            context.Reply(line);
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        Logger.LogWarning("Jotun invasion inspection failed: " + error);
+                        context.Reply("Invasion inspection failed; see the host log. Maintenance state is unchanged.");
+                    }
+                    return;
+                }
                 AttachHost(context.Network);
                 if (action == FreshWorldCommandAction.Status)
                 {

@@ -22,7 +22,7 @@ The author is sighsorry and the BepInEx plugin ID is sighsorry.FreshWorld. The a
 | Reset.ResourceTerrainRadius | 20 | Terrain radius in metres for TerrainResourceIds; 0 is allowed. |
 | Reset.ResourceIds | Empty | Resources to restore without surrounding terrain restoration. |
 | Reset.Locations | false | Enable selected location supplements. |
-| Reset.LocationIds | 14 selected IDs | Locations to restore, starting with Hildir_crypt. |
+| Reset.LocationIds | 16 selected IDs | Locations to restore, starting with Hildir_crypt. |
 | Protection.ZoneSafeZones | 1 | Marker protection for the zone stage. |
 | Protection.ResourceSafeZones | 0 | Marker protection shared by both resource groups. |
 | Protection.LocationSafeZones | 0 | Marker protection for the location stage. |
@@ -34,7 +34,7 @@ The table follows the Configuration Manager display order. This optional editor 
 
 Mode and the three SafeZones entries use a lossless ConfigChoice wrapper rather than ConfigEntry<string>. A BepInEx converter preserves their original text, including invalid values, while the popup displays readable choices. The other entries remain strings. Serialized cfg keys, values, and full snapshot validation are unchanged; invalid values are not silently replaced or migrated.
 
-The default location list includes CharredFortress and the regular Mistlands_Giant1, and excludes BlackForest_DG_RtD, Mountain_DG_RtD, Mistlands_Giant1:dark, FortressRuins, and AshlandRuins. It is a configurable selection, not a guarantee that every ID exists in every installed game or content-mod combination. IDs not found in the active game are logged and skipped. Existing cfg selections are not automatically edited when defaults change.
+The default location list includes CharredFortress, TheHole01, MorkBorg, and the regular Mistlands_Giant1, and excludes BlackForest_DG_RtD, Mountain_DG_RtD, Mistlands_Giant1:dark, FortressRuins, and AshlandRuins. It is a configurable selection, not a guarantee that every ID exists in every installed game or content-mod combination. IDs not found in the active game are logged and skipped. Existing cfg selections are not automatically edited when defaults change.
 
 ## Automatic scheduling and manual execution
 

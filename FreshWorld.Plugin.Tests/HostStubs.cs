@@ -144,6 +144,18 @@ public sealed class EnvMan
 
 namespace FreshWorld.Engine
 {
+    internal static class JotunInvasionDiagnostics
+    {
+        public static int Calls;
+        public static bool Fail;
+        public static IReadOnlyList<string> Describe()
+        {
+            Calls++;
+            if (Fail) throw new InvalidOperationException("injected diagnostic failure");
+            return new[] { "Jotun invasion snapshot", "core ZDOs=1 (scene=0)" };
+        }
+    }
+
     internal static class GameWorld
     {
         public static int ProcessDeferredReleases() => 0;

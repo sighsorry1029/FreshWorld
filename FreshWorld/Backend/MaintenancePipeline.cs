@@ -59,9 +59,9 @@ internal sealed class MaintenancePipeline
             var generated = GameWorld.GeneratedSetSnapshot();
             var protectedZones = ProtectedSnapshot(_options.ZoneSafeZones, generated);
             var epicLootZones = _epicLoot.Capture();
-            var invasionAreas = _invasions.Capture();
+            var invasionZones = _invasions.Capture();
             var alwaysProtectedZones = _alwaysProtected.Capture();
-            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionAreas} Jotun invasion areas protected; {alwaysProtectedZones} zones protected by AlwaysProtectedPrefabs.");
+            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionZones} Jotun objective zones with 1x1 protection; {alwaysProtectedZones} zones protected by AlwaysProtectedPrefabs.");
 
             if (_options.ZonesEnabled)
             {

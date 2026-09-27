@@ -29,8 +29,9 @@ internal static class ConfigRegressions
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
             Assert(snapshot.Options.VegetationIds.Length == 0 && snapshot.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper", "silvervein" }) &&
-                snapshot.Options.LocationIds.Length == 14 && snapshot.Options.LocationIds.Contains("Mistlands_Giant1") &&
+                snapshot.Options.LocationIds.Length == 16 && snapshot.Options.LocationIds.Contains("Mistlands_Giant1") &&
                 snapshot.Options.LocationIds.Contains("CharredFortress") &&
+                snapshot.Options.LocationIds.Contains("TheHole01") && snapshot.Options.LocationIds.Contains("MorkBorg") &&
                 !snapshot.Options.LocationIds.Intersect(new[] { "Mistlands_Giant1:dark", "FortressRuins", "AshlandRuins" }).Any(), "reset target defaults");
             Assert(snapshot.Options.ZonesEnabled && snapshot.Options.VegetationEnabled && !snapshot.Options.LocationsEnabled, "stage defaults");
             Assert(snapshot.Options.ZoneSafeZones == 1 && snapshot.Options.VegetationSafeZones == 0 && snapshot.Options.LocationSafeZones == 0, "independent protection defaults");
@@ -192,7 +193,7 @@ internal static class ConfigRegressions
             Assert(!snapshot.AutomaticEnabled && !snapshot.Schedule.AutomaticEnabled && !snapshot.Options.ZonesEnabled &&
                 !snapshot.Options.VegetationEnabled && !snapshot.Options.LocationsEnabled, "false switches not respected");
             Assert(snapshot.Options.VegetationIds.SequenceEqual(new[] { "Beech1" }) && snapshot.Options.TerrainVegetationIds.Length == 2 &&
-                snapshot.Options.LocationIds.Length == 14, "disabled stage targets lost");
+                snapshot.Options.LocationIds.Length == 16, "disabled stage targets lost");
         });
         Check("wildcards commands empty entries duplicates and invalid enum names rejected", () =>
         {

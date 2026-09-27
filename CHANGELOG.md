@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+- Narrowed Jotun invasion protection to the 1x1 zones containing `BlackIce_Core` or `BlackIce_Core_outer`, including their terrain tiles and border repairs. Both objects remain protected from direct and recursive deletion.
+- Made objective protection independent of event records. Remaining ice protects its own zone; observed zones stay protected until the current run ends. Missing or invalid event metadata no longer stops maintenance.
+- Added `freshworld invasions` to inspect active events and objective objects without changing the world. Results are shown to the requester and written to the host log.
+- Added `TheHole01` and `MorkBorg` to the default location list. Existing cfg selections are preserved, and location restoration remains disabled by default.
+
 ## 1.1.0
 
 - Restricted `ZoneSafeZones` to 1 or 2. Existing values of 0 must be changed before maintenance can run; resource and location protection still allow 0.
