@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+- Added server-synced `AutomaticResetPercent` (0–100, default 100). Automatic runs randomly select a rounded percentage of eligible zones once and share that selection across all reset stages.
+- Kept manual `freshworld` runs at full eligible scope and preserved all protection rules. Later protection skips are not replaced, and reset zones remain outside the candidate pool until generated again.
+- Documented that each run draws independently: repeated partial runs do not guarantee that every zone will reset.
+
 ## 1.1.1
 
 - Narrowed Jotun invasion protection to the 1x1 zones containing `BlackIce_Core` or `BlackIce_Core_outer`, including their terrain tiles and border repairs. Both objects remain protected from direct and recursive deletion.

@@ -113,7 +113,7 @@ public static class Program
         Require(((Array)Call(versionType, null, "GetFailedServer", new ZRpc(new TestSocket("Steam_222")))!).Length == 0,
             "The server requires an unmodded peer to complete FreshWorld's version handshake.");
         Require((bool)syncType.GetProperty("IsLocked")!.GetValue(sync)!, "Administrator-only policy is not fixed.");
-        Require(file.Count == 18, "Integration did not register the expected config keys.");
+        Require(file.Count == 19, "Integration did not register the expected config keys.");
         var broadcast = AccessTools.Method(syncType, "Broadcast", new[] { typeof(long), typeof(ConfigEntryBase[]) });
         // Capture server sends without invoking Unity coroutines; run the real client-send prefix separately.
         harmony.Patch(broadcast, prefix: new HarmonyMethod(typeof(Program), nameof(RecordBroadcast)) { priority = Priority.Last });
@@ -122,6 +122,8 @@ public static class Program
 
         var zone = file[new ConfigDefinition("Protection", "ZoneSafeZones")];
         var radius = file[new ConfigDefinition("Reset", "ResourceTerrainRadius")];
+        var percent = file[new ConfigDefinition("General", "AutomaticResetPercent")];
+        Require(percent.GetSerializedValue() == "100", "Automatic percentage default changed.");
         var mode = file[new ConfigDefinition("General", "Mode")];
         var blacklist = file[new ConfigDefinition("Protection", "PieceBlacklist")];
         var alwaysProtected = file[new ConfigDefinition("Protection", "AlwaysProtectedPrefabs")];
@@ -146,6 +148,9 @@ public static class Program
         Require(true, "All registered setting types round trip through the real serializer.");
         Reject(Edit(zone, "3")); Reject(Edit(radius, "NaN")); Reject(Edit(mode, "ManualOnly"));
         Reject(Edit(zone, "0"));
+        foreach (var value in new[] { "0", "20", "100" }) Call(adapterType, adapter, "ValidateEdit", Edit(percent, value));
+        Require(percent.GetSerializedValue() == "100", "Remote validation mutated the live percentage.");
+        foreach (var value in new[] { "-1", "101", "20.5", "NaN", "" }) Reject(Edit(percent, value));
         Reject(Edit(alwaysProtected, "Player_tombstone,*")); Reject(Edit(alwaysProtected, "Player_tombstone,Player_tombstone"));
         Reject(Edit(epicLoot, "invalid"));
         Reject(Edit(bounty, "invalid"));

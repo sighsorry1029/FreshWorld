@@ -8,6 +8,15 @@ var tests = new (string Name, Action Body)[]
 {
     ("retained scope excludes newly skipped zones", RetainedScope),
     ("disabling zone reset supplements all generated zones", WithoutZoneReset),
+    ("partial resets select a fixed rounded count without duplicate targets", PercentageCounts),
+    ("both resource groups and locations share one random selection", PercentageSharedSupplements),
+    ("partial zone resets preserve retained supplement scope", PercentageRetainedScope),
+    ("location-only sampling excludes absent, unplaced and unselected locations", PercentageLocationCandidates),
+    ("unknown and disabled resource stages do not inflate the candidate count", PercentageInactiveResources),
+    ("late protection skips a selected target without a replacement draw", PercentageLateProtection),
+    ("partial selection freezes scope while full runs retain live supplements", PercentageNewZones),
+    ("partial candidate snapshot occurs after saving", PercentageAfterSave),
+    ("ungenerated zones and reset zones awaiting a new visit are not sampled", PercentageGeneratedScope),
     ("occupied zones remain intact at SafeZones zero and are eligible on the next run", OccupiedZoneAndNextRun),
     ("all stages protect the player's 3x3 area including diagonals at SafeZones zero", PlayerNeighborhood),
     ("player neighborhood protection clips native coordinate edges without wrapping", PlayerNeighborhoodEdges),
@@ -98,6 +107,147 @@ static void WithoutZoneReset()
     Sequence(["vegetation.change:0", "vegetation.change:1", "locations.change:0", "locations.change:1"],
         Fake.Calls.Where(IsSupplementChange));
 }
+
+static void PercentageCounts()
+{
+    foreach (var (total, percent, expected) in new[] { (10, 20, 2), (5, 50, 3), (2, 20, 0), (0, 20, 0), (10, 0, 0), (10, 100, 10) })
+    {
+        Fake.Reset();
+        for (var i = 0; i < total; i++) Fake.AddZone(i);
+        True(Run(new() { VegetationEnabled = false, LocationsEnabled = false }, resetPercent: percent).Success);
+        var changes = Fake.Calls.Where(call => call.StartsWith("zones.change:")).ToArray();
+        Equal(expected, changes.Length);
+        Equal(expected, changes.Distinct().Count());
+        Equal(total - expected, ZoneSystem.instance.m_generatedZones.Count);
+    }
+}
+
+static void PercentageSharedSupplements()
+{
+    for (var i = 0; i < 10; i++) Fake.AddZone(i);
+    ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+    // No resource ZDOs exist, but depleted resources must still be candidates for restoration.
+    True(Run(new() { ZonesEnabled = false, VegetationIds = ["raspberry"] }, resetPercent: 20).Success);
+    Equal(2, Fake.VegetationPasses.Count);
+    var first = Fake.VegetationPasses[0].ChangedZones;
+    Equal(2, first.Count);
+    Sequence(first, Fake.VegetationPasses[1].ChangedZones);
+    Sequence(first.Select(zone => "locations.change:" + zone), Fake.Calls.Where(call => call.StartsWith("locations.change:")));
+}
+
+static void PercentageRetainedScope()
+{
+    for (var i = 0; i < 10; i++) Fake.AddZone(i, marker: i < 5);
+    True(Run(new(), resetPercent: 50).Success);
+    var zoneChanges = Changed("zones");
+    var resourceChanges = Changed("vegetation");
+    True(zoneChanges.All(zone => zone >= 5));
+    True(resourceChanges.All(zone => zone < 5));
+    True(resourceChanges.SetEquals(Changed("locations")));
+    zoneChanges.UnionWith(resourceChanges);
+    Equal(5, zoneChanges.Count); // Union is sampled once, not 50% again per stage.
+}
+
+static void PercentageLocationCandidates()
+{
+    for (var i = 0; i < 10; i++) Fake.AddZone(i, location: i < 5 ? "cave" : i == 5 ? "other" : null);
+    var unplaced = ZoneSystem.instance.m_locationInstances[new(4, 0)];
+    unplaced.m_placed = false;
+    ZoneSystem.instance.m_locationInstances[new(4, 0)] = unplaced;
+    // Protect one otherwise eligible cave, leaving three candidates, rounded to two at 50%.
+    Fake.MarkerZones.Add(new(3, 0));
+    True(Run(new() { ZonesEnabled = false, VegetationEnabled = false, LocationSafeZones = 1 }, resetPercent: 50).Success);
+    var locations = Changed("locations");
+    Equal(2, locations.Count);
+    True(locations.All(zone => zone < 3));
+}
+
+static void PercentageInactiveResources()
+{
+    foreach (var ids in new[] { Array.Empty<string>(), new[] { "missing" } })
+    foreach (var includeVegetation in new[] { true, false })
+    {
+        Fake.Reset();
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        for (var i = 0; i < 10; i++) Fake.AddZone(i, location: i < 2 ? "cave" : null);
+        True(Run(new() { ZonesEnabled = false, TerrainVegetationIds = ids }, includeVegetation, 50).Success);
+        Equal(1, Changed("locations").Count);
+        Equal(0, Changed("vegetation").Count);
+    }
+}
+
+static void PercentageLateProtection()
+{
+    for (var i = 0; i < 6; i++) Fake.AddZone(i);
+    var protectedAfterDraw = -1;
+    Fake.OnStart = kind =>
+    {
+        if (kind != "zones") return;
+        var target = Fake.Candidates[kind].First();
+        protectedAfterDraw = target.x;
+        Fake.MarkerZones.Add(target);
+    };
+    True(Run(new() { VegetationEnabled = false, LocationsEnabled = false }, resetPercent: 50).Success);
+    Equal(3, Fake.Candidates["zones"].Count);
+    Equal(2, Changed("zones").Count);
+    True(!Changed("zones").Contains(protectedAfterDraw));
+    True(Changed("zones").All(zone => Fake.Candidates["zones"].Contains(new(zone, 0))));
+    // Percentage exclusion is not terrain protection; preserve existing border repair policy.
+    True(Fake.Arguments["zones"].CanResetTerrain!(new(protectedAfterDraw, 0)));
+}
+
+static void PercentageNewZones()
+{
+    foreach (var percent in new[] { 50, 100 })
+    {
+        Fake.Reset();
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+        for (var i = 0; i < 4; i++) Fake.AddZone(i);
+        Fake.OnStart = kind => { if (kind == "vegetation") Fake.AddZone(100); };
+        True(Run(new() { ZonesEnabled = false, VegetationIds = ["raspberry"] }, resetPercent: percent).Success);
+        Equal(percent == 100 ? 4 : 2, Fake.VegetationPasses[0].ChangedZones.Count);
+        Equal(percent == 100 ? 5 : 2, Fake.VegetationPasses[1].ChangedZones.Count);
+        Equal(percent == 100, Changed("locations").Contains(100));
+    }
+}
+
+static void PercentageAfterSave()
+{
+    Fake.AddZone(0);
+    Fake.HoldSave = true;
+    using var lease = MaintenanceGate.Acquire();
+    var completed = new List<bool>();
+    using var runner = NewRunner(new() { VegetationEnabled = false, LocationsEnabled = false }, completed,
+        advancePastSave: false, resetPercent: 50);
+    True(runner.MoveNext());
+    True(ZNet.instance.Saving);
+    Fake.AddZone(1); Fake.AddZone(2); Fake.AddZone(3);
+    ZNet.instance.Saving = false;
+    Drain(runner);
+    Sequence([true], completed);
+    Equal(2, Changed("zones").Count);
+}
+
+static void PercentageGeneratedScope()
+{
+    Fake.AddZone(0); Fake.AddZone(1);
+    ZoneSystem.instance.m_generatedZones.Remove(new(1, 0)); // Location metadata alone is not a generated zone.
+    True(Run(new() { ZonesEnabled = false, VegetationEnabled = false }, resetPercent: 50).Success);
+    True(Changed("locations").SetEquals([0]));
+    True(Run(new() { VegetationEnabled = false, LocationsEnabled = false }).Success);
+    Equal(0, ZoneSystem.instance.m_generatedZones.Count);
+    Fake.Calls.Clear();
+    True(Run(new() { ZonesEnabled = false, VegetationEnabled = false }, resetPercent: 50).Success);
+    Equal(0, Changed("locations").Count);
+    Fake.AddZone(0); // Visiting regenerates a reset zone and makes it eligible again.
+    True(Run(new() { ZonesEnabled = false, VegetationEnabled = false }, resetPercent: 50).Success);
+    True(Changed("locations").SetEquals([0]));
+}
+
+static HashSet<int> Changed(string stage) => Fake.Calls
+    .Where(call => call.StartsWith(stage + ".change:"))
+    .Select(call => int.Parse(call.Substring(call.IndexOf(':') + 1))).ToHashSet();
 
 static void OccupiedZoneAndNextRun()
 {
@@ -1132,22 +1282,22 @@ static void AlwaysProtectedAfterSave()
     True(!Fake.Calls.Contains("zones.change:0"));
 }
 
-static (bool Success, List<Exception> Errors, List<string> Warnings) Run(RunOptions options, bool includeVegetation = true)
+static (bool Success, List<Exception> Errors, List<string> Warnings) Run(RunOptions options, bool includeVegetation = true, int resetPercent = 100)
 {
     using var lease = MaintenanceGate.Acquire();
     var completed = new List<bool>();
     var errors = new List<Exception>();
     var warnings = new List<string>();
-    using var runner = new GuardedCoroutine(new MaintenancePipeline(options, includeVegetation, _ => { }, warnings.Add).Run(),
+    using var runner = new GuardedCoroutine(new MaintenancePipeline(options, includeVegetation, _ => { }, warnings.Add, resetPercent).Run(),
         () => true, errors.Add, completed.Add);
     Drain(runner);
     Equal(1, completed.Count);
     return (completed[0], errors, warnings);
 }
 
-static GuardedCoroutine NewRunner(RunOptions options, List<bool> completed, bool advancePastSave = true)
+static GuardedCoroutine NewRunner(RunOptions options, List<bool> completed, bool advancePastSave = true, int resetPercent = 100)
 {
-    var runner = new GuardedCoroutine(new MaintenancePipeline(options, true, _ => { }, _ => { }).Run(), () => true,
+    var runner = new GuardedCoroutine(new MaintenancePipeline(options, true, _ => { }, _ => { }, resetPercent).Run(), () => true,
         Fake.UnexpectedErrors.Add, completed.Add);
     // Lifecycle tests start after the mandatory pre-save yield. Save tests inspect that yield directly.
     if (advancePastSave) True(runner.MoveNext());

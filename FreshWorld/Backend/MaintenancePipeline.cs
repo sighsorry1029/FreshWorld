@@ -18,6 +18,8 @@ internal sealed class MaintenancePipeline
 {
     private readonly RunOptions _options;
     private readonly bool _includeVegetation;
+    private readonly int _resetPercent;
+    private HashSet<Vector2s>? _selectedZones;
     private readonly Action<string> _log;
     private readonly Action<string> _warn;
     private readonly ZNet _network;
@@ -29,8 +31,11 @@ internal sealed class MaintenancePipeline
     private readonly AlwaysProtectedObjects _alwaysProtected;
     private ITrackedOperation? _activeOperation;
 
-    public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn)
+    public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn,
+        int resetPercent = 100)
     {
+        if (resetPercent < 0 || resetPercent > 100) throw new ArgumentOutOfRangeException(nameof(resetPercent));
+        _resetPercent = resetPercent;
         _options = options;
         _alwaysProtected = new AlwaysProtectedObjects(options.AlwaysProtectedPrefabs);
         _epicLoot = new EpicLootProtection(options.EpicLootProtectionEnabled, options.EpicLootBountyProtectionEnabled);
@@ -63,11 +68,17 @@ internal sealed class MaintenancePipeline
             var alwaysProtectedZones = _alwaysProtected.Capture();
             _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionZones} Jotun objective zones with 1x1 protection; {alwaysProtectedZones} zones protected by AlwaysProtectedPrefabs.");
 
+            // The default and manual path retain the existing live supplemental scope.
+            if (_resetPercent < 100)
+                _selectedZones = SelectResetZones(generated, protectedZones);
+
             if (_options.ZonesEnabled)
             {
                 var args = Parameters(_options.ZoneSafeZones);
                 // Retain the initial protection set, and recheck the current set as the batch advances.
-                yield return Execute("Zone reset", new TrackedResetZones(_log, args, generated,
+                var candidates = _selectedZones == null ? generated : new HashSet<Vector2s>(generated);
+                if (_selectedZones != null) candidates.IntersectWith(_selectedZones);
+                yield return Execute("Zone reset", new TrackedResetZones(_log, args, candidates,
                     zone => CanResetZone(zone, _options.ZoneSafeZones, protectedZones),
                     maxZonesPerFrame: _options.MaxZonesPerFrame,
                     frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn));
@@ -197,7 +208,53 @@ internal sealed class MaintenancePipeline
         // With zone reset disabled, selected resources/locations remain independently useful world-wide.
         if (_options.ZonesEnabled)
             current.IntersectWith(protectedZones);
+        if (_selectedZones != null) current.IntersectWith(_selectedZones);
         return current;
+    }
+
+    private HashSet<Vector2s> SelectResetZones(HashSet<Vector2s> generated, HashSet<Vector2s> protectedZones)
+    {
+        var eligible = new HashSet<Vector2s>();
+        // Separate stage passes avoid alternating the base-protection cache's SafeZones key per zone.
+        if (_options.ZonesEnabled)
+            foreach (var zone in generated)
+                if (CanResetZone(zone, _options.ZoneSafeZones, protectedZones)) eligible.Add(zone);
+
+        var supplements = _options.ZonesEnabled ? protectedZones : generated;
+        if (_includeVegetation && _options.VegetationEnabled)
+        {
+            var resourceIds = new HashSet<string>(_options.TerrainVegetationIds, StringComparer.Ordinal);
+            resourceIds.UnionWith(_options.VegetationIds);
+            // Depleted resources are candidates too: presence of a current resource ZDO is not required.
+            if (_zones.m_vegetation.Any(vegetation => vegetation.m_prefab != null && resourceIds.Contains(vegetation.m_prefab.name)))
+                foreach (var zone in supplements)
+                    if (CanResetZone(zone, _options.VegetationSafeZones)) eligible.Add(zone);
+        }
+        if (_options.LocationsEnabled)
+        {
+            var locationIds = new HashSet<string>(_options.LocationIds, StringComparer.Ordinal);
+            locationIds.IntersectWith(_zones.m_locations
+                .Where(location => location != null && NativePlacement.IsValidLocationPrefab(location))
+                .Select(location => location.m_prefab.Name));
+            foreach (var zone in supplements)
+                if (_zones.m_locationInstances.TryGetValue(zone, out var location) && location.m_placed &&
+                    NativePlacement.IsValidLocationPrefab(location.m_location) &&
+                    locationIds.Contains(location.m_location.m_prefab.Name) && CanResetZone(zone, _options.LocationSafeZones))
+                    eligible.Add(zone);
+        }
+
+        var candidates = eligible.ToArray();
+        var count = (int)((candidates.Length * (long)_resetPercent + 50) / 100);
+        var random = new System.Random(); // Never change Unity's world-generation random state.
+        var selected = new HashSet<Vector2s>();
+        for (var i = 0; i < count; i++)
+        {
+            var next = random.Next(i, candidates.Length);
+            (candidates[i], candidates[next]) = (candidates[next], candidates[i]);
+            selected.Add(candidates[i]);
+        }
+        _log($"Automatic reset selection: {selected.Count}/{candidates.Length} candidate zones ({_resetPercent}%). Later protection skips are not replaced.");
+        return selected;
     }
 
     private static HashSet<Vector2s> ProtectedSnapshot(int size, HashSet<Vector2s> generated)

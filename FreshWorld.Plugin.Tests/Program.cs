@@ -19,6 +19,7 @@ internal static class Program
             Test("startup submits only declared plugin patches before a world loads", StartupPatchSelection);
             Test("plugin metadata supplies the standard config filename and shared live settings", MetadataConfigIdentity);
             Test("manual dispatch bypasses scheduler polling interval", ImmediateDispatch);
+            Test("manual runs bypass the automatic percentage and automatic snapshots survive reload", ResetPercentageDispatch);
             Test("automatic work polls every second without duplicate execution", FixedSchedulePolling);
             Test("hot reload applies before the next automatic poll", ReloadBeforeScheduledPoll);
             Test("synced in-memory edits apply without rereading the cfg", SyncedMemoryEdit);
@@ -176,6 +177,30 @@ internal static class Program
         f.Tick();
         Equal(1, MaintenancePipeline.Created.Count, "subsequent polls cannot replay the completed deadline");
         Equal(1, MaintenancePipeline.Mutations, "one backend execution for one deadline");
+    }
+
+    private static void ResetPercentageDispatch()
+    {
+        foreach (var percent in new[] { "0", "20", "100" })
+        {
+            using var f = new Fixture(configure: config => config.Set("General", "AutomaticResetPercent", percent));
+            f.Run();
+            Equal(100, MaintenancePipeline.Created.Single().ResetPercent, "manual scope must ignore automatic percentage");
+        }
+        using (var f = new Fixture(configure: config => config.Set("General", "AutomaticResetPercent", "20")))
+        {
+            MaintenancePipeline.HoldFrames = 5;
+            f.Net.Seconds = 24 * EnvMan.instance!.m_dayLengthSec;
+            Time.realtimeSinceStartup = 1;
+            f.Tick();
+            var dispatch = MaintenancePipeline.Created.Single();
+            Equal(20, dispatch.ResetPercent, "automatic work must use configured percentage");
+            f.Plugin.Config.Set("General", "AutomaticResetPercent", "80");
+            f.SetField("reloadRequested", 1);
+            f.Tick();
+            Equal(20, dispatch.Options.AutomaticResetPercent, "reload must not change active options");
+            Equal(20, dispatch.ResetPercent, "reload must not redraw active work");
+        }
     }
 
     private static void ReloadBeforeScheduledPoll()

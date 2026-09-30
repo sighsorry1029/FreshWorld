@@ -166,15 +166,16 @@ namespace FreshWorld.Backend
 {
     internal sealed class MaintenancePipeline
     {
-        internal sealed record Dispatch(RunOptions Options, bool IncludeVegetation);
+        internal sealed record Dispatch(RunOptions Options, bool IncludeVegetation, int ResetPercent);
         public static readonly List<Dispatch> Created = new();
         public static int Mutations;
         public static int Disposals;
         public static int HoldFrames;
         public static bool MutateBeforeYield;
         public static Exception? Failure;
-        public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warning)
-            => Created.Add(new Dispatch(options, includeVegetation));
+        public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warning,
+            int resetPercent = 100)
+            => Created.Add(new Dispatch(options, includeVegetation, resetPercent));
         public IEnumerator Run()
         {
             try

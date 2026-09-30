@@ -37,7 +37,7 @@ internal static class ConfigPresentationRegressions
         var file = new ConfigFile(); _ = new FreshWorldConfig(file);
         var expected = new[]
         {
-            ("General", new[] { "Enabled", "Mode", "GameDayInterval", "DailyTimes" }, 300),
+            ("General", new[] { "Enabled", "AutomaticResetPercent", "Mode", "GameDayInterval", "DailyTimes" }, 300),
             ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds" }, 200),
             ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "AlwaysProtectedPrefabs", "EpicLootProtection", "EpicLootBountyProtection", "PieceBlacklist" }, 100)
         };
@@ -48,7 +48,7 @@ internal static class ConfigPresentationRegressions
             Require(entries.All(entry => Metadata(entry).CategoryOrder == categoryOrder && entry.Description.AcceptableValues == null), section + " metadata");
         }
         Require(Metadata(file.Get("General", "Enabled")).DispName == "Automatic Runs", "Display name must not rename the cfg key.");
-        Require(file.BoundKeys.Count() == 18, "Unexpected new settings.");
+        Require(file.BoundKeys.Count() == 19, "Unexpected new settings.");
     }
 
     private static void DrawWithoutEdits()
@@ -57,6 +57,7 @@ internal static class ConfigPresentationRegressions
         {
             (ConfigPresentation.DrawToggle, new[] { "true", "FALSE", "", "not-a-bool" }),
             (ConfigPresentation.DrawPositiveNumber, new[] { "24", "1.25", "0", "NaN", "1,25" }),
+            (ConfigPresentation.DrawPercentage, new[] { "0", "20", "100", "-1", "101", "20.5", "NaN" }),
             (ConfigPresentation.DrawNonnegativeNumber, new[] { "0", "20", "-1", "Infinity", "not-a-number" })
         };
         foreach (var (draw, values) in cases)
@@ -112,6 +113,16 @@ internal static class ConfigPresentationRegressions
         GUILayout.Text.Enqueue("12.5");
         Metadata(interval).CustomDrawer!(interval);
         Require(config.Capture().Schedule.GameDayInterval == 12.5, "Corrected numeric input did not apply.");
+        var percent = file.Get("General", "AutomaticResetPercent");
+        GUILayout.Text.Enqueue("101");
+        Metadata(percent).CustomDrawer!(percent);
+        Require((string)percent.BoxedValue == "101", "Out-of-range percentage was clamped.");
+        rejected = false;
+        try { config.Capture(); } catch (ArgumentException) { rejected = true; }
+        Require(rejected, "Out-of-range percentage was accepted.");
+        GUILayout.Text.Enqueue("20");
+        Metadata(percent).CustomDrawer!(percent);
+        Require(config.Capture().Options.AutomaticResetPercent == 20, "Corrected percentage did not apply.");
     }
 
     private static void EditCopy()

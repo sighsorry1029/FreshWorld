@@ -12,7 +12,7 @@ internal static class ConfigBindingRegression
 {
     private static readonly string[] ExpectedKeys =
     {
-        "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
+        "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
         "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds",
         "Reset.LocationIds", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
         "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
@@ -26,7 +26,7 @@ internal static class ConfigBindingRegression
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 18 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all 19 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
@@ -38,6 +38,9 @@ internal static class ConfigBindingRegression
             ("General.Mode", "1"),
             ("General.Mode", @"GameDays\nDailyTimes"),
             ("General.GameDayInterval", "not-a-number"),
+            ("General.AutomaticResetPercent", "-1"),
+            ("General.AutomaticResetPercent", "101"),
+            ("General.AutomaticResetPercent", "20.5"),
             ("Reset.ResourceTerrainRadius", "NaN"),
             ("Protection.ZoneSafeZones", "3"),
             ("Protection.ZoneSafeZones", "0"),
@@ -72,6 +75,7 @@ internal static class ConfigBindingRegression
         var settings = fixture.Settings.Capture();
         Require(settings.Options.EpicLootBountyProtectionEnabled,
             "The disabled bounty default replaced an explicit true value during Bind.");
+        Require(settings.Options.AutomaticResetPercent == 20, "The existing percentage was replaced during Bind.");
         Require(settings.AutomaticEnabled && settings.Schedule.Mode == ScheduleMode.GameDays && settings.Schedule.GameDayInterval == 12.5,
             "The existing schedule was replaced by defaults during Bind.");
         Require(!settings.Options.ZonesEnabled && settings.Options.VegetationEnabled && settings.Options.LocationsEnabled,
@@ -98,6 +102,7 @@ internal static class ConfigBindingRegression
         values["General.Mode"] = "DailyTimes";
         values["General.DailyTimes"] = "06:10,18:20";
         values["General.GameDayInterval"] = "36";
+        values["General.AutomaticResetPercent"] = "50";
         values["Reset.Zones"] = "true";
         values["Reset.Resources"] = "false";
         values["Reset.Locations"] = "false";
@@ -112,6 +117,8 @@ internal static class ConfigBindingRegression
         fixture.Reload(values);
         AssertRawValues(fixture.File, values);
         var after = fixture.Settings.Capture();
+        Require(before.Options.AutomaticResetPercent == 20 && after.Options.AutomaticResetPercent == 50,
+            "Percentage reload changed an old snapshot or failed to capture the new value.");
         Require(after.Schedule.Mode == ScheduleMode.DailyTimes &&
             after.Schedule.DailyTimes.SequenceEqual(new[] { new TimeSpan(6, 10, 0), new TimeSpan(18, 20, 0) }),
             "Reload did not apply the file's daily schedule.");
@@ -132,7 +139,7 @@ internal static class ConfigBindingRegression
     {
         using var fixture = new Fixture(ValidValues());
         var actual = fixture.File.Keys.Select(key => key.Section + "." + key.Key).OrderBy(key => key, StringComparer.Ordinal);
-        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 18-key config schema changed.");
+        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 19-key config schema changed.");
         foreach (var definition in fixture.File.Keys)
         {
             var entry = fixture.File[definition];
@@ -148,7 +155,7 @@ internal static class ConfigBindingRegression
             ReadPublicField(tag, "DispName", typeof(string));
             var drawer = ReadPublicField(tag, "CustomDrawer", typeof(Action<ConfigEntryBase>));
             var choices = (object[]?)ReadPublicField(tag, "AcceptableValues", typeof(object[]));
-            var expectsDrawer = key == "General.Enabled" || key == "General.GameDayInterval" ||
+            var expectsDrawer = key == "General.Enabled" || key == "General.GameDayInterval" || key == "General.AutomaticResetPercent" ||
                 key == "Reset.Zones" || key == "Reset.Resources" || key == "Reset.Locations" ||
                 key == "Reset.ResourceTerrainRadius" || key == "Protection.EpicLootProtection" ||
                 key == "Protection.EpicLootBountyProtection";
@@ -299,6 +306,7 @@ internal static class ConfigBindingRegression
         ["General.Enabled"] = "true",
         ["General.Mode"] = "GameDays",
         ["General.GameDayInterval"] = "12.5",
+        ["General.AutomaticResetPercent"] = "20",
         ["General.DailyTimes"] = "07:15,19:45",
         ["Reset.Zones"] = "false",
         ["Reset.Resources"] = "true",

@@ -54,6 +54,18 @@ internal static class ConfigPresentation
         finally { GUILayout.EndVertical(); }
     }
 
+    internal static void DrawPercentage(ConfigEntryBase entry)
+    {
+        GUILayout.BeginVertical();
+        try
+        {
+            var raw = DrawRawText(entry);
+            if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value < 0 || value > 100)
+                GUILayout.Label("Enter a whole percentage from 0 to 100.");
+        }
+        finally { GUILayout.EndVertical(); }
+    }
+
     internal static void DrawNonnegativeNumber(ConfigEntryBase entry)
     {
         GUILayout.BeginVertical();

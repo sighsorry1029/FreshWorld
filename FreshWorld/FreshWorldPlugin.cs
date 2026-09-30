@@ -20,7 +20,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.1.1";
+        public const string ModVersion = "1.1.2";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -390,7 +390,10 @@ namespace FreshWorld
                 Exception? failure = null;
                 var pipeline = new MaintenancePipeline(options, run.IncludeVegetation,
                     message => { progress = message; Logger.LogInfo(message); requester?.Reply(message); },
-                    message => { Logger.LogWarning(message); requester?.Reply(message); });
+                    message => { Logger.LogWarning(message); requester?.Reply(message); },
+                    run.IsManual ? 100 : options.AutomaticResetPercent);
+                if (run.IsManual)
+                    requester?.Reply("Manual reset: processing all eligible zones. AutomaticResetPercent does not apply.");
                 bool CanContinue()
                 {
                     if (requester != null && !IsCurrentRequest(requester))

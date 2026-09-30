@@ -23,6 +23,7 @@ namespace FreshWorld.Configuration
 
     public sealed class RunOptions
     {
+        public int AutomaticResetPercent { get; }
         public bool ZonesEnabled { get; }
         public int ZoneSafeZones { get; }
         private readonly string[] pieceBlacklist;
@@ -52,8 +53,10 @@ namespace FreshWorld.Configuration
             string[] pieceBlacklist, string[] protectedObjects,
             bool vegetationEnabled, string[] vegetationIds, string[] terrainVegetationIds, float vegetationTerrainRadius,
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
-            bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled, string[] alwaysProtectedPrefabs)
+            bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled, string[] alwaysProtectedPrefabs,
+            int automaticResetPercent)
         {
+            AutomaticResetPercent = automaticResetPercent;
             ZonesEnabled = zonesEnabled; ZoneSafeZones = zoneSafeZones;
             this.pieceBlacklist = (string[])pieceBlacklist.Clone();
             this.protectedObjects = (string[])protectedObjects.Clone();
@@ -77,7 +80,7 @@ namespace FreshWorld.Configuration
         // Preserve raw scalar text: BepInEx's bool/enum deserializers can silently retain/default invalid input.
         // Capture parses every scalar so malformed config disables new work instead of changing its policy.
         private readonly ConfigEntry<string> enabled, zonesEnabled, vegetationEnabled, locationsEnabled;
-        private readonly ConfigEntry<string> dailyTimes, gameDayInterval, vegetationIds, terrainVegetationIds, locationIds;
+        private readonly ConfigEntry<string> dailyTimes, gameDayInterval, automaticResetPercent, vegetationIds, terrainVegetationIds, locationIds;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
         private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
@@ -90,6 +93,9 @@ namespace FreshWorld.Configuration
             enabled = Bind("General", "Enabled", "true",
                 "Enable automatic runs. Set false for manual commands only; accepted manual requests and active runs continue. Re-enabling starts a new schedule without catching up.",
                 400, ConfigPresentation.DrawToggle, "Automatic Runs");
+            automaticResetPercent = Bind("General", "AutomaticResetPercent", "100",
+                "Percentage of eligible generated zones randomly selected for each automatic run. Integer from 0 to 100; default 100 processes all candidates, while 0 selects none. Never-generated zones and reset zones not yet generated again are excluded from the count and draw. The count is rounded to the nearest whole zone, with halves rounded up. Each run draws again without tracking past selections: at 20%, even 5 or 10 runs can leave some zones untouched and select others repeatedly. All reset stages share one selection; later protection skips are not replaced. Manual freshworld commands always process all eligible zones. Terrain and border edits can still cross zone boundaries.",
+                350, ConfigPresentation.DrawPercentage);
             mode = Bind("General", "Mode", new ConfigChoice<ScheduleMode>("GameDays"),
                 "GameDays uses elapsed game days; DailyTimes uses host-local clock times. Used only when Enabled=true.",
                 300, choices: ConfigPresentation.ModeChoices);
@@ -190,12 +196,19 @@ namespace FreshWorld.Configuration
                 ReadBool(Value(locationsEnabled), "Reset.Locations"), locations, locationProtection,
                 ReadBool(Value(epicLootProtection), "Protection.EpicLootProtection"),
                 ReadBool(Value(epicLootBountyProtection), "Protection.EpicLootBountyProtection"),
-                OptionalIds(Value(alwaysProtectedPrefabs), "Protection.AlwaysProtectedPrefabs"));
+                OptionalIds(Value(alwaysProtectedPrefabs), "Protection.AlwaysProtectedPrefabs"),
+                ReadPercentage(Value(automaticResetPercent)));
             return new RuntimeSettings(schedule, options);
         }
         private static bool ReadBool(string text, string key)
         {
             if (!bool.TryParse(text, out var value)) throw new ArgumentException(key + " must be true or false.");
+            return value;
+        }
+        private static int ReadPercentage(string text)
+        {
+            if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value < 0 || value > 100)
+                throw new ArgumentException("General.AutomaticResetPercent must be an integer from 0 to 100.");
             return value;
         }
         private static int ReadSafeZoneRange(ConfigChoice<SafeZoneRange> entry, string key, bool allowZero = true)

@@ -41,6 +41,7 @@ When hosting a world, FreshWorld includes previously saved chunks that are now c
 ~~~ini
 [General]
 Enabled = true
+AutomaticResetPercent = 100
 Mode = GameDays
 GameDayInterval = 24
 DailyTimes = 05:35,17:35
@@ -62,6 +63,12 @@ DailyTimes does not catch up times missed while the world was closed. An automat
 Only active schedule fields are used. GameDays ignores DailyTimes; DailyTimes ignores GameDayInterval; Enabled=false ignores both. Editing unused fields does not reset an accepted manual request. Mode must still be GameDays or DailyTimes even when automation is disabled.
 
 Every run includes all enabled restoration stages. There is no separate daily slot list for resources: with DailyTimes=05:35,17:35, both slots include resources when Resources=true.
+
+`AutomaticResetPercent` controls how many eligible zones an automatic run selects. It accepts whole numbers from **0 to 100** and defaults to **100**, preserving the full reset scope. Manual `freshworld` commands always process the full eligible scope, regardless of this setting; stage switches, ID lists, and protection still apply. Use Enabled=false to turn off automatic scheduling entirely.
+
+Below 100, FreshWorld takes one candidate snapshot after the initial save, applies the enabled stages and protection rules, then chooses the rounded percentage at random without duplicates. For example, 20% of 600 candidates selects 120 zones; 50% of 5 selects 3. Small candidate sets can round to zero. All reset stages share this selection and retain their own scope and protection rules. Zones skipped by later protection checks are not replaced, so fewer zones may actually reset. New zones generated during a partial run wait for a later run. Terrain radii and border repairs can still reach neighboring unselected zones.
+
+**Each run draws again without remembering earlier selections.** At 20%, even 5 or 10 runs can leave some zones untouched and select others repeatedly. This is not a rotation or a guarantee that every zone will eventually reset. A selected zone that is reset by the zone stage leaves the candidate pool until the game generates it again.
 
 ## Reset: restoration targets
 
@@ -94,6 +101,8 @@ LocationIds uses exact location IDs, with optional :variant suffixes. The defaul
 ### Which zones are affected?
 
 The zone stage considers **all previously generated zones**, not just zones currently loaded around players. It marks reset zones as ungenerated; the game recreates them when they are loaded again.
+
+Percentage selection uses only zones still marked as generated. Never-generated zones and already-reset zones that have not generated again are excluded from both the candidate count and the draw. A zone does not need to be loaded at the time of the run to qualify.
 
 With Zones=true, resource and location supplements use only zones protected by base markers in the initial plan that are still generated immediately before the supplemental operation. Zones already reset are not included again, and other failed or skipped zones are not added as fallback targets. A zone-stage failure stops the supplements.
 

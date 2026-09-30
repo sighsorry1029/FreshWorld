@@ -102,6 +102,7 @@ internal static class Fake
     public static List<string> Calls = new();
     public static List<VegetationPass> VegetationPasses = new();
     public static Dictionary<string, FreshWorld.Engine.OperationParameters> Arguments = new();
+    public static Dictionary<string, HashSet<Vector2s>> Candidates = new();
     public static HashSet<Vector2s> MarkerZones = new();
     public static HashSet<Vector2s> PlayerZones = new();
     public static Action<string>? OnStart;
@@ -119,7 +120,7 @@ internal static class Fake
 
     public static void Reset()
     {
-        Calls = new(); Arguments = new(); MarkerZones = new(); PlayerZones = new(); VegetationPasses = new();
+        Calls = new(); Arguments = new(); Candidates = new(); MarkerZones = new(); PlayerZones = new(); VegetationPasses = new();
         OnStart = null; ThrowOnZone = null; ThrowOnStart = null;
         LoadOnPoke = true; HoldSave = false; IgnoreSave = false; SaveError = null;
         BorderRepairs = 0; LoadReleases = 0;
@@ -283,6 +284,7 @@ namespace FreshWorld.Engine
         {
             Kind = kind;
             Fake.Arguments[kind] = args;
+            Fake.Candidates[kind] = candidates == null ? new() : new(candidates);
             Fake.Calls.Add(kind + ".create");
         }
         protected override string OnInit()

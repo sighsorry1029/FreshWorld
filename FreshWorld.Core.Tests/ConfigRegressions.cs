@@ -19,13 +19,14 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact eighteen bindings in three sections and game-day defaults", () =>
+        Check("exact nineteen bindings in three sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
-            var keys = new[] { "General.Enabled", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
+            var keys = new[] { "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.ResourceTerrainRadius",
                 "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.PieceBlacklist" };
-            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the eighteen-key design");
+            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the nineteen-key design");
+            Assert(snapshot.Options.AutomaticResetPercent == 100, "default must preserve full reset scope");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
             Assert(snapshot.Options.VegetationIds.Length == 0 && snapshot.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper", "silvervein" }) &&
@@ -43,6 +44,22 @@ internal static class ConfigRegressions
             Assert(!snapshot.Options.EpicLootBountyProtectionEnabled, "EpicLoot bounty protection must default to disabled");
             Assert(snapshot.Options.VegetationTerrainRadius == 20 && !snapshot.Schedule.RunMissedOnWorldStart, "terrain and missed-run policy");
             Assert(file.SaveCount == 0, "Capture must not mutate/save config");
+        });
+        Check("automatic percentage is bounded, lossless and immutable", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var original = cfg.Capture();
+            foreach (var percent in new[] { "0", "1", "20", "50", "100" })
+            {
+                file.Set("General", "AutomaticResetPercent", percent);
+                Assert(cfg.Capture().Options.AutomaticResetPercent.ToString() == percent, "percentage capture failed");
+            }
+            foreach (var invalid in new[] { "-1", "101", "20.5", "NaN", "Infinity", "", "20%", "2147483648" })
+            {
+                file.Set("General", "AutomaticResetPercent", invalid);
+                Invalid(() => cfg.Capture());
+                Assert((string)file.Get("General", "AutomaticResetPercent").BoxedValue == invalid, "invalid text was replaced");
+            }
+            Assert(original.Options.AutomaticResetPercent == 100 && file.SaveCount == 0, "capture mutated the old snapshot or saved cfg");
         });
         Check("treasure and bounty switches are independent immutable run options", () =>
         {
