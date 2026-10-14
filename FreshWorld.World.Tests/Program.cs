@@ -18,6 +18,8 @@ var tests = new (string Name, Action Body)[]
     ("unready disconnected server peers and invalid positions do not invent occupied zones", InvalidPlayerZones),
     ("player-zone collection requires an active world host", PlayerZonesRequireHost),
     ("spawned connection cycles delete each object once", SpawnedCycle),
+    ("zone reset cannot recursively delete a child in a reserved sector", ZoneReservedChild),
+    ("recursive deletion respects the spatial scope before changing ownership", SpawnedScope),
     ("loaded object deletion uses the scene destruction path", LoadedDeletion),
     ("manual release unspawns scene objects without deleting their ZDOs", OwnedRelease),
     ("loading proxies keep their zone root until they finish", DeferredReleaseLoading),
@@ -28,6 +30,10 @@ var tests = new (string Name, Action Body)[]
     ("a player entering a manual zone keeps it loaded", PlayerEnters),
     ("zone reset updates generation/location state and all eight repair edges", ResetZoneAndBorders),
     ("partial deletion failure retains border repairs before zone state changes", PartialDeletionBorders),
+    ("group deletion completes queued native removals before releasing any member", GroupDeletionOrder),
+    ("group deletion callback failures leave generation state unchanged", GroupDeletionFailure),
+    ("group deletion refuses protected pending objects and callback-created residue", GroupDeletionResidue),
+    ("native pending registrations are detected without a scene root", RootlessPendingLoad),
     ("terrain recalculation invalidates build data", TerrainRebuild),
     ("large destruction notifications are limited to ten thousand IDs", DestroyBatch),
     ("placed markers require creator metadata while unconditional markers do not", MarkerCreators),
@@ -318,6 +324,32 @@ static void SpawnedCycle()
     Equal(987L, first.Owner); Equal(987L, second.Owner);
 }
 
+static void ZoneReservedChild()
+{
+    var child = new ZDO(2, "wall", new(64, 0, 0)) { Owner = 123 };
+    var parent = new ZDO(1, "spawner", new()) { Spawned = child.m_uid };
+    ZDOMan.instance.Add(parent); ZDOMan.instance.Add(child);
+    ZoneSystem.instance.AddGenerated(new(1, 0));
+    var reset = new ProbeReset(new()
+    {
+        CanDeleteObject = zdo => ZoneSystem.GetZone(zdo.GetPosition()) != new Vector2s(1, 0),
+        CanResetTerrain = sector => sector != new Vector2s(1, 0)
+    });
+    True(reset.Run(new(0, 0)));
+    True(!parent.Valid && child.Valid); Equal(123L, child.Owner);
+    reset.Finish(); True(TerrainResetter.Borders != null && !TerrainResetter.Borders.ContainsKey(new(1, 0)));
+}
+static void SpawnedScope()
+{
+    var parent = new ZDO(1, "spawner", new());
+    var child = new ZDO(2, "outside", new(128, 0, 0)) { Owner = 123 };
+    var grandchild = new ZDO(3, "inside", new()) { Owner = 456 };
+    parent.Spawned = child.m_uid; child.Spawned = grandchild.m_uid;
+    ZDOMan.instance.Add(parent); ZDOMan.instance.Add(child); ZDOMan.instance.Add(grandchild);
+    GameWorld.RemoveZDO(parent, false, false, null, zdo => zdo.GetPosition().x < 32);
+    True(!parent.Valid && child.Valid && grandchild.Valid);
+    Equal(123L, child.Owner); Equal(456L, grandchild.Owner); Equal(1, ZDOMan.instance.Destroyed.Count);
+}
 static void LoadedDeletion()
 {
     var zdo = new ZDO(1, "stone", new());
@@ -477,6 +509,85 @@ static void TerrainRebuild()
     GameWorld.RecalculateTerrain();
     True(!map.HasBuildData); Equal(1, map.Pokes);
     Equal(1, map.LastDelay); Equal(false, map.LastPaintOnly);
+}
+
+static void GroupDeletionOrder()
+{
+    var anchor = new Vector2s(0, 0); var neighbor = new Vector2s(1, 0);
+    ZoneSystem.instance.AddGenerated(anchor); // Neighbor has objects but has never generated.
+    ZoneSystem.instance.m_locationInstances[anchor] = new() { m_placed = true };
+    ZDOMan.instance.DeferDeletion = true;
+    var first = new ZDO(1, "stone", new()); var spillover = new ZDO(2, "wall", new(64, 0, 0));
+    var outside = new ZDO(3, "wall", new(128, 0, 0));
+    first.Spawned = spillover.m_uid; spillover.Spawned = outside.m_uid;
+    ZDOMan.instance.Add(first); ZDOMan.instance.Add(spillover); ZDOMan.instance.Add(outside);
+    ZDOMan.instance.DestroyZDO(outside); // Unrelated pending notification must not be flushed locally.
+    var callbacks = 0;
+    ZDOMan.instance.AfterDestroy = _ =>
+    {
+        callbacks++;
+        True(GameWorld.IsGenerated(anchor)); True(ZoneSystem.instance.m_locationInstances[anchor].m_placed);
+    };
+    var operation = new ProbeReset(new()
+    {
+        ZoneGroups = new Dictionary<Vector2s, HashSet<Vector2s>> { [anchor] = [anchor, neighbor] },
+        CanDeleteObject = _ => false // Individual-zone reservation must not suppress the authorized group.
+    });
+    True(operation.Run(anchor));
+    Equal(2, callbacks); True(!first.Valid && !spillover.Valid && outside.Valid);
+    True(!GameWorld.IsGenerated(anchor)); True(!ZoneSystem.instance.m_locationInstances[anchor].m_placed);
+    True(ZDOMan.instance.DestructionQueue.Contains(outside.m_uid));
+    True(ZDOMan.instance.DestructionQueue.Contains(first.m_uid));
+    var native = HarmonyLib.AccessTools.Method(typeof(ZDOMan), "HandleDestroyedZDO");
+    native.Invoke(ZDOMan.instance, [first.m_uid]); Equal(2, callbacks); // Later notification is harmless.
+}
+static void RootlessPendingLoad()
+{
+    var zone = new Vector2s(1, 0);
+    var proxy = new ZDO(1, "LocationProxy", new(64, 0, 0));
+    True(!GameWorld.HasPendingZoneLoad(zone));
+    ZoneSystem.instance.SetLoadingInZone(proxy);
+    True(!GameWorld.TryGetRoot(zone, out _)); True(GameWorld.HasPendingZoneLoad(zone));
+    ZoneSystem.instance.UnsetLoadingInZone(proxy); True(!GameWorld.HasPendingZoneLoad(zone));
+}
+static void GroupDeletionFailure()
+{
+    var anchor = new Vector2s(0, 0); var neighbor = new Vector2s(1, 0);
+    ZoneSystem.instance.AddGenerated(anchor); ZoneSystem.instance.AddGenerated(neighbor);
+    ZoneSystem.instance.m_locationInstances[anchor] = new() { m_placed = true };
+    ZDOMan.instance.DeferDeletion = true;
+    var first = new ZDO(1, "stone", new()); var second = new ZDO(2, "wall", new(64, 0, 0));
+    ZDOMan.instance.Add(first); ZDOMan.instance.Add(second);
+    ZDOMan.instance.AfterDestroy = _ => throw new InvalidOperationException("native callback failure");
+    var operation = new ProbeReset(new() { ZoneGroups = new Dictionary<Vector2s, HashSet<Vector2s>> { [anchor] = [anchor, neighbor] } });
+    Throws<InvalidOperationException>(() => operation.Run(anchor));
+    True(GameWorld.IsGenerated(anchor) && GameWorld.IsGenerated(neighbor));
+    True(ZoneSystem.instance.m_locationInstances[anchor].m_placed);
+    True(ZDOMan.instance.DestructionQueue.Contains(second.m_uid));
+    operation.Finish(); True(TerrainResetter.Borders != null);
+}
+static void GroupDeletionResidue()
+{
+    foreach (var reason in new[] { "protected", "new", "moved" })
+    {
+        Reset(); var anchor = new Vector2s(0, 0);
+        ZoneSystem.instance.AddGenerated(anchor); ZoneSystem.instance.m_locationInstances[anchor] = new() { m_placed = true };
+        ZDOMan.instance.DeferDeletion = true;
+        var first = new ZDO(1, "stone", new());
+        var other = new ZDO(2, reason == "protected" ? "Player" : "wall", new());
+        ZDOMan.instance.Add(first); ZDOMan.instance.Add(other);
+        if (reason == "protected") ZDOMan.instance.DestroyZDO(other);
+        else ZDOMan.instance.AfterDestroy = zdo =>
+        {
+            if (zdo != first) return;
+            if (reason == "new") ZDOMan.instance.Add(new ZDO(3, "new_wall", new()));
+            else other.SetPosition(new(128, 0, 0));
+        };
+        var operation = new ProbeReset(new() { ZoneGroups = new Dictionary<Vector2s, HashSet<Vector2s>> { [anchor] = [anchor] } });
+        Throws<InvalidOperationException>(() => operation.Run(anchor));
+        True(GameWorld.IsGenerated(anchor)); True(ZoneSystem.instance.m_locationInstances[anchor].m_placed);
+        if (reason != "new") True(other.Valid);
+    }
 }
 
 static void PartialDeletionBorders()

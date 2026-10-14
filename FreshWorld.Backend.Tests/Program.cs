@@ -6,6 +6,30 @@ using FreshWorld.Engine;
 
 var tests = new (string Name, Action Body)[]
 {
+    ("metadata references are released when planning is cancelled or fails", LocationMetadataLifetime),
+    ("lazy neighboring bounds are resolved even outside the apparent reservation", HiddenNeighborLocation),
+    ("replaced managed definitions abort before any reset", ReplacedPlanningDefinition),
+    ("late mapped instances wait for the next reservation plan", LateMappedInstance),
+    ("mapped locations group zone resets even when supplemental locations are disabled or unselected", MappedReservation),
+    ("selected multi-zone locations use grouped zone resets or radius restoration", MultiZoneRouting),
+    ("grouped zone resets reject pending roots without forcing loads", GroupPendingLoad),
+    ("grouped zone resets retain late protection and registry changes for later stages", GroupLateChanges),
+    ("unvisited mapped anchors do not make their neighboring zones new reset targets", GroupUngeneratedAnchor),
+    ("shared-sector groups expand transitively while separate groups stay independent", GroupConnectedLocations),
+    ("neighbor protection blocks the entire location including ungenerated sectors", MultiZoneProtection),
+    ("protection appearing while a location loads prevents all mutation", MultiZoneLateProtection),
+    ("shared-sector reservations preserve disjoint neighboring location exteriors", DisjointLocationReservation),
+    ("neighboring unresolved definitions expand reservations before zone deletion", NeighborLocationResolution),
+    ("overlapping locations reset together in zone mode and remain preserved in radius mode", MultiZoneOverlap),
+    ("percentage sampling counts managed location anchors once without splitting their area", MultiZonePercent),
+    ("protected zone groups use location switches and IDs for radius fallback", GroupLocationFallback),
+    ("location fallback and zone resets share one percentage draw", GroupFallbackPercent),
+    ("connected selected locations share one draw even with a single-sector neighbor", GroupNeighborFallback),
+    ("an ungenerated managed owner does not block a selected generated neighbor's radius reset", UngeneratedOwnerFallback),
+    ("successful zone groups never receive location fallback after regenerating", RegeneratedGroupNoFallback),
+    ("failed zone groups abort rather than starting location fallback", FailedGroupNoFallback),
+    ("resolved radii are reserved before zone deletion", MultiZoneResolvedRadius),
+    ("changed location position or radius cannot expand the planned reset", MultiZoneChangedExtent),
     ("retained scope excludes newly skipped zones", RetainedScope),
     ("disabling zone reset supplements all generated zones", WithoutZoneReset),
     ("partial resets select a fixed rounded count without duplicate targets", PercentageCounts),
@@ -65,7 +89,7 @@ var tests = new (string Name, Action Body)[]
     ("disabled EpicLoot protection permits direct resets in treasure sectors", TreasureDisabled),
     ("treasure snapshot is taken after the initial world save", TreasureAfterSave),
     ("load retries protect new treasures only in the target sector", TreasureDuringLoad),
-    ("neighbor treasure does not block resource terrain group or location extents", TreasureNeighbors),
+    ("neighbor treasure blocks full location extents but not resource terrain/group extents", TreasureNeighbors),
     ("bounty protection independently skips its sectors in every stage", BountyStages),
     ("bounties created during loading stop only their own sector and release pending loads", BountyDuringLoad),
     ("invasion objective zones override SafeZones zero for all stages and remain protected for one run", InvasionStages),
@@ -88,6 +112,393 @@ foreach (var (name, body) in tests)
 System.Console.WriteLine($"{tests.Length - failures}/{tests.Length} backend regression tests passed.");
 return failures == 0 ? 0 : 1;
 
+static void LocationMetadataLifetime()
+{
+    Fake.AddZone(0); Fake.MetadataReady = false;
+    using (var lease = MaintenanceGate.Acquire())
+    {
+        var completed = new List<bool>();
+        using var runner = NewRunner(MultiZoneOptions(), completed);
+        True(runner.MoveNext()); Equal(1, Fake.MetadataReferences);
+        runner.Dispose(); Equal(0, Fake.MetadataReferences);
+        True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    }
+    foreach (var throwDuringLoad in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0);
+        if (throwDuringLoad) Fake.OnMetadataLoad = () => throw new InvalidOperationException("load callback failure");
+        else Fake.OnResolve = _ => throw new InvalidOperationException("metadata hook failure");
+        var run = Run(MultiZoneOptions()); True(!run.Success); Equal(0, Fake.MetadataReferences);
+        True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    }
+}
+static void HiddenNeighborLocation()
+{
+    Fake.AddZone(0); Fake.AddZone(2, location: "other"); Fake.AddZone(3, location: null); Fake.AddZone(6, location: null);
+    Fake.OnResolve = definition => { if (definition.m_prefab.Name == "other") definition.m_exteriorRadius = 100; };
+    var run = Run(MultiZoneOptions()); True(run.Success); Equal(0, Fake.MetadataReferences);
+    Sequence([0, 6], Changed("zones")); Equal(0, Changed("locations").Count);
+    True(!GameWorld.IsGenerated(new(3, 0)));
+}
+static void ReplacedPlanningDefinition()
+{
+    MultiZoneWorld();
+    Fake.OnResolve = _ =>
+    {
+        var instance = ZoneSystem.instance.m_locationInstances[new(0, 0)];
+        instance.m_location = new("cave"); ZoneSystem.instance.m_locationInstances[new(0, 0)] = instance;
+    };
+    var run = Run(MultiZoneOptions());
+    True(!run.Success); True(run.Errors.Any(error => error.Message.Contains("definitions changed")));
+    True(!Fake.Calls.Any(call => call.Contains(".change:")));
+}
+static void LateMappedInstance()
+{
+    Fake.AddZone(0, location: null); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+    Fake.OnStart = kind => { if (kind == "vegetation") Fake.AddZone(0); };
+    var options = MultiZoneOptions(); options.ZonesEnabled = false;
+    True(Run(options).Success); Equal(0, Changed("locations").Count);
+}
+static RunOptions MultiZoneOptions(bool mapped = true) => new()
+{
+    LocationResetRadii = mapped ? new Dictionary<string, float> { ["cave"] = 40 } : new Dictionary<string, float>(),
+    LocationSafeZones = 1
+};
+static void MultiZoneWorld()
+{
+    Fake.AddZone(0);
+    foreach (var x in new[] { -1, 1, 4 }) Fake.AddZone(x, location: null);
+    ZoneSystem.instance.m_generatedZones.Add(new(0, 1));
+    ZoneSystem.instance.m_generatedZones.Add(new(0, -1));
+}
+static void MappedReservation()
+{
+    foreach (var selected in new[] { false, true })
+    {
+        Fake.Reset(); ZoneSystem.instance.m_vegetation.Add(new("copper")); MultiZoneWorld();
+        var options = MultiZoneOptions(); options.LocationsEnabled = selected;
+        if (selected) options.LocationIds = ["missing"];
+        True(Run(options).Success);
+        Sequence([0, 4], Changed("zones")); Equal(0, Changed("locations").Count);
+        var args = Fake.Arguments["zones"];
+        foreach (var sector in new[] { new Vector2s(0, 0), new(-1, 0), new(1, 0), new(0, 1), new(0, -1) })
+        {
+            Equal(sector == new Vector2s(0, 0), Fake.Candidates["zones"].Contains(sector));
+            True(args.ZoneGroups![new(0, 0)].Contains(sector));
+            True(!GameWorld.IsGenerated(sector));
+            True(!args.CanResetTerrain!(sector));
+            True(!args.CanDeleteObject!(new ZDO { Zone = sector }));
+        }
+    }
+}
+static void MultiZoneRouting()
+{
+    foreach (var mapped in new[] { false, true })
+    foreach (var zones in new[] { false, true })
+    {
+        Fake.Reset(); ZoneSystem.instance.m_vegetation.Add(new("copper")); MultiZoneWorld();
+        if (!mapped) ZoneSystem.instance.m_locationInstances[new(0, 0)].m_location.m_exteriorRadius = 40;
+        var options = MultiZoneOptions(mapped); options.ZonesEnabled = zones;
+        True(Run(options).Success);
+        if (zones)
+        {
+            Sequence([0, 4], Changed("zones")); Equal(0, Changed("locations").Count); Equal(0, Changed("vegetation").Count);
+            Equal(5, Fake.Arguments["zones"].ZoneGroups![new(0, 0)].Count);
+        }
+        else
+        {
+            Equal(0, Changed("zones").Count); Sequence([0], Changed("locations")); Sequence([4], Changed("vegetation"));
+            Equal(5, Fake.Arguments["locations"].LocationFootprints![new(0, 0)].Zones.Count);
+        }
+    }
+}
+static void MultiZoneProtection()
+{
+    foreach (var guard in new[] { "base", "player", "treasure", "bounty", "invasion", "tombstone" })
+    foreach (var safe in new[] { 0, 1, 2 })
+    foreach (var zones in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0); // The neighboring sector is deliberately ungenerated.
+        var options = MultiZoneOptions(); options.LocationSafeZones = safe; options.EpicLootBountyProtectionEnabled = true; options.ZonesEnabled = zones;
+        switch (guard)
+        {
+            case "base": Fake.MarkerZones.Add(new(1, 0)); break;
+            case "player": Fake.PlayerZones.Add(new(2, 0)); break; // Only the outer sector is in the player's 3x3.
+            case "treasure": ZDOMan.instance.Objects.Add(new() { Zone = new(1, 0) }); break;
+            case "bounty": ZDOMan.instance.Objects.Add(new() { Zone = new(1, 0), IsBounty = true }); break;
+            case "invasion": ZDOMan.instance.Objects.Add(new() { Zone = new(1, 0), Prefab = "BlackIce_Core" }); break;
+            case "tombstone": ZDOMan.instance.Objects.Add(new() { Zone = new(1, 0), Prefab = "Player_tombstone" }); break;
+        }
+        True(Run(options).Success);
+        Equal(guard == "base" && safe == 0, Changed("locations").Contains(0));
+        Equal(0, Changed("zones").Count);
+    }
+}
+static void GroupPendingLoad()
+{
+    foreach (var loaded in new[] { false, true })
+    foreach (var rootless in new[] { false, true })
+    {
+        Fake.Reset(); MultiZoneWorld();
+        if (rootless) GameWorld.RootlessLoads.Add(new(1, 0));
+        else
+        {
+            GameWorld.Pending.Add(new(1, 0));
+            if (loaded) ZoneSystem.instance.Loaded.Add(new(1, 0));
+        }
+        var options = MultiZoneOptions(); options.LocationSafeZones = 0;
+        True(Run(options).Success);
+        Equal(loaded && !rootless, Changed("zones").Contains(0)); Equal(0, Changed("locations").Count);
+        Equal(!loaded || rootless, GameWorld.IsGenerated(new(-1, 0)));
+        True(!GameWorld.Pending.Contains(new(0, 0))); // No group member was forcibly loaded.
+    }
+}
+static void GroupLateChanges()
+{
+    foreach (var change in new[] { "base", "player", "tombstone", "new", "replaced", "removed" })
+    {
+        Fake.Reset(); MultiZoneWorld(); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        Fake.OnStart = kind =>
+        {
+            if (kind != "zones") return;
+            if (change == "base") Fake.MarkerZones.Add(new(1, 0));
+            else if (change == "player") Fake.PlayerZones.Add(new(2, 0));
+            else if (change == "tombstone") ZDOMan.instance.Objects.Add(new() { Zone = new(1, 0), Prefab = "Player_tombstone" });
+            else if (change == "removed") ZoneSystem.instance.m_locationInstances.Remove(new(0, 0));
+            else Fake.AddZone(change == "new" ? 1 : 0, location: "replacement");
+        };
+        var options = MultiZoneOptions(); options.LocationSafeZones = 0;
+        True(Run(options).Success);
+        True(!Changed("zones").Contains(0)); True(GameWorld.IsGenerated(new(-1, 0)));
+        Equal(change == "base" ? 1 : 0, Changed("locations").Count); Equal(0, Changed("vegetation").Count);
+    }
+}
+static void GroupUngeneratedAnchor()
+{
+    foreach (var percent in new[] { 50, 100 })
+    {
+        Fake.Reset(); MultiZoneWorld();
+        ZoneSystem.instance.m_generatedZones.Remove(new(0, 0));
+        var options = MultiZoneOptions(); options.LocationsEnabled = false;
+        True(Run(options, resetPercent: percent).Success);
+        Sequence([4], Changed("zones")); True(GameWorld.IsGenerated(new(1, 0)));
+        Equal(0, Fake.Arguments["zones"].ZoneGroups!.Count);
+    }
+}
+static void GroupConnectedLocations()
+{
+    Fake.AddZone(0); Fake.AddZone(1, location: "other"); Fake.AddZone(2, location: "other2"); Fake.AddZone(10);
+    ZoneSystem.instance.m_locationInstances[new(1, 0)].m_location.m_exteriorRadius = 40;
+    ZoneSystem.instance.m_locationInstances[new(2, 0)].m_location.m_exteriorRadius = 40;
+    Fake.MarkerZones.Add(new(3, 0));
+    var options = MultiZoneOptions(); options.LocationsEnabled = false;
+    True(Run(options).Success);
+    Sequence([10], Changed("zones"));
+    var groups = Fake.Arguments["zones"].ZoneGroups!;
+    Equal(2, groups.Count); True(groups[new(0, 0)].Contains(new(3, 0)));
+    True(GameWorld.IsGenerated(new(1, 0)) && GameWorld.IsGenerated(new(2, 0)));
+}
+static void MultiZoneLateProtection()
+{
+    Fake.AddZone(0);
+    using var lease = MaintenanceGate.Acquire(); var completed = new List<bool>();
+    var options = MultiZoneOptions(); options.ZonesEnabled = false;
+    using var runner = NewRunner(options, completed);
+    for (var frame = 0; !GameWorld.Pending.Contains(new(0, 0)); frame++)
+    { True(frame < 20); True(runner.MoveNext()); }
+    ZDOMan.instance.Objects.Add(new() { Zone = new(1, 0), Prefab = "Player_tombstone" });
+    Drain(runner); Sequence([true], completed); Equal(0, Changed("locations").Count); Equal(0, GameWorld.Pending.Count);
+}
+static void DisjointLocationReservation()
+{
+    Fake.AddZone(0); Fake.AddZone(1, location: "other"); Fake.AddZone(2, location: null); Fake.AddZone(4, location: null);
+    var neighbor = ZoneSystem.instance.m_locationInstances[new(1, 0)];
+    neighbor.m_position = new(90, 0, 20); neighbor.m_location.m_exteriorRadius = 10;
+    ZoneSystem.instance.m_locationInstances[new(1, 0)] = neighbor;
+    var run = Run(MultiZoneOptions()); True(run.Success);
+    Sequence([0, 4], Changed("zones")); Equal(0, Changed("locations").Count);
+    True(!GameWorld.IsGenerated(new(2, 0)));
+    True(!run.Warnings.Any(message => message.Contains("overlapping")));
+    True(!Fake.Arguments["zones"].CanResetTerrain!(new(2, 0)));
+}
+static void NeighborLocationResolution()
+{
+    Fake.AddZone(0); Fake.AddZone(1, location: "other"); Fake.AddZone(3, location: null); Fake.AddZone(4, location: null);
+    var neighbor = ZoneSystem.instance.m_locationInstances[new(1, 0)];
+    neighbor.m_position = new(90, 0, 20); neighbor.m_location.m_exteriorRadius = 10;
+    ZoneSystem.instance.m_locationInstances[new(1, 0)] = neighbor;
+    var resolved = new List<string>();
+    Fake.OnResolve = definition =>
+    {
+        resolved.Add(definition.m_prefab.Name);
+        if (definition.m_prefab.Name == "other") definition.m_exteriorRadius = 110;
+    };
+    var run = Run(MultiZoneOptions()); True(run.Success);
+    Sequence(new[] { "cave", "other" }, resolved);
+    Sequence([0, 4], Changed("zones")); Equal(0, Changed("locations").Count);
+    True(!GameWorld.IsGenerated(new(3, 0)));
+    True(!Fake.Arguments["zones"].CanResetTerrain!(new(3, 0)));
+}
+static void MultiZoneOverlap()
+{
+    foreach (var zones in new[] { false, true })
+    {
+        Fake.Reset();
+        Fake.AddZone(0); Fake.AddZone(1, location: "other"); Fake.AddZone(2, location: null); Fake.AddZone(4, location: null);
+        ZoneSystem.instance.m_locationInstances[new(1, 0)].m_location.m_exteriorRadius = 40;
+        var options = MultiZoneOptions(); options.ZonesEnabled = zones;
+        var result = Run(options); True(result.Success);
+        Sequence(zones ? new[] { 0, 4 } : [], Changed("zones")); Equal(0, Changed("locations").Count);
+        Equal(!zones, result.Warnings.Any(message => message.Contains("overlapping")));
+        Equal(!zones, GameWorld.IsGenerated(new(2, 0)));
+    }
+}
+static void MultiZonePercent()
+{
+    foreach (var percent in new[] { 0, 20, 50, 100 })
+    foreach (var zones in new[] { false, true })
+    {
+        Fake.Reset();
+        for (var x = 0; x < 100; x += 10) Fake.AddZone(x);
+        var options = MultiZoneOptions(); options.VegetationEnabled = false; options.ZonesEnabled = zones;
+        True(Run(options, resetPercent: percent).Success);
+        Equal(zones ? percent / 10 : 0, Changed("zones").Count); Equal(zones ? 0 : percent / 10, Changed("locations").Count);
+        foreach (var x in Changed(zones ? "zones" : "locations"))
+            Equal(5, zones ? Fake.Arguments["zones"].ZoneGroups![new(x, 0)].Count : Fake.Arguments["locations"].LocationFootprints![new(x, 0)].Zones.Count);
+    }
+}
+static void GroupLocationFallback()
+{
+    foreach (var enabled in new[] { false, true })
+    foreach (var selected in new[] { false, true })
+    foreach (var safe in new[] { 0, 1, 2 })
+    {
+        Fake.Reset(); MultiZoneWorld(); Fake.MarkerZones.Add(new(1, 0));
+        var options = MultiZoneOptions(); options.LocationsEnabled = enabled;
+        options.LocationIds = selected ? ["cave"] : ["other"];
+        options.LocationSafeZones = safe;
+        True(Run(options).Success);
+        Sequence([4], Changed("zones"));
+        Equal(enabled && selected && safe == 0, Changed("locations").Contains(0));
+        True(GameWorld.IsGenerated(new(-1, 0))); // Radius restoration does not reset the neighboring sector.
+    }
+}
+static void GroupFallbackPercent()
+{
+    foreach (var percent in new[] { 0, 20, 50, 100 })
+    foreach (var allProtected in new[] { false, true })
+    {
+        Fake.Reset();
+        for (var x = 0; x < 100; x += 10)
+        {
+            Fake.AddZone(x);
+            if (allProtected || x % 20 == 0) Fake.MarkerZones.Add(new(x + 1, 0));
+        }
+        var options = MultiZoneOptions(); options.VegetationEnabled = false; options.LocationSafeZones = 0;
+        True(Run(options, resetPercent: percent).Success);
+        var zones = Changed("zones"); var locations = Changed("locations");
+        Equal(percent / 10, zones.Count + locations.Count);
+        True(!zones.Overlaps(locations));
+        True(locations.All(x => Fake.MarkerZones.Contains(new(x + 1, 0))));
+        True(zones.All(x => !Fake.MarkerZones.Contains(new(x + 1, 0))));
+        if (allProtected) Equal(0, zones.Count);
+    }
+}
+static void GroupNeighborFallback()
+{
+    foreach (var percent in new[] { 0, 50, 100 })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1, location: "other"); Fake.AddZone(10);
+        var neighbor = ZoneSystem.instance.m_locationInstances[new(1, 0)];
+        neighbor.m_position = new(90, 0, 20); neighbor.m_location.m_exteriorRadius = 5;
+        ZoneSystem.instance.m_locationInstances[new(1, 0)] = neighbor;
+        Fake.MarkerZones.Add(new(1, 0)); Fake.MarkerZones.Add(new(11, 0));
+        var options = MultiZoneOptions(); options.LocationIds = ["cave", "other"];
+        options.LocationSafeZones = 0; options.VegetationEnabled = false;
+        True(Run(options, resetPercent: percent).Success);
+        Equal(0, Changed("zones").Count);
+        var restored = Changed("locations");
+        Equal(restored.Contains(0), restored.Contains(1));
+        Equal(percent / 50, restored.Select(x => x == 1 ? 0 : x).Distinct().Count());
+    }
+}
+static void UngeneratedOwnerFallback()
+{
+    foreach (var percent in new[] { 50, 100 })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1, location: "other");
+        ZoneSystem.instance.m_generatedZones.Remove(new(0, 0));
+        var owner = ZoneSystem.instance.m_locationInstances[new(0, 0)]; owner.m_placed = false;
+        ZoneSystem.instance.m_locationInstances[new(0, 0)] = owner;
+        var neighbor = ZoneSystem.instance.m_locationInstances[new(1, 0)];
+        neighbor.m_position = new(90, 0, 20); neighbor.m_location.m_exteriorRadius = 5;
+        ZoneSystem.instance.m_locationInstances[new(1, 0)] = neighbor;
+        var options = MultiZoneOptions(); options.LocationIds = ["other"]; options.VegetationEnabled = false;
+        True(Run(options, resetPercent: percent).Success);
+        Equal(0, Changed("zones").Count); Sequence([1], Changed("locations"));
+        True(!GameWorld.IsGenerated(new(0, 0)));
+    }
+}
+static void RegeneratedGroupNoFallback()
+{
+    foreach (var percent in new[] { 50, 100 })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1, location: "other");
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        var neighbor = ZoneSystem.instance.m_locationInstances[new(1, 0)];
+        neighbor.m_position = new(90, 0, 20); neighbor.m_location.m_exteriorRadius = 5;
+        ZoneSystem.instance.m_locationInstances[new(1, 0)] = neighbor;
+        Fake.OnStart = kind =>
+        {
+            if (kind != "vegetation") return;
+            foreach (var x in new[] { 0, 1 })
+            {
+                ZoneSystem.instance.m_generatedZones.Add(new(x, 0));
+                var location = ZoneSystem.instance.m_locationInstances[new(x, 0)]; location.m_placed = true;
+                ZoneSystem.instance.m_locationInstances[new(x, 0)] = location;
+            }
+        };
+        var options = MultiZoneOptions(); options.LocationIds = ["cave", "other"]; options.LocationSafeZones = 0;
+        True(Run(options, resetPercent: percent).Success);
+        Sequence([0], Changed("zones")); Equal(0, Changed("locations").Count);
+        True(GameWorld.IsGenerated(new(0, 0)) && GameWorld.IsGenerated(new(1, 0)));
+        True(ZoneSystem.instance.m_locationInstances[new(0, 0)].m_placed);
+    }
+}
+static void FailedGroupNoFallback()
+{
+    Fake.AddZone(0); Fake.ThrowOnZone = "zones";
+    var options = MultiZoneOptions(); options.LocationSafeZones = 0;
+    var run = Run(options);
+    True(!run.Success); True(run.Errors.Count > 0);
+    True(!Fake.Calls.Contains("locations.create"));
+}
+static void MultiZoneResolvedRadius()
+{
+    MultiZoneWorld(); Fake.AddZone(2, location: null);
+    Fake.OnResolve = definition => definition.m_exteriorRadius = 100;
+    True(Run(MultiZoneOptions()).Success);
+    True(!Changed("zones").Contains(2)); Equal(0, Changed("locations").Count);
+    True(!GameWorld.IsGenerated(new(2, 0))); True(Fake.Arguments["zones"].ZoneGroups![new(0, 0)].Contains(new(2, 0)));
+}
+static void MultiZoneChangedExtent()
+{
+    foreach (var changeRadius in new[] { false, true })
+    foreach (var zones in new[] { false, true })
+    {
+        Fake.Reset(); MultiZoneWorld();
+        Fake.OnStart = kind =>
+        {
+            if (kind != (zones ? "zones" : "locations")) return;
+            var location = ZoneSystem.instance.m_locationInstances[new(0, 0)];
+            if (changeRadius) location.m_location.m_exteriorRadius = 60;
+            else location.m_position = new(10, 0, 0);
+            ZoneSystem.instance.m_locationInstances[new(0, 0)] = location;
+        };
+        var options = MultiZoneOptions(); options.ZonesEnabled = zones;
+        True(Run(options).Success); Equal(0, Changed("locations").Count); True(!Changed("zones").Contains(0));
+    }
+}
 static void RetainedScope()
 {
     SetSkippedScenario();
@@ -1093,7 +1504,7 @@ static void TreasureNeighbors()
             ZonesEnabled = false, VegetationEnabled = kind is "terrain" or "group",
             LocationsEnabled = kind is "exterior" or "interior", VegetationTerrainRadius = kind == "terrain" ? 128 : 0
         }).Success);
-        True(Fake.Calls.Any(IsSupplementChange), kind + " was blocked by a neighboring treasure sector");
+        Equal(kind != "exterior", Fake.Calls.Any(IsSupplementChange));
     }
 }
 

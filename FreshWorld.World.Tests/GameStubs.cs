@@ -58,6 +58,7 @@ public class ZDOMan
     private readonly List<ZDOID> m_destroySendList = new();
     public readonly List<ZDO> Destroyed = new();
     public Action<ZDO>? AfterDestroy;
+    public bool DeferDeletion;
     private static int SectorToIndex(Vector2s zone) =>
         zone.x < -256 || zone.x >= 256 || zone.y < -256 || zone.y >= 256 ? 0 : (zone.y + 256) * 512 + zone.x + 256;
     public void FindSectorObjects(Vector2s zone, SimulationDistance distance, List<ZDO> objects)
@@ -70,7 +71,13 @@ public class ZDOMan
     public static long GetSessionID() => 987;
     public void DestroyZDO(ZDO zdo)
     {
-        Destroyed.Add(zdo); m_destroySendList.Add(zdo.m_uid); zdo.Valid = false;
+        Destroyed.Add(zdo); m_destroySendList.Add(zdo.m_uid);
+        if (!DeferDeletion) { zdo.Valid = false; AfterDestroy?.Invoke(zdo); }
+    }
+    private void HandleDestroyedZDO(ZDOID id)
+    {
+        if (!m_objectsByID.TryGetValue(id, out var zdo) || !zdo.Valid) return;
+        zdo.Valid = false;
         AfterDestroy?.Invoke(zdo);
     }
     private void SendDestroyed() { }
@@ -317,6 +324,8 @@ namespace FreshWorld.Engine
         public bool ProtectEpicLoot { get; set; } = true;
         public bool ProtectEpicLootBounties { get; set; }
         public Func<Vector2s, bool>? CanResetTerrain { get; set; }
+        public Func<ZDO, bool>? CanDeleteObject { get; set; }
+        public IReadOnlyDictionary<Vector2s, HashSet<Vector2s>>? ZoneGroups { get; set; }
         public AlwaysProtectedObjects? AlwaysProtected { get; set; }
     }
     internal abstract class ZoneOperation

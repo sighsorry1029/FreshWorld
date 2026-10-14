@@ -19,13 +19,13 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact nineteen bindings in three sections and game-day defaults", () =>
+        Check("exact twenty bindings in three sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
-                "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.ResourceTerrainRadius",
+                "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius",
                 "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.PieceBlacklist" };
-            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the nineteen-key design");
+            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the twenty-key design");
             Assert(snapshot.Options.AutomaticResetPercent == 100, "default must preserve full reset scope");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
@@ -293,6 +293,21 @@ internal static class ConfigRegressions
             }
             finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
             file.Set("General", "DailyTimes", "25:00"); Invalid(() => cfg.Capture());
+        });
+        Check("location radius overrides validate and remain immutable across reloads", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file);
+            Assert(cfg.Capture().Options.LocationResetRadii["MWL_AshlandsFort4"] == 40, "Fort4 bound missing");
+            file.Set("Reset", "LocationResetRadii", "Test:dark=40.5,Other=512");
+            var snapshot = cfg.Capture().Options;
+            Assert(snapshot.LocationResetRadii["Test:dark"] == 40.5f && snapshot.LocationResetRadii.Count == 2, "variant parsing");
+            ((System.Collections.Generic.Dictionary<string, float>)snapshot.LocationResetRadii)["Test:dark"] = 1;
+            file.Set("Reset", "LocationResetRadii", "");
+            Assert(cfg.Capture().Options.LocationResetRadii.Count == 0 && snapshot.LocationResetRadii["Test:dark"] == 40.5f, "mutable snapshot");
+            foreach (var raw in new[] { "Test=0", "Test=-1", "Test=513", "Test=NaN", "Test=Infinity", "Test=40,Test=41", "*=40", "Test=40,", "Test:40", "Test=4=0" })
+            {
+                file.Set("Reset", "LocationResetRadii", raw); Invalid(() => cfg.Capture());
+            }
         });
         return count;
     }

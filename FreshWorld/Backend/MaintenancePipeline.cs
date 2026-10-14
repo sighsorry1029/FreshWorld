@@ -30,6 +30,13 @@ internal sealed class MaintenancePipeline
     private readonly JotunInvasionProtection _invasions = new();
     private readonly AlwaysProtectedObjects _alwaysProtected;
     private ITrackedOperation? _activeOperation;
+    private readonly Dictionary<Vector2s, LocationFootprint> _locationFootprints = new();
+    private readonly HashSet<Vector2s> _managedLocations = new();
+    private readonly HashSet<Vector2s> _reservedLocationZones = new();
+    private readonly HashSet<Vector2s> _overlappingLocations = new();
+    private readonly Dictionary<Vector2s, HashSet<Vector2s>> _locationZoneGroups = new();
+    private readonly Dictionary<Vector2s, Vector2s> _locationGroupAnchors = new();
+    private readonly HashSet<Vector2s> _completedZoneResets = new();
 
     public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn,
         int resetPercent = 100)
@@ -57,6 +64,7 @@ internal sealed class MaintenancePipeline
             yield return WaitUntilUnpaused();
             BaseProtection.Configure(_options.PieceBlacklist, _options.ProtectedObjects);
             yield return SaveWorld("before maintenance");
+            yield return PlanLocations();
 
             RequireWorld();
             _playerZones.Clear();
@@ -75,13 +83,20 @@ internal sealed class MaintenancePipeline
             if (_options.ZonesEnabled)
             {
                 var args = Parameters(_options.ZoneSafeZones);
+                args.ZoneGroups = _locationZoneGroups;
                 // Retain the initial protection set, and recheck the current set as the batch advances.
                 var candidates = _selectedZones == null ? generated : new HashSet<Vector2s>(generated);
                 if (_selectedZones != null) candidates.IntersectWith(_selectedZones);
-                yield return Execute("Zone reset", new TrackedResetZones(_log, args, candidates,
-                    zone => CanResetZone(zone, _options.ZoneSafeZones, protectedZones),
+                candidates.ExceptWith(_reservedLocationZones);
+                candidates.UnionWith(_locationZoneGroups.Keys.Where(anchor => _selectedZones == null || _selectedZones.Contains(anchor)));
+                var operation = new TrackedResetZones(_log, args, candidates,
+                    zone => _locationZoneGroups.TryGetValue(zone, out var group)
+                        ? CanResetZoneGroup(zone, group, protectedZones)
+                        : CanResetZone(zone, _options.ZoneSafeZones, protectedZones),
                     maxZonesPerFrame: _options.MaxZonesPerFrame,
-                    frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn));
+                    frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn);
+                yield return Execute("Zone reset", operation);
+                _completedZoneResets.UnionWith(operation.Result.ChangedZones);
             }
 
             if (_includeVegetation && _options.VegetationEnabled)
@@ -115,13 +130,16 @@ internal sealed class MaintenancePipeline
                         .Select(location => location.m_prefab.Name));
                 if (ids.Count > 0)
                 {
-                    var candidates = SupplementCandidates(protectedZones);
+                    var candidates = LocationCandidates(protectedZones);
                     var safeZones = _options.LocationSafeZones;
                     var args = Parameters(safeZones);
+                    args.LocationFootprints = _locationFootprints;
+                    args.CanResetTerrain = CanResetTerrain;
+                    args.CanDeleteObject = null;
                     if (safeZones == 0)
                         _warn("LocationSafeZones=0: configured locations may remove player pieces inside their reset area.");
                     yield return Execute("Location reset", new TrackedRegenerateLocations(_log, ids, args,
-                          candidates, zone => CanResetZone(zone, safeZones),
+                          candidates, CanResetLocation,
                           maxZonesPerFrame: _options.MaxZonesPerFrame,
                           frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn));
                 }
@@ -209,7 +227,222 @@ internal sealed class MaintenancePipeline
         if (_options.ZonesEnabled)
             current.IntersectWith(protectedZones);
         if (_selectedZones != null) current.IntersectWith(_selectedZones);
+        current.ExceptWith(_reservedLocationZones);
         return current;
+    }
+
+    private HashSet<Vector2s> LocationCandidates(HashSet<Vector2s> protectedZones)
+    {
+        var current = SupplementCandidates(protectedZones);
+        IEnumerable<Vector2s> managed = _options.ZonesEnabled ? _locationGroupAnchors.Keys : _managedLocations;
+        current.UnionWith(managed.Where(anchor => GameWorld.IsGenerated(anchor) &&
+            (_selectedZones == null || _selectedZones.Contains(LocationSelectionKey(anchor)))));
+        current.ExceptWith(_completedZoneResets);
+        return current;
+    }
+
+    private Vector2s LocationSelectionKey(Vector2s anchor) =>
+        _locationGroupAnchors.TryGetValue(anchor, out var representative) ? representative : anchor;
+
+    private IEnumerator PlanLocations()
+    {
+        var overrides = _options.LocationResetRadii;
+        var managedIds = new HashSet<string>(overrides.Keys, StringComparer.Ordinal);
+        if (_options.LocationsEnabled) managedIds.UnionWith(_options.LocationIds);
+        if (managedIds.Count == 0) yield break;
+
+        // Resolve every type represented in this world before comparing bounds. An unresolved
+        // custom location outside the apparent neighborhood can still extend into it. Request
+        // just its prefab, not every possible dungeon room, and release our reference each time.
+        var definitions = _zones.m_locationInstances.Values
+            .Where(location => location.m_location != null && NativePlacement.IsValidLocationPrefab(location.m_location))
+            .Select(location => location.m_location).Distinct().ToArray();
+        if (!definitions.Any(definition => managedIds.Contains(definition.m_prefab.Name))) yield break;
+        var resolved = new Dictionary<ZoneSystem.ZoneLocation, string>();
+        var planningTime = Stopwatch.StartNew();
+        var frameTime = Stopwatch.StartNew();
+        foreach (var definition in definitions)
+        {
+            if (frameTime.Elapsed.TotalMilliseconds >= _options.FrameBudgetMilliseconds)
+            {
+                yield return null;
+                frameTime.Restart();
+            }
+            var reference = definition.m_prefab;
+            var id = reference.Name;
+            var acquired = false;
+            var waiting = Stopwatch.StartNew();
+            try
+            {
+                if (reference.IsValid)
+                {
+                    // Native LoadAsync increments the reference before invoking callbacks,
+                    // including callbacks that can run synchronously and throw.
+                    acquired = true;
+                    reference.LoadAsync();
+                }
+                while (true)
+                {
+                    yield return WaitUntilUnpaused(waiting, planningTime);
+                    RequireWorld();
+                    if (planningTime.Elapsed.TotalSeconds >= 180)
+                        throw new TimeoutException("Location reservation planning did not finish within 180 seconds.");
+                    // Named mod references may instead provide their own native readiness hook.
+                    if (acquired ? reference.IsLoaded : NativePlacement.CanSpawnLocation(_zones, definition)) break;
+                    if (waiting.Elapsed.TotalSeconds >= 30)
+                        throw new TimeoutException("Location metadata did not load before planning: " + id);
+                    yield return null;
+                }
+                if (acquired) _ = reference.Asset; // Allow asset-resolution hooks to finalize metadata.
+                resolved[definition] = id;
+            }
+            finally
+            {
+                if (acquired) reference.Release();
+            }
+        }
+        RequireWorld();
+        foreach (var location in _zones.m_locationInstances.Values)
+        {
+            var definition = location.m_location;
+            if (definition == null || !NativePlacement.IsValidLocationPrefab(definition)) continue;
+            if (!resolved.TryGetValue(definition, out var id) || !string.Equals(id, definition.m_prefab.Name, StringComparison.Ordinal))
+                throw new InvalidOperationException("Location definitions changed during planning; retry maintenance: " + definition.m_prefab.Name);
+        }
+        ReserveLocationFootprints(managedIds, overrides);
+        if (!_options.ZonesEnabled && _overlappingLocations.Count > 0)
+        {
+            var examples = _overlappingLocations.Take(8).Select(anchor =>
+                _zones.m_locationInstances[anchor].m_location.m_prefab.Name + " at " + anchor);
+            _warn($"Location reset: {_overlappingLocations.Count} overlapping location footprints preserved ({string.Join(", ", examples)}). Their zones are reserved; review location placement and LocationResetRadii before retrying.");
+        }
+        _log($"Location plan: {_managedLocations.Count} managed locations; {_reservedLocationZones.Count} sectors excluded from individual resets; {_locationZoneGroups.Count} zone groups.");
+    }
+
+    private void ReserveLocationFootprints(HashSet<string> managedIds, IReadOnlyDictionary<string, float> overrides)
+    {
+        _locationFootprints.Clear();
+        _managedLocations.Clear();
+        _reservedLocationZones.Clear();
+        _overlappingLocations.Clear();
+        _locationZoneGroups.Clear();
+        _locationGroupAnchors.Clear();
+        foreach (var pair in _zones.m_locationInstances)
+        {
+            var location = pair.Value;
+            if (location.m_location == null || !NativePlacement.IsValidLocationPrefab(location.m_location)) continue;
+            var id = location.m_location.m_prefab.Name;
+            overrides.TryGetValue(id, out var minimumRadius);
+            var footprint = new LocationFootprint(pair.Key, location, minimumRadius);
+            _locationFootprints.Add(pair.Key, footprint);
+            if (overrides.ContainsKey(id) || (managedIds.Contains(id) && footprint.Zones.Count > 1))
+                _managedLocations.Add(pair.Key);
+        }
+        if (_managedLocations.Count == 0) return;
+        var bySector = new Dictionary<Vector2s, List<LocationFootprint>>();
+        foreach (var footprint in _locationFootprints.Values)
+            foreach (var sector in footprint.Zones)
+            {
+                if (!bySector.TryGetValue(sector, out var entries)) bySector.Add(sector, entries = new());
+                entries.Add(footprint);
+            }
+        var reservedAnchors = new HashSet<Vector2s>();
+        foreach (var start in _managedLocations.OrderBy(zone => zone.x).ThenBy(zone => zone.y))
+        {
+            if (!reservedAnchors.Add(start)) continue;
+            var pending = new Queue<Vector2s>();
+            pending.Enqueue(start);
+            var group = new HashSet<Vector2s>();
+            var anchors = new HashSet<Vector2s>();
+            while (pending.Count > 0)
+            {
+                var anchor = pending.Dequeue();
+                anchors.Add(anchor);
+                var footprint = _locationFootprints[anchor];
+                group.UnionWith(footprint.Zones);
+                foreach (var sector in footprint.Zones)
+                    foreach (var other in bySector[sector])
+                    {
+                        if (other.Anchor == anchor) continue;
+                        // Whole-sector deletion includes every connected location, even if
+                        // their circles do not overlap. Radius-only restoration still skips overlap.
+                        if (reservedAnchors.Add(other.Anchor)) pending.Enqueue(other.Anchor);
+                        if (!footprint.Overlaps(other)) continue;
+                        _overlappingLocations.Add(anchor);
+                        _overlappingLocations.Add(other.Anchor);
+                    }
+            }
+            _reservedLocationZones.UnionWith(group);
+            if (!_options.ZonesEnabled) continue;
+            // A generated single-sector neighbor may still qualify for radius restoration
+            // when the managed owner is ungenerated. Both stages share this selection key.
+            var eligibleAnchors = anchors.Where(anchor => GameWorld.IsGenerated(anchor) && _zones.m_locationInstances[anchor].m_placed)
+                .OrderBy(anchor => anchor.x).ThenBy(anchor => anchor.y).ToArray();
+            if (eligibleAnchors.Length == 0) continue;
+            var representative = eligibleAnchors[0];
+            _locationZoneGroups.Add(representative, group);
+            foreach (var anchor in anchors) _locationGroupAnchors.Add(anchor, representative);
+        }
+    }
+
+    private bool CanResetZoneGroup(Vector2s anchor, HashSet<Vector2s> group, HashSet<Vector2s> initialProtection)
+    {
+        RequireWorld();
+        if (!GameWorld.IsGenerated(anchor) || !_zones.m_locationInstances.TryGetValue(anchor, out var owner) || !owner.m_placed)
+            return false;
+        if (!group.Any(sector => _managedLocations.Contains(sector) && GameWorld.IsGenerated(sector) &&
+            _zones.m_locationInstances.TryGetValue(sector, out var managed) && managed.m_placed)) return false;
+        if (!HasUnchangedGroupLocations(group)) return false;
+        foreach (var sector in group)
+        {
+            // A pending proxy can finish after deletion. Do not tear down a partially loaded root.
+            if (GameWorld.HasPendingZoneLoad(sector) || (GameWorld.TryGetRoot(sector, out _) && !_zones.IsZoneLoaded(sector))) return false;
+            if (!CanResetZone(sector, _options.ZoneSafeZones, initialProtection)) return false;
+        }
+        return true;
+    }
+
+    private bool HasUnchangedGroupLocations(HashSet<Vector2s> group)
+    {
+        foreach (var sector in group)
+        {
+            if (_locationFootprints.TryGetValue(sector, out var footprint))
+            {
+                if (!_zones.m_locationInstances.TryGetValue(sector, out var location) || !footprint.Matches(location)) return false;
+            }
+            else if (_zones.m_locationInstances.ContainsKey(sector)) return false;
+        }
+        return true;
+    }
+
+    private bool CanResetLocation(Vector2s anchor)
+    {
+        RequireWorld();
+        if (_completedZoneResets.Contains(anchor)) return false;
+        if (_locationGroupAnchors.TryGetValue(anchor, out var representative) &&
+            !HasUnchangedGroupLocations(_locationZoneGroups[representative])) return false;
+        if (_overlappingLocations.Contains(anchor) ||
+            !_zones.m_locationInstances.TryGetValue(anchor, out var location) || !location.m_placed) return false;
+        if (!_locationFootprints.TryGetValue(anchor, out var footprint))
+        {
+            // Full runs retain live single-zone supplements. A newly introduced multi-zone
+            // location must wait for the next reservation plan, never expand this run's scope.
+            if (_options.LocationResetRadii.ContainsKey(location.m_location.m_prefab.Name)) return false;
+            footprint = new LocationFootprint(anchor, location);
+            if (footprint.Zones.Count != 1 || _reservedLocationZones.Contains(anchor)) return false;
+            _locationFootprints.Add(anchor, footprint);
+        }
+        if (!footprint.Matches(location) || footprint.Zones.Overlaps(_completedZoneResets))
+            return false;
+        foreach (var sector in footprint.Zones)
+        {
+            // The anchor's native loading is awaited by the operation. Neighboring proxy
+            // loads must finish before a radius reset can safely delete their objects.
+            if (sector != anchor && (GameWorld.HasPendingZoneLoad(sector) ||
+                (GameWorld.TryGetRoot(sector, out _) && !_zones.IsZoneLoaded(sector)))) return false;
+            if (!CanResetZone(sector, _options.LocationSafeZones)) return false;
+        }
+        return true;
     }
 
     private HashSet<Vector2s> SelectResetZones(HashSet<Vector2s> generated, HashSet<Vector2s> protectedZones)
@@ -217,8 +450,12 @@ internal sealed class MaintenancePipeline
         var eligible = new HashSet<Vector2s>();
         // Separate stage passes avoid alternating the base-protection cache's SafeZones key per zone.
         if (_options.ZonesEnabled)
+        {
             foreach (var zone in generated)
-                if (CanResetZone(zone, _options.ZoneSafeZones, protectedZones)) eligible.Add(zone);
+                if (!_reservedLocationZones.Contains(zone) && CanResetZone(zone, _options.ZoneSafeZones, protectedZones)) eligible.Add(zone);
+            foreach (var pair in _locationZoneGroups)
+                if (CanResetZoneGroup(pair.Key, pair.Value, protectedZones)) eligible.Add(pair.Key);
+        }
 
         var supplements = _options.ZonesEnabled ? protectedZones : generated;
         if (_includeVegetation && _options.VegetationEnabled)
@@ -228,7 +465,7 @@ internal sealed class MaintenancePipeline
             // Depleted resources are candidates too: presence of a current resource ZDO is not required.
             if (_zones.m_vegetation.Any(vegetation => vegetation.m_prefab != null && resourceIds.Contains(vegetation.m_prefab.name)))
                 foreach (var zone in supplements)
-                    if (CanResetZone(zone, _options.VegetationSafeZones)) eligible.Add(zone);
+                    if (!_reservedLocationZones.Contains(zone) && CanResetZone(zone, _options.VegetationSafeZones)) eligible.Add(zone);
         }
         if (_options.LocationsEnabled)
         {
@@ -236,11 +473,14 @@ internal sealed class MaintenancePipeline
             locationIds.IntersectWith(_zones.m_locations
                 .Where(location => location != null && NativePlacement.IsValidLocationPrefab(location))
                 .Select(location => location.m_prefab.Name));
-            foreach (var zone in supplements)
-                if (_zones.m_locationInstances.TryGetValue(zone, out var location) && location.m_placed &&
+            var locationCandidates = new HashSet<Vector2s>(supplements);
+            locationCandidates.ExceptWith(_reservedLocationZones);
+            locationCandidates.UnionWith(_options.ZonesEnabled ? (IEnumerable<Vector2s>)_locationGroupAnchors.Keys : _managedLocations);
+            foreach (var zone in locationCandidates)
+                if (generated.Contains(zone) && _zones.m_locationInstances.TryGetValue(zone, out var location) && location.m_placed &&
                     NativePlacement.IsValidLocationPrefab(location.m_location) &&
-                    locationIds.Contains(location.m_location.m_prefab.Name) && CanResetZone(zone, _options.LocationSafeZones))
-                    eligible.Add(zone);
+                    locationIds.Contains(location.m_location.m_prefab.Name) && CanResetLocation(zone))
+                    eligible.Add(LocationSelectionKey(zone));
         }
 
         var candidates = eligible.ToArray();
@@ -253,7 +493,7 @@ internal sealed class MaintenancePipeline
             (candidates[i], candidates[next]) = (candidates[next], candidates[i]);
             selected.Add(candidates[i]);
         }
-        _log($"Automatic reset selection: {selected.Count}/{candidates.Length} candidate zones ({_resetPercent}%). Later protection skips are not replaced.");
+        _log($"Automatic reset selection: {selected.Count}/{candidates.Length} candidates ({_resetPercent}%; each connected zone group counts once). Later protection skips are not replaced.");
         return selected;
     }
 
@@ -294,7 +534,8 @@ internal sealed class MaintenancePipeline
             SafeZones = safeZones,
             ProtectEpicLoot = _options.EpicLootProtectionEnabled,
             ProtectEpicLootBounties = _options.EpicLootBountyProtectionEnabled,
-            CanResetTerrain = CanResetTerrain,
+            CanResetTerrain = zone => !_reservedLocationZones.Contains(zone) && CanResetTerrain(zone),
+            CanDeleteObject = zdo => !_reservedLocationZones.Contains(ZoneSystem.GetZone(zdo.GetPosition())),
             AlwaysProtected = _alwaysProtected
         };
 
@@ -371,15 +612,17 @@ internal sealed class MaintenancePipeline
             throw new TimeoutException($"World save did not finish within {_options.SaveTimeoutSeconds}s.");
     }
 
-    private IEnumerator WaitUntilUnpaused(Stopwatch? timer = null)
+    private IEnumerator WaitUntilUnpaused(Stopwatch? timer = null, Stopwatch? additionalTimer = null)
     {
         while (Time.timeScale <= 0f)
         {
             RequireWorld();
             timer?.Stop();
+            additionalTimer?.Stop();
             yield return null;
         }
         timer?.Start();
+        additionalTimer?.Start();
     }
 
     private bool IsSameWorld() => ReferenceEquals(ZNet.instance, _network) &&

@@ -21,6 +21,7 @@ Each run follows this sequence:
 
 ~~~text
 Save and wait for completion
+-> Resolve location bounds and plan connected zone groups
 -> Reset zones
 -> Restore resources with surrounding terrain
 -> Restore resources without terrain changes
@@ -30,7 +31,9 @@ Save and wait for completion
 
 Disabled stages are skipped. A stage must finish before the next one starts, and a failure stops the remaining stages. When both resource groups have targets and the terrain radius is positive, FreshWorld yields two frames between them so the game can refresh terrain and collision data. There is no fixed delay in seconds or minutes between stages.
 
-If a zone or location asset is still not ready after 30 seconds, FreshWorld logs its coordinates and loading state, skips that zone, and continues the run. A skipped zone is eligible again on the next run. FreshWorld releases a zone it opened only after loading finishes; a player who enters it keeps the zone loaded. Stage logs include the number of timed-out zones and time spent waiting for loading.
+When a managed location exists, planning resolves every distinct location prefab type represented in the world before any reset. This includes unselected types because an unloaded custom prefab can report a smaller temporary radius. Prefabs are requested asynchronously and each temporary reference is released; this preflight does not request every possible dungeon room. Worlds with many location mods may take longer to plan. If their metadata does not load within 30 seconds, or a managed definition is replaced during planning, the run stops before making world changes. Planning also stops if planning does not finish within 180 unpaused seconds.
+
+During restoration, if a zone or location asset is still not ready after 30 seconds, FreshWorld logs its coordinates and loading state, skips that zone, and continues the run. A skipped zone is eligible again on the next run. FreshWorld releases a zone it opened only after loading finishes; a player who enters it keeps the zone loaded. Stage logs include the number of timed-out zones and time spent waiting for loading.
 
 The initial save is mandatory. A save failure or the 180-second save timeout prevents restoration from starting. FreshWorld does not request another save at the end: normal autosaves and a normal shutdown save persist the result. A crash before the next save can lose restoration changes even if the separate execution record says the run completed. FreshWorld does not create a separate backup or automatically restore one.
 
@@ -68,7 +71,7 @@ Every run includes all enabled restoration stages. There is no separate daily sl
 
 Below 100, FreshWorld takes one candidate snapshot after the initial save, applies the enabled stages and protection rules, then chooses the rounded percentage at random without duplicates. For example, 20% of 600 candidates selects 120 zones; 50% of 5 selects 3. Small candidate sets can round to zero. All reset stages share this selection and retain their own scope and protection rules. Zones skipped by later protection checks are not replaced, so fewer zones may actually reset. New zones generated during a partial run wait for a later run. Terrain radii and border repairs can still reach neighboring unselected zones.
 
-**Each run draws again without remembering earlier selections.** At 20%, even 5 or 10 runs can leave some zones untouched and select others repeatedly. This is not a rotation or a guarantee that every zone will eventually reset. A selected zone that is reset by the zone stage leaves the candidate pool until the game generates it again.
+**Each run draws again without remembering earlier selections.** At 20%, even 5 or 10 runs can leave some zones untouched and select others repeatedly. This is not a rotation or a guarantee that every zone will eventually reset. A selected zone that is reset by the zone stage leaves the candidate pool until the game generates it again. A connected location zone group counts as one candidate; radius-only location restoration counts each managed anchor once, as described below.
 
 ## Reset: restoration targets
 
@@ -81,6 +84,7 @@ ResourceTerrainRadius = 20
 ResourceIds =
 Locations = false
 LocationIds = Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress,TheHole01,MorkBorg
+LocationResetRadii = MWL_AshlandsFort4=40
 ~~~
 
 Zones, Resources, and Locations switch their respective stages on or off without erasing the ID lists. The extra location stage is disabled by default; set Locations=true to enable it. Existing cfg values are preserved.
@@ -104,19 +108,37 @@ The zone stage considers **all previously generated zones**, not just zones curr
 
 Percentage selection uses only zones still marked as generated. Never-generated zones and already-reset zones that have not generated again are excluded from both the candidate count and the draw. A zone does not need to be loaded at the time of the run to qualify.
 
-With Zones=true, resource and location supplements use only zones protected by base markers in the initial plan that are still generated immediately before the supplemental operation. Zones already reset are not included again, and other failed or skipped zones are not added as fallback targets. A zone-stage failure stops the supplements.
+With Zones=true, resource and ordinary single-zone location supplements use only zones protected by base markers in the initial plan that are still generated immediately before the supplemental operation. Other skipped zones do not expand this ordinary scope. Managed location groups use the separate rules below: a skipped zone group can still receive selected location restoration. A zone-stage failure stops all supplements. Successfully reset zones are excluded from location restoration for the rest of the run, even if they generate again before that stage.
 
 With Zones=false, supplements consider all currently generated zones, then apply their own ID and protection filters. This scope is fixed and has no cfg selector.
 
 All stages also exclude player-protected target zones using the run's player protection described below. This exclusion does not expand the supplemental candidate set.
 
-Resources=false and Locations=false disable only their supplemental stages. They do not exclude resources or locations from the earlier zone reset. Likewise, the resource and location ID lists do not restrict the zone stage's targets.
+Resources=false and Locations=false disable their supplemental stages. Ordinary resources and unreserved locations can still regenerate through zone reset. With Zones=true, explicit LocationResetRadii entries still use grouped zone reset even with Locations=false.
+
+### Locations spanning multiple zones
+
+FreshWorld plans the full exterior radius of locations listed in LocationResetRadii, and selected LocationIds that cross zone boundaries when Locations=true. The radius covers object origins, not automatically detected mesh bounds or ownership tags. Neighboring locations that share an affected sector are included transitively, so clearing a whole sector cannot leave another location partly erased. Prefab bounds are resolved before any reset.
+
+**With Zones=true**, the central and intersecting sectors form one zone-reset group. Every member must pass ZoneSafeZones and the independent player, AlwaysProtectedPrefabs, Jotun and enabled EpicLoot guards. If any member is protected, the entire group is skipped by the zone stage. Selected locations in that group can still proceed through the later location stage using LocationSafeZones. If every member passes, FreshWorld clears all objects across all group sectors, including spillover objects in never-generated neighbors, before marking the group as ungenerated. The game recreates vegetation, terrain and locations when those zones load again. Group reset clears whole sectors, not just the location radius, and completed groups receive no additional location reset in the same run.
+
+Groups are excluded from individual zone/resource resets, recursive deletion from outside, and terrain border repairs from outside, whether selected, skipped or completed. A group requires at least one managed, placed location with a generated anchor. If that anchor has already been reset and has not generated again, it does not trigger another grouped reset. A pending load, partially loading root, or changed location identity, position or enlarged radius skips the entire group. No group member is forcibly loaded just to clear neighboring objects.
+
+**Location restoration** requires Locations=true and a matching LocationIds entry. It applies with Zones=false and to selected locations in skipped zone groups with Zones=true. FreshWorld clears surface objects across the full exterior radius and places each location once. Every footprint sector must pass LocationSafeZones and the independent guards, including ungenerated sectors. A single protected sector skips the whole location. LocationSafeZones=0 permits deleting player buildings inside the radius even if ZoneSafeZones blocked the zone stage. Elevated dungeon objects are cleared only in the location's own sector; neighboring elevated dungeons are preserved. Terrain edits stay within approved footprint sectors. Overlapping location radii are preserved because radius-only clearing cannot reliably assign shared objects to one location. Changed location definitions and unfinished neighboring loads also prevent radius restoration.
+
+**LocationResetRadii** uses comma-separated ID=radius entries; radii must be greater than 0 and no more than 512 metres. The larger of the configured minimum and resolved native radius is used. Exact :variant IDs are supported. The default is MWL_AshlandsFort4=40, based on the supplied MWL 5.2.1 location. No MWL dependency is added.
+
+For Fort4, keep LocationResetRadii = MWL_AshlandsFort4=40. With Zones=true, it uses grouped zone reset even when Locations=false or absent from LocationIds. To restore it by radius when the zone group is protected, enable Locations and append MWL_AshlandsFort4 to your existing LocationIds. LocationSafeZones=0 bypasses ordinary base protection for that location and can remove buildings inside its radius; independent protections still apply. The same location settings enable radius restoration with Zones=false. Its area stays reserved from separate resource resets. Empty removes explicit entries; selected multi-zone locations still use their native radii when Locations=true. Unknown IDs have no effect. ServerSync and cfg hot reload apply changes to the next run.
+
+AutomaticResetPercent selects a connected zone group once, alongside ordinary zone candidates. A group qualifies if its zone reset or a selected location restoration is eligible. Its member sectors and locations share the same draw; a skipped zone group does not get another chance in the location stage. With Zones=false, each eligible managed location counts once at its generated anchor. Actual affected sector percentages can differ from the setting because one candidate can cover several sectors. The manual command still ignores this percentage. New multi-zone instances introduced after planning wait for a later run.
+
+Group deletion runs without yielding between members and finishes queued host-side deletions before allowing regeneration. Client deletion notifications retain their normal bounded sending. Large connected groups can take longer than the per-frame budget; logs report their sector counts. This is not a rollback: an exception after deletion starts leaves completed changes in place and stops later stages. A correct radius can cover old stacked pieces, but pieces outside the planned group or radius are not repaired automatically. Unselected locations without an explicit radius entry retain ordinary zone-reset behavior.
 
 ## Protection: players, base markers, and stage boundaries
 
 **Each player's zone and its eight neighbors (3 x 3 zones) are always protected, including when SafeZones=0.** After the initial save finishes, FreshWorld records the zones of active players known to the hosting server. It adds their current zones again immediately before each target attempt or retry. Each recorded zone protects its surrounding 3 x 3 area from direct zone resets, resource-and-terrain resets, resource-only resets, and location resets for the remainder of that run, even if the player leaves. Moving players can therefore protect additional areas during the run. The next run starts with a fresh set. This fixed protection works in single-player, local-host, and dedicated-server worlds and adds no cfg option or location-visit tracking.
 
-This protection skips direct targets; it does not clip terrain edits to the protected area. A resource or location terrain radius from a target outside the protected area can still reach protected terrain, and a zone reset outside it can still repair shared terrain borders. SafeZones marker protection has the same boundary limitation.
+This protection skips direct targets; it does not clip terrain edits to the protected area. A resource terrain radius from outside the protected area can still reach protected terrain, and an ordinary zone reset outside it can still repair shared terrain borders. Location restoration instead checks every footprint sector and confines its terrain changes to those approved sectors. SafeZones marker protection has the same boundary limitation.
 
 ~~~ini
 [Protection]
@@ -143,7 +165,7 @@ ZoneSafeZones=0 is invalid, including in an existing cfg. Set it to 1 or 2 expli
 
 ResourceSafeZones=0 allows the selected resource supplements in retained base zones. The resource stage does not directly select arbitrary player-built pieces for deletion, but terrain restoration can change the ground supporting them.
 
-If you choose ZoneSafeZones=1 and LocationSafeZones=1, zero location supplements can be normal: the zone stage already covers unprotected locations, and the remaining base zones are also protected from location restoration. FreshWorld does not automatically lower protection to increase the result count.
+If you choose ZoneSafeZones=1 and LocationSafeZones=1, zero single-zone location supplements can be normal: the zone stage already covers unprotected locations, and the remaining base zones are also protected from location restoration. FreshWorld does not automatically lower protection to increase the result count.
 
 **Player-built Pieces are detected automatically as base markers.** Walls, floors, ships, traps, sap extractors, and modded building pieces do not need individual list entries when their registered prefab has a Piece component and their saved creator is nonzero. This also includes player-placed plants that use Piece. Natural ruins and spawned objects without creator metadata are not automatic markers. Isolated builds can therefore protect additional zones.
 
@@ -189,7 +211,7 @@ The report matches ice by position, not event ownership. Overlapping event areas
 
 With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, including when ResourceSafeZones or LocationSafeZones is 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.
 
-Neighboring zones remain eligible for restoration, including resource and location placement, terrain edits, and terrain-border repairs that cross into the treasure zone. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty protection has its own setting below. Existing player, base, and tombstone rules remain separate.
+Neighboring zones remain eligible for restoration, including resource placement, terrain edits, and terrain-border repairs that cross into the treasure zone. A location whose footprint intersects a protected treasure sector is skipped as a whole. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty protection has its own setting below. Existing player, base, and tombstone rules remain separate.
 
 FreshWorld takes the initial treasure snapshot after the pre-maintenance save and rechecks saved objects in each target zone before an attempt or loading retry. Once observed, a protected zone remains protected for that run. A found or removed chest no longer triggers this treasure rule on the next run, although ordinary base-marker protection may still apply. A pending controller must contain treasure spawn data, must not be marked as a bounty, and must not have finished placement.
 

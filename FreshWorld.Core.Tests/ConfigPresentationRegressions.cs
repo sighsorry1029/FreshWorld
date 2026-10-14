@@ -38,7 +38,7 @@ internal static class ConfigPresentationRegressions
         var expected = new[]
         {
             ("General", new[] { "Enabled", "AutomaticResetPercent", "Mode", "GameDayInterval", "DailyTimes" }, 300),
-            ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds" }, 200),
+            ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds", "LocationResetRadii" }, 200),
             ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "AlwaysProtectedPrefabs", "EpicLootProtection", "EpicLootBountyProtection", "PieceBlacklist" }, 100)
         };
         foreach (var (section, keys, categoryOrder) in expected)
@@ -48,7 +48,7 @@ internal static class ConfigPresentationRegressions
             Require(entries.All(entry => Metadata(entry).CategoryOrder == categoryOrder && entry.Description.AcceptableValues == null), section + " metadata");
         }
         Require(Metadata(file.Get("General", "Enabled")).DispName == "Automatic Runs", "Display name must not rename the cfg key.");
-        Require(file.BoundKeys.Count() == 19, "Unexpected new settings.");
+        Require(file.BoundKeys.Count() == 20, "Unexpected new settings.");
     }
 
     private static void DrawWithoutEdits()

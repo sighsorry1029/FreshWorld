@@ -51,7 +51,8 @@ internal static class NativeSaveTests
             ("neighboring native entries and their object snapshots are preserved", NeighborPreserved),
             ("failed-save retries retain dirty state and live chunk metadata", Retry),
             ("world edge buckets use native sector mapping", WorldEdge),
-            ("absent hosts and remote clients cannot modify the save list", HostOnly)
+            ("absent hosts and remote clients cannot modify the save list", HostOnly),
+            ("original private deletion access supports an absent ID without consuming queued notifications", NativeDeletionAccess)
         });
         var failures = 0;
         foreach (var (name, test) in tests)
@@ -193,6 +194,21 @@ internal static class NativeSaveTests
         f.Patch(output); Equal(0, output.Count);
         typeof(ZNet).GetField("m_instance", StaticFields)!.SetValue(null, null);
         f.Patch(output); Equal(0, output.Count);
+    }
+
+    private static void NativeDeletionAccess()
+    {
+        var f = new Fixture();
+        typeof(ZDOMan).GetField("m_objectsByID", InstanceFields)!.SetValue(f.Manager, new Dictionary<ZDOID, ZDO>());
+        var pending = new List<ZDOID> { ZDOID.None };
+        var field = typeof(ZDOMan).GetField("m_destroySendList", InstanceFields)!;
+        Require(field.IsPrivate, "Verify the original queue is private.");
+        field.SetValue(f.Manager, pending);
+        var method = typeof(ZDOMan).GetMethod("HandleDestroyedZDO", InstanceFields)!;
+        Require(method.IsPrivate, "Verify the original handler is private.");
+        var handle = HarmonyLib.AccessTools.MethodDelegate<Action<ZDOMan, ZDOID>>(method);
+        handle(f.Manager, ZDOID.None); handle(f.Manager, ZDOID.None);
+        Equal(1, pending.Count);
     }
 
     private sealed class Fixture

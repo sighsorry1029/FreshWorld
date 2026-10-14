@@ -42,6 +42,8 @@ namespace FreshWorld.Configuration
         public bool LocationsEnabled { get; }
         private readonly string[] locationIds;
         public string[] LocationIds => (string[])locationIds.Clone();
+        private readonly Dictionary<string, float> locationResetRadii;
+        public IReadOnlyDictionary<string, float> LocationResetRadii => new Dictionary<string, float>(locationResetRadii, StringComparer.Ordinal);
         public int LocationSafeZones { get; }
         public bool EpicLootProtectionEnabled { get; }
         public bool EpicLootBountyProtectionEnabled { get; }
@@ -54,9 +56,10 @@ namespace FreshWorld.Configuration
             bool vegetationEnabled, string[] vegetationIds, string[] terrainVegetationIds, float vegetationTerrainRadius,
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
             bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled, string[] alwaysProtectedPrefabs,
-            int automaticResetPercent)
+            int automaticResetPercent, IReadOnlyDictionary<string, float> locationResetRadii)
         {
             AutomaticResetPercent = automaticResetPercent;
+            this.locationResetRadii = locationResetRadii.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
             ZonesEnabled = zonesEnabled; ZoneSafeZones = zoneSafeZones;
             this.pieceBlacklist = (string[])pieceBlacklist.Clone();
             this.protectedObjects = (string[])protectedObjects.Clone();
@@ -75,12 +78,13 @@ namespace FreshWorld.Configuration
     {
         public const string DefaultPieceBlacklist = "fire_pit";
         public const string DefaultAlwaysProtectedPrefabs = "Player_tombstone";
+        public const string DefaultLocationResetRadii = "MWL_AshlandsFort4=40";
         public const string DefaultLocations = "Hildir_crypt,Hildir_cave,Hildir_plainsfortress,SunkenCrypt4,Crypt2,Crypt3,Crypt4,MountainCave02,Mistlands_Giant1,Mistlands_Excavation1,Mistlands_DvergrTownEntrance1,Mistlands_DvergrTownEntrance2,Mistlands_DvergrBossEntrance1,CharredFortress,TheHole01,MorkBorg";
         private static readonly Regex ExactId = new Regex(@"^[A-Za-z0-9_]+(?::[A-Za-z0-9_]+)*$", RegexOptions.CultureInvariant);
         // Preserve raw scalar text: BepInEx's bool/enum deserializers can silently retain/default invalid input.
         // Capture parses every scalar so malformed config disables new work instead of changing its policy.
         private readonly ConfigEntry<string> enabled, zonesEnabled, vegetationEnabled, locationsEnabled;
-        private readonly ConfigEntry<string> dailyTimes, gameDayInterval, automaticResetPercent, vegetationIds, terrainVegetationIds, locationIds;
+        private readonly ConfigEntry<string> dailyTimes, gameDayInterval, automaticResetPercent, vegetationIds, terrainVegetationIds, locationIds, locationResetRadii;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
         private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
@@ -94,7 +98,7 @@ namespace FreshWorld.Configuration
                 "Enable automatic runs. Set false for manual commands only; accepted manual requests and active runs continue. Re-enabling starts a new schedule without catching up.",
                 400, ConfigPresentation.DrawToggle, "Automatic Runs");
             automaticResetPercent = Bind("General", "AutomaticResetPercent", "100",
-                "Percentage of eligible generated zones randomly selected for each automatic run. Integer from 0 to 100; default 100 processes all candidates, while 0 selects none. Never-generated zones and reset zones not yet generated again are excluded from the count and draw. The count is rounded to the nearest whole zone, with halves rounded up. Each run draws again without tracking past selections: at 20%, even 5 or 10 runs can leave some zones untouched and select others repeatedly. All reset stages share one selection; later protection skips are not replaced. Manual freshworld commands always process all eligible zones. Terrain and border edits can still cross zone boundaries.",
+                "Percentage of eligible generated zones randomly selected for each automatic run. Integer from 0 to 100; default 100 processes all candidates, while 0 selects none. Never-generated zones and reset zones not yet generated again are excluded from the count and draw. The count is rounded to the nearest whole zone, with halves rounded up. Each run draws again without tracking past selections: at 20%, even 5 or 10 runs can leave some zones untouched and select others repeatedly. All reset stages share one selection; later protection skips are not replaced. A connected location zone group counts as one candidate when Zones=true; with Zones=false, each reserved location counts once at its generated anchor. Group members are never drawn separately, so the affected sector percentage can differ from this setting. Manual freshworld commands always process all eligible zones. Terrain and border edits can still cross zone boundaries.",
                 350, ConfigPresentation.DrawPercentage);
             mode = Bind("General", "Mode", new ConfigChoice<ScheduleMode>("GameDays"),
                 "GameDays uses elapsed game days; DailyTimes uses host-local clock times. Used only when Enabled=true.",
@@ -107,7 +111,7 @@ namespace FreshWorld.Configuration
                 100);
 
             zonesEnabled = Bind("Reset", "Zones", "true",
-                "Reset generated zones first, including their resources and locations. The resource and location switches below control only the extra restoration stages.",
+                "Reset generated zones first, including their resources and locations. Managed multi-zone locations reset with their neighboring sectors as one group using ZoneSafeZones; one protected sector skips that zone group. Selected locations in skipped groups can still be restored using LocationSafeZones. The resource and location switches below control only the extra restoration stages.",
                 700, ConfigPresentation.DrawToggle);
             vegetationEnabled = Bind("Reset", "Resources", "true",
                 "Restore both resource lists in zones retained by base protection. With Zones=false, both lists use all generated zones as candidates. If both lists are empty, this stage is skipped.",
@@ -122,11 +126,14 @@ namespace FreshWorld.Configuration
                 "Comma-separated exact prefab IDs restored without terrain changes, such as Beech1. Empty skips this group; IDs also in TerrainResourceIds are restored there once. Use unique IDs without wildcards or command arguments.",
                 300);
             locationsEnabled = Bind("Reset", "Locations", "false",
-                "Restore selected locations after resources, using the same candidate zone rules. This switch does not exclude locations from the zone reset.",
+                "Restore LocationIds after resources, using each location's full exterior radius. Every intersecting sector must pass LocationSafeZones. With Zones=true, selected locations in skipped zone groups are checked independently; locations already reset by the zone stage are excluded. Other single-zone locations keep the usual supplemental scope.",
                 200, ConfigPresentation.DrawToggle);
             locationIds = Bind("Reset", "LocationIds", DefaultLocations,
                 "Comma-separated exact location IDs; :variant suffixes are supported. Unknown IDs are skipped with a warning; if none match, this stage is skipped. Use Locations=false to disable the stage instead of an empty list.",
                 100);
+            locationResetRadii = Bind("Reset", "LocationResetRadii", DefaultLocationResetRadii,
+                "Comma-separated exact location IDs with minimum exterior radii in metres, such as MWL_AshlandsFort4=40. Each radius must be greater than 0 and at most 512. The larger of this value and the resolved native radius is used. With Zones=true, these areas reset as whole zone groups if every member passes ZoneSafeZones, even when Locations=false or the ID is absent from LocationIds. With Zones=false, they remain reserved from resource resets; enable Locations and add the ID to LocationIds for radius restoration. Empty removes explicit entries. Unknown IDs have no effect. Shared sectors connect zone groups; overlapping radii are skipped only in radius restoration. This is a cleanup radius, not automatic mesh-bound detection; use a radius covering every spawned structure origin.",
+                50);
 
             zoneSafeZones = Bind("Protection", "ZoneSafeZones", new ConfigChoice<SafeZoneRange>("1"),
                 "Zone reset marker protection: 1 = Marker zone, 2 = 3x3 zones. Only 1 or 2 is allowed; 0 is rejected without conversion. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain and border edits from outside this area can still affect it.",
@@ -135,7 +142,7 @@ namespace FreshWorld.Configuration
                 "Marker protection for both resource groups: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 permits resource and terrain restoration inside base zones. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 300, choices: ConfigPresentation.SafeZoneChoices);
             locationSafeZones = Bind("Protection", "LocationSafeZones", new ConfigChoice<SafeZoneRange>("0"),
-                "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 bypasses base protection and can delete player pieces inside locations. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
+                "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. Every sector intersecting the location radius is checked; one protected sector skips the whole location. A value of 0 bypasses base protection and can delete player pieces inside locations, even when ZoneSafeZones blocked the earlier zone reset. Requires Locations=true and a matching LocationIds entry. Player zones and their eight neighbors, AlwaysProtectedPrefabs, Jotun objectives and enabled EpicLoot protections still apply.",
                 200, choices: ConfigPresentation.SafeZoneChoices);
             alwaysProtectedPrefabs = Bind("Protection", "AlwaysProtectedPrefabs", DefaultAlwaysProtectedPrefabs,
                 "Comma-separated exact prefab IDs that FreshWorld must preserve, regardless of SafeZones or PieceBlacklist. Each object's own zone is excluded from all direct reset stages, terrain restoration, and border repairs. No Piece component or creator is required. Objects are also protected from direct and recursive deletion. Observed zones stay protected until the run ends. Empty disables this list; ordinary marker protection still applies. Native placement from neighboring zones can cross the boundary. Changes apply to the next run.",
@@ -197,13 +204,32 @@ namespace FreshWorld.Configuration
                 ReadBool(Value(epicLootProtection), "Protection.EpicLootProtection"),
                 ReadBool(Value(epicLootBountyProtection), "Protection.EpicLootBountyProtection"),
                 OptionalIds(Value(alwaysProtectedPrefabs), "Protection.AlwaysProtectedPrefabs"),
-                ReadPercentage(Value(automaticResetPercent)));
+                ReadPercentage(Value(automaticResetPercent)), ParseLocationRadii(Value(locationResetRadii)));
             return new RuntimeSettings(schedule, options);
         }
         private static bool ReadBool(string text, string key)
         {
             if (!bool.TryParse(text, out var value)) throw new ArgumentException(key + " must be true or false.");
             return value;
+        }
+        private static IReadOnlyDictionary<string, float> ParseLocationRadii(string text)
+        {
+            const string key = "Reset.LocationResetRadii";
+            var result = new Dictionary<string, float>(StringComparer.Ordinal);
+            if (string.IsNullOrWhiteSpace(text)) return result;
+            foreach (var entry in text.Split(','))
+            {
+                var parts = entry.Split('=');
+                if (parts.Length != 2 || !ExactId.IsMatch(parts[0].Trim()))
+                    throw new ArgumentException(key + " requires exact ID=radius entries.");
+                var id = parts[0].Trim();
+                var radius = ReadFloat(parts[1].Trim(), key);
+                Finite(radius, key, false);
+                if (radius > 512) throw new ArgumentException(key + " radii must not exceed 512 metres.");
+                if (result.ContainsKey(id)) throw new ArgumentException(key + " contains duplicate ID '" + id + "'.");
+                result.Add(id, radius);
+            }
+            return result;
         }
         private static int ReadPercentage(string text)
         {

@@ -18,7 +18,26 @@ internal class ResetZones : ZoneOperation
 
     protected override bool ExecuteZone(Vector2s zone)
     {
-        var world = ZoneSystem.instance;
+        if (Args.ZoneGroups != null && Args.ZoneGroups.TryGetValue(zone, out var group))
+        {
+            // One synchronous mutation: no member can stream back between deletions.
+            // Do not release any generation state until every sector's objects are cleared.
+            foreach (var sector in group) RecordBorders(sector);
+            bool InGroup(ZDO zdo) => group.Contains(ZoneSystem.GetZone(zdo.GetPosition()));
+            foreach (var sector in group) ClearObjects(sector, InGroup);
+            GameWorld.CompleteZoneDeletions(group, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
+            foreach (var sector in group) ReleaseGeneration(sector);
+            Log($"Location zone group at {zone}: {group.Count} sectors reset together.");
+            return true;
+        }
+        RecordBorders(zone);
+        ClearObjects(zone, Args.CanDeleteObject);
+        ReleaseGeneration(zone);
+        return true;
+    }
+
+    private void RecordBorders(Vector2s zone)
+    {
         // Deleting a TerrainCompiler may already change terrain before a later deletion/mod hook
         // fails. Record neighbors before the first destructive call so partial cleanup repairs them.
         AddBorder(zone.x, zone.y - 1, BorderDirection.North);
@@ -29,13 +48,20 @@ internal class ResetZones : ZoneOperation
         AddBorder(zone.x - 1, zone.y - 1, BorderDirection.NorthEast);
         AddBorder(zone.x + 1, zone.y + 1, BorderDirection.SouthWest);
         AddBorder(zone.x - 1, zone.y + 1, BorderDirection.SouthEast);
+    }
 
+    private void ClearObjects(Vector2s zone, Func<ZDO, bool>? withinScope)
+    {
         foreach (var zdo in GameWorld.GetZDOs(zone))
         {
             if (zdo == null || !zdo.IsValid()) continue;
-            if (ZoneSystem.GetZone(zdo.GetPosition()) == zone) GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
+            if (ZoneSystem.GetZone(zdo.GetPosition()) == zone) GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected, withinScope);
         }
+    }
 
+    private void ReleaseGeneration(Vector2s zone)
+    {
+        var world = ZoneSystem.instance;
         if (world.m_locationInstances.TryGetValue(zone, out var location))
         {
             location.m_placed = false;
@@ -47,7 +73,6 @@ internal class ResetZones : ZoneOperation
 
         GameWorld.RemoveGeneratedZone(zone);
         _reset++;
-        return true;
     }
 
     private void AddBorder(int x, int y, BorderDirection direction)

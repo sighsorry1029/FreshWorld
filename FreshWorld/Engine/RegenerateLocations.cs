@@ -6,8 +6,8 @@ using UnityEngine;
 namespace FreshWorld.Engine;
 
 /// <summary>
-/// Resets placed locations using native ghost placement. The radius/dungeon clearing policy follows
-/// Upgrade World's public-domain RegenerateLocations and ClearZDOsWithinDistance implementation.
+/// Resets placed locations using native ghost placement. Extends Upgrade World's public-domain
+/// radius/dungeon clearing policy across surface sectors, retaining anchor-only dungeon cleanup.
 /// </summary>
 internal class RegenerateLocations : ZoneOperation
 {
@@ -55,13 +55,19 @@ internal class RegenerateLocations : ZoneOperation
         if (heightmap == null) throw new InvalidOperationException("Loaded location zone has no heightmap: " + zone);
 
         var zones = ZoneSystem.instance;
-        var radius = location.m_location.m_exteriorRadius;
-        ClearLocationObjects(zone, location.m_position, radius, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
+        var footprint = Args.LocationFootprints != null && Args.LocationFootprints.TryGetValue(zone, out var planned)
+            ? planned : new LocationFootprint(zone, location);
+        if (!footprint.Matches(location)) throw new InvalidOperationException("Location extent changed after planning: " + zone);
+        var radius = footprint.Radius;
+        ClearLocationObjects(footprint, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
         var terrainRadius = Args.TerrainReset > 0 ? Args.TerrainReset : radius;
         if (terrainRadius > 0)
         {
             _terrainTouched = true;
-            TerrainResetter.Execute(location.m_position, terrainRadius, Args.CanResetTerrain);
+            // Terrain paint samples extend slightly beyond a sector's geometric edge. Never
+            // edit a neighboring tile that was not included in the full-location approval.
+            TerrainResetter.Execute(location.m_position, terrainRadius,
+                sector => footprint.Zones.Contains(sector) && (Args.CanResetTerrain == null || Args.CanResetTerrain(sector)));
         }
 
         location.m_placed = false;
@@ -82,23 +88,20 @@ internal class RegenerateLocations : ZoneOperation
         return true;
     }
 
-    private static void ClearLocationObjects(Vector2s zone, Vector3 center, float radius, bool protectEpicLoot, bool protectEpicLootBounties,
+    private static void ClearLocationObjects(LocationFootprint footprint, bool protectEpicLoot, bool protectEpicLootBounties,
         AlwaysProtectedObjects? alwaysProtected)
     {
-        if (radius <= 0) return;
-        var squaredRadius = radius * radius;
-        // Dungeon rooms live far above the surface in the same sector. Preserve its control and
-        // terrain records; GameWorld.RemoveZDO also excludes local and connected player characters.
-        foreach (var zdo in GameWorld.GetZDOs(zone))
+        if (footprint.Radius <= 0) return;
+        bool WithinScope(ZDO zdo)
         {
             var prefab = zdo.GetPrefab();
-            if (prefab == ZoneControlHash || prefab == TerrainCompilerHash) continue;
-            var position = zdo.GetPosition();
-            var dx = position.x - center.x;
-            var dz = position.z - center.z;
-            if (position.y > 4000f || dx * dx + dz * dz < squaredRadius)
-                GameWorld.RemoveZDO(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected);
+            return prefab != ZoneControlHash && prefab != TerrainCompilerHash && footprint.Contains(zdo);
         }
+        // Neighbor sectors need not be generated: native location placement can put ZDOs there.
+        // The predicate also constrains recursively connected Spawned objects.
+        foreach (var sector in footprint.Zones)
+            foreach (var zdo in GameWorld.GetZDOs(sector))
+                GameWorld.RemoveZDO(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected, WithinScope);
     }
 
     protected override void OnEnd()

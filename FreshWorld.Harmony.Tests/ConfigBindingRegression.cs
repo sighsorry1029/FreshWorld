@@ -14,7 +14,7 @@ internal static class ConfigBindingRegression
     {
         "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
         "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds",
-        "Reset.LocationIds", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
+        "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
         "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
         "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.AlwaysProtectedPrefabs"
     };
@@ -26,7 +26,7 @@ internal static class ConfigBindingRegression
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 19 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all 20 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
@@ -139,7 +139,7 @@ internal static class ConfigBindingRegression
     {
         using var fixture = new Fixture(ValidValues());
         var actual = fixture.File.Keys.Select(key => key.Section + "." + key.Key).OrderBy(key => key, StringComparer.Ordinal);
-        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 19-key config schema changed.");
+        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 20-key config schema changed.");
         foreach (var definition in fixture.File.Keys)
         {
             var entry = fixture.File[definition];
@@ -314,6 +314,7 @@ internal static class ConfigBindingRegression
         ["Reset.ResourceIds"] = "Beech1,Birch1",
         ["Reset.TerrainResourceIds"] = "rock4_copper",
         ["Reset.LocationIds"] = "Hildir_cave",
+        ["Reset.LocationResetRadii"] = "MWL_AshlandsFort4=40",
         ["Reset.ResourceTerrainRadius"] = "7.5",
         ["Protection.ZoneSafeZones"] = "1",
         ["Protection.ResourceSafeZones"] = "1",

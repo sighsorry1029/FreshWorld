@@ -10,6 +10,7 @@
     <Compile Include="../FreshWorld/Backend/TrackedOperations.cs" Link="Production/TrackedOperations.cs" />
     <Compile Include="../FreshWorld/Backend/MaintenancePipeline.cs" Link="Production/MaintenancePipeline.cs" />
     <Compile Include="../FreshWorld/Backend/MaintenanceGate.cs" Link="Production/MaintenanceGate.cs" />
+    <Compile Include="../FreshWorld/Engine/LocationFootprint.cs" Link="LocationFootprint.cs" />
     <Compile Include="../FreshWorld/Engine/Operations.cs" Link="Production/Operations.cs" />
     <Compile Include="../FreshWorld/Engine/EpicLootProtection.cs" Link="Production/EpicLootProtection.cs" />
     <Compile Include="../FreshWorld/Engine/JotunInvasionProtection.cs" Link="Production/JotunInvasionProtection.cs" />

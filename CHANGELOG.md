@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3
+
+- Added full-radius location restoration across zone boundaries and server-synced `LocationResetRadii`, defaulting to `MWL_AshlandsFort4=40`.
+- Reset connected location sectors as one zone group. Every member must pass `ZoneSafeZones` and independent protection checks; protected groups are skipped by the zone stage.
+- Allowed selected locations in skipped groups to restore using `LocationSafeZones`. A value of 0 can remove player buildings inside the location radius; player, absolute, Jotun and enabled EpicLoot protection still apply.
+- Prevented additional location resets after a successful zone reset, even if the area generates again during the same run. Automatic runs use one percentage draw per connected group.
+- Reserved managed location areas from separate resource resets and outside border repairs. Added checks for changed location definitions, unfinished loads and overlapping radius restores, and completed queued host-side deletions before grouped zones can regenerate.
+
 ## 1.1.2
 
 - Added server-synced `AutomaticResetPercent` (0–100, default 100). Automatic runs randomly select a rounded percentage of eligible zones once and share that selection across all reset stages.

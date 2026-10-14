@@ -15,6 +15,10 @@ internal static class GameWorld
         AccessTools.FieldRefAccess<ZoneSystem, HashSet<Vector2s>>("m_generatedZones");
     private static readonly AccessTools.FieldRef<ZDOMan, Dictionary<ZDOID, ZDO>> ObjectsById =
         AccessTools.FieldRefAccess<ZDOMan, Dictionary<ZDOID, ZDO>>("m_objectsByID");
+    private static readonly AccessTools.FieldRef<ZDOMan, List<ZDOID>> PendingDestruction =
+        AccessTools.FieldRefAccess<ZDOMan, List<ZDOID>>("m_destroySendList");
+    private static readonly Action<ZDOMan, ZDOID> HandleDestroyed =
+        AccessTools.MethodDelegate<Action<ZDOMan, ZDOID>>(AccessTools.Method(typeof(ZDOMan), "HandleDestroyedZDO"));
     private static readonly AccessTools.FieldRef<ZNetScene, Dictionary<ZDO, ZNetView>> SceneInstances =
         AccessTools.FieldRefAccess<ZNetScene, Dictionary<ZDO, ZNetView>>("m_instances");
     private static readonly AccessTools.FieldRef<ZoneSystem, Dictionary<Vector2s, List<ZDO>>> LoadingObjects =
@@ -48,6 +52,8 @@ internal static class GameWorld
 
     public static bool IsGenerated(Vector2s zone) => GeneratedZones(ZoneSystem.instance).Contains(zone);
 
+    public static bool HasPendingZoneLoad(Vector2s zone) => LoadingObjects(ZoneSystem.instance).ContainsKey(zone);
+
     /// <summary>Returns a copy: deletion must not invalidate the live sector enumeration.</summary>
     public static List<ZDO> GetZDOs(Vector2s zone)
     {
@@ -60,6 +66,33 @@ internal static class GameWorld
     }
 
     public static IEnumerable<ZDO> AllZDOs() => ObjectsById(ZDOMan.instance).Values.ToArray();
+
+    // DestroyZDO only queues IDs. Finish the group's queued deletions on the host before
+    // releasing generation state; leave notifications queued for the normal bounded sender.
+    public static void CompleteZoneDeletions(HashSet<Vector2s> zones, bool protectEpicLoot,
+        bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected)
+    {
+        var manager = ZDOMan.instance;
+        var pending = new HashSet<ZDOID>(PendingDestruction(manager));
+        var objects = zones.SelectMany(GetZDOs).ToArray();
+        if (objects.Any(zdo => IsDeletionProtected(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected)))
+            throw new InvalidOperationException("A protected object remains in a location zone group; regeneration was not enabled.");
+        var remaining = objects.Select(zdo => zdo.m_uid).Distinct().ToArray();
+        // Validate the complete snapshot before native callbacks can run or pool ZDO objects.
+        if (remaining.Any(id => !pending.Contains(id)))
+            throw new InvalidOperationException("A location zone group still contains objects that were not scheduled for deletion; regeneration was not enabled.");
+        foreach (var id in remaining)
+        {
+            // A prior native callback may move or protect a later object in this snapshot.
+            if (ObjectsById(manager).TryGetValue(id, out var current) && current.IsValid() &&
+                (!zones.Contains(ZoneSystem.GetZone(current.GetPosition())) ||
+                 IsDeletionProtected(current, protectEpicLoot, protectEpicLootBounties, alwaysProtected)))
+                throw new InvalidOperationException("An object changed during location zone group deletion; regeneration was not enabled.");
+            HandleDestroyed(manager, id);
+        }
+        if (zones.Any(zone => GetZDOs(zone).Count > 0 || HasPendingZoneLoad(zone)))
+            throw new InvalidOperationException("Objects or pending loads appeared during location zone group deletion; regeneration was not enabled.");
+    }
 
     /// <summary>Appends occupied host-world zones; the caller owns their lifetime for one maintenance run.</summary>
     public static void CollectPlayerZones(HashSet<Vector2s> zones)
@@ -107,14 +140,17 @@ internal static class GameWorld
         RemoveZDO(zdo, protectEpicLoot, protectEpicLootBounties, null);
 
     public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected) =>
-        RemoveZDO(zdo, null, protectEpicLoot, protectEpicLootBounties, alwaysProtected);
+        RemoveZDO(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected, null);
 
-    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected)
+    public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected,
+        Func<ZDO, bool>? withinScope) =>
+        RemoveZDO(zdo, null, protectEpicLoot, protectEpicLootBounties, alwaysProtected, withinScope);
+
+    private static void RemoveZDO(ZDO zdo, HashSet<ZDOID>? visited, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected,
+        Func<ZDO, bool>? withinScope)
     {
-        if (zdo == null || !zdo.IsValid() || IsPlayer(zdo) ||
-            alwaysProtected?.IsProtectedObject(zdo) == true ||
-            JotunInvasionProtection.IsProtectedObject(zdo) ||
-            EpicLootProtection.IsProtectedObject(zdo, protectEpicLoot, protectEpicLootBounties)) return;
+        if (zdo == null || !zdo.IsValid() || (withinScope != null && !withinScope(zdo)) ||
+            IsDeletionProtected(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected)) return;
         if (visited != null && !visited.Add(zdo.m_uid)) return;
         var manager = ZDOMan.instance;
         zdo.SetOwner(ZDOMan.GetSessionID());
@@ -123,7 +159,7 @@ internal static class GameWorld
         {
             // A corrupt/modded connection cycle must not recurse forever while cleaning a zone.
             visited ??= new HashSet<ZDOID> { zdo.m_uid };
-            RemoveZDO(child, visited, protectEpicLoot, protectEpicLootBounties, alwaysProtected);
+            RemoveZDO(child, visited, protectEpicLoot, protectEpicLootBounties, alwaysProtected, withinScope);
         }
         if (!zdo.IsValid()) return;
         var scene = ZNetScene.instance;
@@ -132,6 +168,11 @@ internal static class GameWorld
         else
             manager.DestroyZDO(zdo);
     }
+
+    private static bool IsDeletionProtected(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties,
+        AlwaysProtectedObjects? alwaysProtected) => IsPlayer(zdo) || alwaysProtected?.IsProtectedObject(zdo) == true ||
+        JotunInvasionProtection.IsProtectedObject(zdo) ||
+        EpicLootProtection.IsProtectedObject(zdo, protectEpicLoot, protectEpicLootBounties);
 
     private static bool IsPlayer(ZDO zdo)
     {
@@ -287,13 +328,10 @@ internal static class GameWorld
     private static class DestroyBatchPatch
     {
         private const int MaxPerPacket = 10000;
-        private static readonly AccessTools.FieldRef<ZDOMan, List<ZDOID>> Pending =
-            AccessTools.FieldRefAccess<ZDOMan, List<ZDOID>>("m_destroySendList");
-
         [HarmonyPrefix]
         private static bool Prefix(ZDOMan __instance)
         {
-            var pending = Pending(__instance);
+            var pending = PendingDestruction(__instance);
             if (pending.Count < MaxPerPacket) return true;
             var package = new ZPackage();
             package.Write(MaxPerPacket);

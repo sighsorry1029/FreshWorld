@@ -12,7 +12,10 @@ internal sealed class OperationParameters
     public bool ProtectEpicLoot { get; set; } = true;
     public bool ProtectEpicLootBounties { get; set; }
     public Func<Vector2s, bool>? CanResetTerrain { get; set; }
+    public Func<ZDO, bool>? CanDeleteObject { get; set; }
     public AlwaysProtectedObjects? AlwaysProtected { get; set; }
+    public IReadOnlyDictionary<Vector2s, LocationFootprint>? LocationFootprints { get; set; }
+    public IReadOnlyDictionary<Vector2s, HashSet<Vector2s>>? ZoneGroups { get; set; }
 }
 
 /// <summary>Typed host-side operations; exceptions propagate to the owning guarded runner.</summary>

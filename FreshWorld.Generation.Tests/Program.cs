@@ -17,6 +17,12 @@ var tests = new (string Name, Action Test)[]
     ("native location failure restores loaded source template transforms and child activation", LocationTemplateFailure),
     ("named modded references remain eligible and unnamed invalid references stay excluded", NamedLocations),
     ("location clearing preserves controls and selects radius plus high dungeon objects", LocationClearScope),
+    ("location footprint follows circle-sector intersections and rejects invalid extents", FootprintGeometry),
+    ("location clearing crosses ungenerated sectors without deleting adjacent elevated dungeons", LocationCrossSector),
+    ("resource clearing forwards reserved-object deletion policy", ResourceReservedObject),
+    ("terrain paint cannot reach an unapproved neighboring sector", LocationTerrainBoundary),
+    ("native asset callbacks cannot bypass the final location guard", LocationFinalGuard),
+    ("planned location identity and position cannot change before deletion", LocationPlanIdentity),
     ("canceling an unloaded native operation releases its pending load", Cancellation),
     ("protection refusal prevents native object terrain and placement changes before and after loading", ProtectedGeneration),
     ("empty IDs cannot expand a native reset", EmptyIds),
@@ -299,6 +305,77 @@ static void LocationClearScope()
     Sequence(new[] { "nearby", "dungeon" }, GameWorld.Removed.Select(zdo => zdo.Name));
     Success(errors, finishes);
 }
+static void FootprintGeometry()
+{
+    var cross = LocationFootprint.Sectors(new(), 40);
+    Equal(5, cross.Count);
+    Equal(true, cross.Contains(new(1, 0))); Equal(false, cross.Contains(new(1, 1)));
+    var offset = LocationFootprint.Sectors(new(31, 0, 31), 40);
+    Equal(4, offset.Count); Equal(true, offset.Contains(new(1, 1)));
+    Equal(1, LocationFootprint.Sectors(new(-64, 0, -64), 10).Count);
+    Throws<InvalidOperationException>(() => LocationFootprint.Sectors(new(), float.NaN));
+    Throws<InvalidOperationException>(() => LocationFootprint.Sectors(new(float.PositiveInfinity, 0, 0), 10));
+    Throws<InvalidOperationException>(() => LocationFootprint.Sectors(new(short.MaxValue * 64, 0, 0), 40));
+    Throws<InvalidOperationException>(() => LocationFootprint.Sectors(new(), float.MaxValue));
+}
+static void LocationCrossSector()
+{
+    var instance = ZoneSystem.instance.m_locationInstances[Zone()];
+    var footprint = new LocationFootprint(Zone(), instance, 40);
+    GameWorld.Objects[Zone()] = new() { new("center", new()), new("own_dungeon", new(30, 5000, 30)) };
+    GameWorld.Objects[new(1, 0)] = new()
+    {
+        new("outer_wall", new(35, 0, 0)), new("outside", new(50, 0, 0)),
+        new("neighbor_dungeon", new(35, 5000, 0)), new("_ZoneCtrl", new(35, 0, 0)),
+        new("_TerrainCompiler", new(35, 0, 0))
+    };
+    Equal(false, GameWorld.IsGenerated(new(1, 0)));
+    ZoneSystem.instance.LocationPlacement = (_, _) =>
+        Sequence(new[] { "center", "outer_wall", "own_dungeon" }, GameWorld.Removed.Select(zdo => zdo.Name).OrderBy(name => name));
+    var args = new OperationParameters { LocationFootprints = new Dictionary<Vector2s, LocationFootprint> { [Zone()] = footprint } };
+    var errors = new List<Exception>(); var finishes = new List<bool>();
+    using var runner = Start(new TrackedRegenerateLocations(_ => { }, new() { "Hildir_cave" }, args), errors, finishes);
+    Drain(runner); Success(errors, finishes); Equal(1, ZoneSystem.instance.LocationCalls);
+}
+static void ResourceReservedObject()
+{
+    var target = new ZDO("rock4_copper", new()); GameWorld.Objects[Zone()] = new() { target };
+    var args = new OperationParameters { CanDeleteObject = _ => false };
+    var errors = new List<Exception>(); var finishes = new List<bool>();
+    using var runner = Start(new TrackedResetVegetation(_ => { }, new() { "rock4_copper" }, args), errors, finishes);
+    Drain(runner); Success(errors, finishes); Equal(0, GameWorld.Removed.Count);
+}
+static void LocationTerrainBoundary()
+{
+    var location = ZoneSystem.instance.m_locationInstances[Zone()];
+    location.m_position = new(0.25f, 0, 0); location.m_location.m_exteriorRadius = 32;
+    ZoneSystem.instance.m_locationInstances[Zone()] = location;
+    var errors = new List<Exception>(); var finishes = new List<bool>();
+    using var runner = Start(Locations(), errors, finishes); Drain(runner);
+    Success(errors, finishes); Equal(true, TerrainResetter.LastTerrainFilter!(new(0, 0)));
+    Equal(false, TerrainResetter.LastTerrainFilter!(new(-1, 0)));
+}
+static void LocationFinalGuard()
+{
+    GameWorld.Objects[Zone()] = new() { new("wall", new()) };
+    var allowed = true;
+    ZoneSystem.instance.OnAssetCheck = () => allowed = false;
+    var errors = new List<Exception>(); var finishes = new List<bool>();
+    var operation = new TrackedRegenerateLocations(_ => { }, new() { "Hildir_cave" }, new(), canProcess: _ => allowed);
+    using var runner = Start(operation, errors, finishes); Drain(runner);
+    Success(errors, finishes); Equal(0, GameWorld.Removed.Count); Equal(0, TerrainResetter.Restored.Count);
+    Equal(0, ZoneSystem.instance.LocationCalls); Equal(1, operation.Result.SkippedZones.Count);
+}
+static void LocationPlanIdentity()
+{
+    var instance = ZoneSystem.instance.m_locationInstances[Zone()];
+    var footprint = new LocationFootprint(Zone(), instance);
+    Equal(true, footprint.Matches(instance));
+    instance.m_position = new(1, 0, 0); Equal(false, footprint.Matches(instance));
+    instance.m_position = new(); instance.m_location.m_exteriorRadius = 11; Equal(false, footprint.Matches(instance));
+    instance.m_location = new() { m_prefab = new(true, "Hildir_cave"), m_exteriorRadius = 10 };
+    Equal(false, footprint.Matches(instance));
+}
 static void Cancellation()
 {
     ZoneSystem.instance.Loaded.Clear(); ZoneSystem.instance.Roots.Clear();
@@ -329,7 +406,9 @@ static void TerrainGuardForwarding()
         var errors = new List<Exception>(); var finishes = new List<bool>();
         using var runner = Start(operation, errors, finishes); Drain(runner);
         Success(errors, finishes);
-        Equal(true, ReferenceEquals(filter, TerrainResetter.LastTerrainFilter));
+        Equal(true, TerrainResetter.LastTerrainFilter!(new(0, 0)));
+        Equal(false, TerrainResetter.LastTerrainFilter!(new(1, 0)));
+        Equal(vegetation, TerrainResetter.LastTerrainFilter!(new(2, 0)));
     }
 }
 

@@ -97,10 +97,11 @@ public sealed class ZoneSystem
     public Action<IList, List<GameObject>>? VegetationPlacement;
     public Action<IList, List<GameObject>>? LocationPlacement;
     public bool AssetReady = true;
+    public Action? OnAssetCheck;
     public int VegetationCalls, LocationCalls, AssetChecks;
     public bool IsZoneLoaded(Vector2s zone) => Loaded.Contains(zone);
     public static Vector3 GetZonePos(Vector2s zone) => new(zone.x * 64, 0, zone.y * 64);
-    private bool PokeCanSpawnLocation(ZoneLocation location, bool firstSpawn) { AssetChecks++; return AssetReady; }
+    private bool PokeCanSpawnLocation(ZoneLocation location, bool firstSpawn) { AssetChecks++; OnAssetCheck?.Invoke(); return AssetReady; }
     private void PlaceVegetation(Vector2s zone, Vector3 center, Transform parent, Heightmap heightmap,
         List<ClearArea> clearAreas, SpawnMode mode, List<GameObject> spawned)
     {
@@ -193,9 +194,9 @@ namespace FreshWorld.Engine
         public static List<ZDO> GetZDOs(Vector2s zone) => Objects.TryGetValue(zone, out var entries) ? new(entries) : new();
         public static void RemoveZDO(ZDO zdo) => Removed.Add(zdo);
         public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties) => Removed.Add(zdo);
-        public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected)
+        public static void RemoveZDO(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties, AlwaysProtectedObjects? alwaysProtected, Func<ZDO, bool>? withinScope = null)
         {
-            if (alwaysProtected?.IsProtectedObject(zdo) != true) Removed.Add(zdo);
+            if (alwaysProtected?.IsProtectedObject(zdo) != true && (withinScope == null || withinScope(zdo))) Removed.Add(zdo);
         }
         public static IEnumerable<ZDO> AllZDOs() => Objects.Values.SelectMany(items => items);
         public static bool TryGetRoot(Vector2s zone, out GameObject root) => ZoneSystem.instance.Roots.TryGetValue(zone, out root!);

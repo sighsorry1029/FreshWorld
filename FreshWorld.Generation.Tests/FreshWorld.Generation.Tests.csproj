@@ -10,6 +10,7 @@
     <Compile Include="../FreshWorld/Engine/ResetVegetation.cs" Link="ResetVegetation.cs" />
     <Compile Include="../FreshWorld/Engine/NativePlacement.cs" Link="NativePlacement.cs" />
     <Compile Include="../FreshWorld/Engine/RegenerateLocations.cs" Link="RegenerateLocations.cs" />
+    <Compile Include="../FreshWorld/Engine/LocationFootprint.cs" Link="LocationFootprint.cs" />
     <Compile Include="../FreshWorld/Engine/Operations.cs" Link="Operations.cs" />
     <Compile Include="../FreshWorld/Engine/AlwaysProtectedObjects.cs" Link="AlwaysProtectedObjects.cs" />
     <Compile Include="../FreshWorld/Backend/TrackedOperations.cs" Link="TrackedOperations.cs" />

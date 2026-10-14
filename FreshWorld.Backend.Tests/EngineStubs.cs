@@ -71,7 +71,23 @@ public class DungeonDB
     public bool SkipSaving() => false;
 }
 public sealed class Prefab(string id) { public string name = id; }
-public readonly record struct LocationPrefab(string Name) { public bool IsValid => true; }
+public readonly record struct LocationPrefab(string Name)
+{
+    public bool IsValid => true;
+    public bool IsLoaded => Fake.MetadataReady;
+    public void LoadAsync() { Fake.MetadataReferences++; Fake.OnMetadataLoad?.Invoke(); }
+    public void Release() => Fake.MetadataReferences--;
+    public UnityEngine.GameObject Asset
+    {
+        get
+        {
+            var name = Name;
+            var definition = ZoneSystem.instance.m_locationInstances.Values.First(location => location.m_location.m_prefab.Name == name).m_location;
+            Fake.OnResolve?.Invoke(definition);
+            return new();
+        }
+    }
+}
 public class ZoneSystem
 {
     public static ZoneSystem instance = new();
@@ -88,6 +104,7 @@ public class ZoneSystem
     public class ZoneLocation(string id) { public LocationPrefab m_prefab = new(id); public float m_exteriorRadius; public float m_interiorRadius; }
     public struct LocationInstance
     {
+        public UnityEngine.Vector3 m_position;
         public bool m_placed;
         public ZoneLocation m_location;
     }
@@ -106,6 +123,10 @@ internal static class Fake
     public static HashSet<Vector2s> MarkerZones = new();
     public static HashSet<Vector2s> PlayerZones = new();
     public static Action<string>? OnStart;
+    public static Action<ZoneSystem.ZoneLocation>? OnResolve;
+    public static Action? OnMetadataLoad;
+    public static bool MetadataReady = true;
+    public static int MetadataReferences;
     public static string? ThrowOnZone;
     public static string? ThrowOnStart;
     public static bool LoadOnPoke = true;
@@ -121,7 +142,7 @@ internal static class Fake
     public static void Reset()
     {
         Calls = new(); Arguments = new(); Candidates = new(); MarkerZones = new(); PlayerZones = new(); VegetationPasses = new();
-        OnStart = null; ThrowOnZone = null; ThrowOnStart = null;
+        OnStart = null; OnResolve = null; MetadataReady = true; MetadataReferences = 0; OnMetadataLoad = null; ThrowOnZone = null; ThrowOnStart = null;
         LoadOnPoke = true; HoldSave = false; IgnoreSave = false; SaveError = null;
         BorderRepairs = 0; LoadReleases = 0;
         ReleaseFailures = new();
@@ -138,6 +159,7 @@ internal static class Fake
         
         FreshWorld.Engine.TerrainResetter.Active = false;
         FreshWorld.Engine.GameWorld.Pending.Clear();
+        FreshWorld.Engine.GameWorld.RootlessLoads.Clear();
     }
 
     public static void AddZone(int x, bool marker = false, string? location = "cave")
@@ -152,6 +174,7 @@ internal static class Fake
         ZoneSystem.instance.m_locationInstances[zone] = new()
         {
             m_location = prefab,
+            m_position = new(x * 64, 0, 0),
             m_placed = true
         };
     }
@@ -222,6 +245,7 @@ namespace FreshWorld.Configuration
         public int VegetationSafeZones { get; set; }
         public bool LocationsEnabled { get; set; } = true;
         public string[] LocationIds { get; set; } = ["cave"];
+        public IReadOnlyDictionary<string, float> LocationResetRadii { get; set; } = new Dictionary<string, float>();
         public int LocationSafeZones { get; set; }
         public bool EpicLootProtectionEnabled { get; set; } = true;
         public bool EpicLootBountyProtectionEnabled { get; set; }
@@ -236,6 +260,7 @@ namespace FreshWorld.Engine
 {
     public static class NativePlacement
     {
+        public static bool CanSpawnLocation(ZoneSystem zones, ZoneSystem.ZoneLocation location) { Fake.OnResolve?.Invoke(location); return true; }
         public static bool IsValidLocationPrefab(ZoneSystem.ZoneLocation location) => location.m_prefab.IsValid;
         public static List<UnityEngine.GameObject> TemporaryObjects(ZoneSystem zones) => zones.m_tempSpawnedObjects;
     }
@@ -244,11 +269,15 @@ namespace FreshWorld.Engine
         public static IEnumerable<ZDO> AllZDOs() => ZDOMan.instance.Objects.ToArray();
         public static List<ZDO> GetZDOs(Vector2s zone) => ZDOMan.instance.Objects.Where(zdo => zdo.Valid && zdo.Zone == zone).ToList();
         public static readonly HashSet<Vector2s> Pending = new();
+        public static readonly HashSet<Vector2s> RootlessLoads = new();
+        public static bool HasPendingZoneLoad(Vector2s zone) => RootlessLoads.Contains(zone);
         public static Vector2s[] GeneratedSnapshot(HashSet<Vector2s>? candidates = null) =>
             ZoneSystem.instance.m_generatedZones.Where(zone => candidates == null || candidates.Contains(zone)).OrderBy(z => z.x).ToArray();
         public static HashSet<Vector2s> GeneratedSetSnapshot() => new(ZoneSystem.instance.m_generatedZones);
         public static void CollectPlayerZones(HashSet<Vector2s> zones) => zones.UnionWith(Fake.PlayerZones);
         public static bool IsGenerated(Vector2s zone) => ZoneSystem.instance.m_generatedZones.Contains(zone);
+        public static bool TryGetRoot(Vector2s zone, out UnityEngine.GameObject root)
+        { root = new(); return Pending.Contains(zone); }
         public static string DescribeZoneLoad(Vector2s zone) =>
             $"root={Pending.Contains(zone)}, loaded={ZoneSystem.instance.IsZoneLoaded(zone)}, loadingObjects=0";
         public static void RecalculateTerrain() => Fake.Calls.Add("terrain.refresh");
@@ -308,7 +337,14 @@ namespace FreshWorld.Engine
         {
             if (Fake.ThrowOnZone == Kind) throw new InvalidOperationException("injected reset failure");
             Fake.Calls.Add($"zones.change:{zone.x}");
-            ZoneSystem.instance.m_generatedZones.Remove(zone);
+            var sectors = Args.ZoneGroups != null && Args.ZoneGroups.TryGetValue(zone, out var group) ? group : new HashSet<Vector2s> { zone };
+            foreach (var sector in sectors)
+            {
+                ZoneSystem.instance.m_generatedZones.Remove(sector);
+                if (!ZoneSystem.instance.m_locationInstances.TryGetValue(sector, out var location)) continue;
+                location.m_placed = false;
+                ZoneSystem.instance.m_locationInstances[sector] = location;
+            }
             return true;
         }
         protected override void OnEnd() { Fake.BorderRepairs++; base.OnEnd(); }

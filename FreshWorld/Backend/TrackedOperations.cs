@@ -222,7 +222,12 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
         }
         _mutationAttempted = true;
         var success = base.ExecuteZone(zone);
-        if (success) _tracker.Changed(zone);
+        if (success)
+        {
+            if (Args.ZoneGroups != null && Args.ZoneGroups.TryGetValue(zone, out var group))
+                foreach (var sector in group) _tracker.Changed(sector);
+            else _tracker.Changed(zone);
+        }
         return success;
     }
 
@@ -401,6 +406,9 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
 
     protected override bool ExecuteLocation(Vector2s zone, ZoneSystem.LocationInstance location)
     {
+        // Native asset readiness can invoke other mods synchronously. Recheck after that call,
+        // immediately before any object or terrain mutation.
+        if (!_tracker.CanProcess(zone)) return false;
         if (!IsStillSelected(zone, location))
         {
             _tracker.Skip(zone);
