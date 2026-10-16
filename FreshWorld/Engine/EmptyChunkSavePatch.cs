@@ -31,6 +31,7 @@ internal static class EmptyChunkSavePatch
     {
         var net = ZNet.instance;
         if (ReferenceEquals(net, null) || !net.IsServer()) return;
+        if (EmptyChunkSaveCompatibility.Check() != EmptyChunkSaveCompatibility.Strategy.FreshWorld) return;
 
         var scheduled = new HashSet<ZoneSystem.ChunkIndex>();
         var splitParents = new HashSet<ZoneSystem.ChunkIndex>();

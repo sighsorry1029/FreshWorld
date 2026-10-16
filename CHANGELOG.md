@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+- Fixed an empty-chunk save conflict with Upgrade World 1.85 that could leave missing chunk files and prevent the world from loading. FreshWorld now lets its verified cleanup patches handle empty chunks when both mods are installed.
+- Kept FreshWorld's existing save correction when those Upgrade World patches are absent. Incomplete or unrecognized combinations now block new world saves before preparation and log the conflicting patches.
+- Added isolated checks for load order, partial patch registration, repeated chunk saves and the original missing-file failure. Existing damaged saves still require separate recovery.
+
 ## 1.1.3
 
 - Added full-radius location restoration across zone boundaries and server-synced `LocationResetRadii`, defaulting to `MWL_AshlandsFort4=40`.

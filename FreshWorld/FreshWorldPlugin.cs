@@ -20,7 +20,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.1.3";
+        public const string ModVersion = "1.1.4";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -91,6 +91,19 @@ namespace FreshWorld
                 CleanupPlugin();
                 Logger.LogError("FreshWorld initialization failed; maintenance is disabled. " + error);
             }
+        }
+
+        // Unity Start follows plugin Awake registration; the save guard still checks again for late patches.
+        private void Start()
+        {
+            if (supported) EmptyChunkSaveCompatibility.Check();
+        }
+
+        internal static void LogSaveCompatibility(string message, bool error)
+        {
+            if (ReferenceEquals(Instance, null)) return;
+            if (error) Instance.Logger.LogError(message);
+            else Instance.Logger.LogInfo(message);
         }
 
         private void OnConfigChanged(object sender, FileSystemEventArgs args) => Interlocked.Exchange(ref reloadRequested, 1);

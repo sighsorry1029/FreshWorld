@@ -39,6 +39,10 @@ The initial save is mandatory. A save failure or the 180-second save timeout pre
 
 When hosting a world, FreshWorld includes previously saved chunks that are now completely empty in the game's normal save process. This prevents an old chunk file from restoring deleted objects after a world reload. The correction adds no extra save or cfg option and does not remove duplicates already present in the world.
 
+With the verified Upgrade World 1.85 save patches active, FreshWorld leaves empty-chunk cleanup to Upgrade World. Running both strategies previously could leave a saved chunk entry pointing to a missing file. FreshWorld checks the active patches after startup and at saving, so plugin load order does not select the wrong strategy. No Upgrade World dependency is required.
+
+Incomplete or unrecognized Upgrade World save patches block new world saves before preparation and produce an error with their identities. If this error appears, stop play and resolve the mod combination before restarting; unsaved progress cannot be safely persisted in that state. Turning off automatic restoration does not disable these save checks. This compatibility fix does not repair existing missing files or corrupted worlds.
+
 ## General: automatic scheduling
 
 ~~~ini

@@ -6,6 +6,11 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 4 && args[0] == "--chunk-compatibility")
+            {
+                EmptyChunkCompatibilityRegression.Run(args[1], args[2], args[3]);
+                return 0;
+            }
             if (args.Length == 3 && args[0] == "--native-save-patch")
             {
                 NativeSavePatchRegression.Run(args[1], args[2]);
