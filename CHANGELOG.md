@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.5
+
+- Fixed FreshWorld blocking world saves after an Upgrade World update. Compatibility now checks the relevant cleanup logic and active patches instead of a fixed DLL identity; Upgrade World 1.85 and 1.86 share the recognized implementation.
+- Unrecognized or incomplete combinations now disable FreshWorld maintenance and save changes without cancelling world saves. Authenticated status commands report the reason; resolving the conflict and restarting re-enables FreshWorld.
+- Added safe cancellation of active maintenance, including pending zone, deletion and login cleanup before removing operational patches. Disabled leftover configuration-change callbacks.
+- Added regression checks for unrelated rebuilds, changed cleanup logic, partial patches, repeated chunk saves and disabled-state cleanup. Previously unsaved progress or damaged saves still require separate recovery.
+
 ## 1.1.4
 
 - Fixed an empty-chunk save conflict with Upgrade World 1.85 that could leave missing chunk files and prevent the world from loading. FreshWorld now lets its verified cleanup patches handle empty chunks when both mods are installed.
