@@ -5,16 +5,12 @@ using HarmonyLib;
 
 namespace FreshWorld.Engine;
 
-/// <summary>Only one verified empty-chunk strategy may participate in a world save.</summary>
-[HarmonyPatch(typeof(ZNet), "SaveWorld", new[] { typeof(bool) })]
+/// <summary>Only one recognized empty-chunk strategy participates. Never veto a world save.</summary>
 internal static class EmptyChunkSaveCompatibility
 {
     internal enum Strategy { FreshWorld, UpgradeWorld, Unsupported }
 
     private const string UpgradeOwner = "upgrade_world";
-    // Upgrade World 1.85, SHA256 00E661ECD8CA6546525D61317C9DD4CF6416F5C360BEE9451650004EB4DA6FE4.
-    // AssemblyVersion is 1.0.0.0, not the plugin version. Rebuilt/changed implementations need review.
-    private static readonly Guid SupportedModule = new("fec95d98-f80f-4911-8929-b0dabb46f894");
     private static readonly (MethodInfo Target, string Type, string Method, bool Prefix)[] Targets =
     {
         (Required(typeof(ZDOMan), "AddObjectsPerChunk", typeof(int), typeof(byte), typeof(int[]),
@@ -24,6 +20,9 @@ internal static class EmptyChunkSaveCompatibility
             "UpgradeWorld.DeleteEmptiedChunkFiles", "Prefix", true)
     };
     private static string? lastReport;
+    internal static string? DisabledReason { get; private set; }
+
+    internal static void Reset() { DisabledReason = null; lastReport = null; }
 
     private static MethodInfo Required(Type type, string name, params Type[] arguments) =>
         AccessTools.DeclaredMethod(type, name, arguments) ?? throw new MissingMethodException(type.FullName, name);
@@ -51,11 +50,12 @@ internal static class EmptyChunkSaveCompatibility
                     method.DeclaringType?.Namespace != "UpgradeWorld") continue;
                 relevant++;
                 found.Add($"{expected.Target.DeclaringType!.Name}.{expected.Target.Name}: {pair.Item1} {patch.owner}/" +
-                    $"{method.DeclaringType?.FullName}.{method.Name} [{assembly?.FullName}; MVID={method.Module.ModuleVersionId}]");
+                    $"{method.DeclaringType?.FullName}.{method.Name} [priority={patch.priority}; before={string.Join(",", patch.before)}; " +
+                    $"after={string.Join(",", patch.after)}; {assembly?.FullName}; MVID={method.Module.ModuleVersionId}]");
                 if (patch.owner == UpgradeOwner && method.DeclaringType?.FullName == expected.Type &&
                     method.Name == expected.Method && method.IsStatic && method.ReturnType == typeof(void) &&
                     pair.Item1 == (expected.Prefix ? "Prefix" : "Postfix") &&
-                    assembly?.GetName().Name == "UpgradeWorld" && method.Module.ModuleVersionId == SupportedModule)
+                    assembly?.GetName().Name == "UpgradeWorld")
                 {
                     matches++;
                     if (implementation == null) implementation = assembly;
@@ -65,33 +65,36 @@ internal static class EmptyChunkSaveCompatibility
             if (relevant == 1 && matches == 1) valid++;
         }
         detail = string.Join("; ", found);
-        return found.Count == 0 ? Strategy.FreshWorld : found.Count == Targets.Length && valid == Targets.Length && sameImplementation
-            ? Strategy.UpgradeWorld : Strategy.Unsupported;
+        if (found.Count == 0) return Strategy.FreshWorld;
+        if (found.Count != Targets.Length || valid != Targets.Length || !sameImplementation || implementation == null)
+            return Strategy.Unsupported;
+        var recognized = UpgradeWorldSaveContract.Recognizes(implementation, out var contract);
+        detail += "; " + contract;
+        return recognized ? Strategy.UpgradeWorld : Strategy.Unsupported;
     }
 
     internal static Strategy Check()
     {
+        // Restart is required after a failure; do not silently resume destructive work.
+        if (DisabledReason != null) return Strategy.Unsupported;
         Strategy strategy;
         string detail;
         try { strategy = Inspect(out detail); }
         catch (Exception error) { strategy = Strategy.Unsupported; detail = error.GetType().Name + ": " + error.Message; }
+        if (strategy == Strategy.Unsupported)
+            DisabledReason = "UpgradeWorld empty-chunk contract was not recognized. " + detail;
         var report = strategy + ":" + detail;
         if (report != lastReport)
         {
             lastReport = report;
             var message = strategy == Strategy.UpgradeWorld
-                ? "FreshWorld empty chunk compatibility: UpgradeWorld 1.85 strategy active; FreshWorld empty replacements are disabled."
+                ? "FreshWorld empty chunk compatibility: UpgradeWorld cleanup contract recognized; FreshWorld empty replacements are disabled."
                 : strategy == Strategy.FreshWorld
                     ? "FreshWorld empty chunk compatibility: FreshWorld strategy active."
-                    : "FreshWorld empty chunk compatibility: unsupported UpgradeWorld save patches. New world saves are BLOCKED while this state remains active. " +
-                      "Stop play and resolve the mod combination before restarting; unsaved progress cannot be persisted safely. " + detail;
+                    : "FreshWorld disabled: " + DisabledReason + " New maintenance and FreshWorld save changes are disabled. " +
+                      "World saves have NOT been blocked by FreshWorld. External save behavior is not verified; resolve the combination and restart to re-enable FreshWorld.";
             FreshWorldPlugin.LogSaveCompatibility(message, strategy == Strategy.Unsupported);
         }
         return strategy;
     }
-
-    // Includes delayed saves. Runs before WorldSaveStarted, PrepareSave and worker creation.
-    // Do not throw from a save worker or change load-error/dirty/mapping state to enforce this guard.
-    [HarmonyPrefix]
-    internal static bool Prefix(ZNet __instance) => !__instance.IsServer() || Check() != Strategy.Unsupported;
 }

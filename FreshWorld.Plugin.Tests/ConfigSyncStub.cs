@@ -6,6 +6,8 @@ namespace FreshWorld.Configuration;
 internal sealed class ConfigSynchronization : IDisposable
 {
     private readonly ConfigFile file;
+    internal static bool PendingLogin;
+    internal bool HasPendingLogin => PendingLogin;
     internal ConfigSynchronization(ConfigFile file, FreshWorldConfig settings, HarmonyLib.Harmony harmony,
         Action changed, Action<string> warning) => this.file = file;
     internal void ReloadFile()
@@ -15,5 +17,6 @@ internal sealed class ConfigSynchronization : IDisposable
         finally { file.SaveOnConfigSet = save; }
     }
     internal void Publish(long target = 0) { }
+    internal void Suspend() { }
     public void Dispose() { }
 }

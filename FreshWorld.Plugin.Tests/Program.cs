@@ -17,6 +17,10 @@ internal static class Program
         try
         {
             Test("startup submits only declared plugin patches before a world loads", StartupPatchSelection);
+            Test("unsupported startup retains authenticated diagnostics without operational patches", UnsupportedStartup);
+            Test("unsupported late registration cancels queued manual maintenance", UnsupportedAdmission);
+            Test("unsupported late registration blocks automatic maintenance", UnsupportedAutomatic);
+            Test("unsupported active run cleans up at a yield boundary before unpatching drained work", UnsupportedActiveRun);
             Test("plugin metadata supplies the standard config filename and shared live settings", MetadataConfigIdentity);
             Test("manual dispatch bypasses scheduler polling interval", ImmediateDispatch);
             Test("manual runs bypass the automatic percentage and automatic snapshots survive reload", ResetPercentageDispatch);
@@ -89,6 +93,82 @@ internal static class Program
         True(FreshWorldCommands.Handler != null, "startup did not reach command registration");
         True(f.Scheduler == null && MaintenancePipeline.Created.Count == 0,
             "pre-world initialization must not start maintenance");
+    }
+
+    private static void UnsupportedStartup()
+    {
+        using var f = new Fixture(beforeAwake: (_, _, _) => EmptyChunkSaveCompatibility.Reject = true, allowDisabled: true);
+        Equal(0, f.GetField<HarmonyLib.Harmony>("harmony")!.PatchedTypes.Count, "operational patches must not be installed");
+        True(f.GetField<FileSystemWatcher>("watcher") == null, "no disabled watcher");
+        True(f.Scheduler == null, "no disabled scheduler");
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Status, f.Request);
+        HasReply(f.Request, "FreshWorld disabled");
+        f.Run(); f.Tick();
+        Equal(0, MaintenancePipeline.Created.Count, "disabled manual requests must not construct a pipeline");
+        f.Request.Authorized = false;
+        f.Request.Replies.Clear();
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Status, f.Request);
+        HasReply(f.Request, "authority");
+    }
+
+    private static void UnsupportedAdmission()
+    {
+        using var f = new Fixture(skipStartupDelay: false);
+        f.Run();
+        var scheduler = f.Scheduler!;
+        EmptyChunkSaveCompatibility.Reject = true;
+        Time.realtimeSinceStartup = 2; // Also cross the automatic polling boundary.
+        f.Tick();
+        Equal(0, MaintenancePipeline.Created.Count, "queued request must not start");
+        Equal(RunStatus.Interrupted, scheduler.Attempts.Single().Status, "queued request cancellation must persist");
+        HasReply(f.Request, "Cancelled");
+        True(f.GetField<bool>("compatibilityDrained"), "idle operational patches should be removed");
+        True(!f.Plugin.Logger.Messages.Any(message => message.Contains("after an error")), "disabled admission must not fall through to a closed scheduler");
+        EmptyChunkSaveCompatibility.Reject = false;
+        f.Run();
+        HasReply(f.Request, "Restart");
+        Equal(0, MaintenancePipeline.Created.Count, "contract recovery must not resume a disabled session");
+    }
+
+    private static void UnsupportedAutomatic()
+    {
+        using var f = new Fixture();
+        EmptyChunkSaveCompatibility.Reject = true;
+        f.Net.Seconds = 24 * EnvMan.instance.m_dayLengthSec;
+        Time.realtimeSinceStartup = 1;
+        f.Tick();
+        Equal(0, MaintenancePipeline.Created.Count, "automatic due work must not start");
+        True(f.GetField<bool>("compatibilityDrained"), "automatic failure should disable operational patches");
+    }
+
+    private static void UnsupportedActiveRun()
+    {
+        using var f = new Fixture();
+        MaintenancePipeline.HoldFrames = 5;
+        MaintenancePipeline.MutateBeforeYield = true;
+        f.Run(); f.Tick();
+        var scheduler = f.Scheduler!;
+        Equal(1, MaintenancePipeline.Mutations, "fixture has applied one complete mutation");
+        GameWorld.HasPendingMaintenanceCleanup = true;
+        EmptyChunkSaveCompatibility.Reject = true;
+        EmptyChunkSaveCompatibility.Check(); // A save snapshot notices late foreign patches.
+        Equal(0, MaintenancePipeline.Disposals, "save inspection must not dispose a running pipeline reentrantly");
+        f.Tick();
+        Equal(1, MaintenancePipeline.Mutations, "no mutation after compatibility failure");
+        Equal(1, MaintenancePipeline.Disposals, "pipeline cleanup must execute");
+        Equal(RunStatus.Failed, scheduler.Attempts.Single().Status, "partial run must persist failure");
+        True(MaintenanceGate.IsAvailable, "backend lease must be released");
+        True(!f.GetField<bool>("compatibilityDrained"), "batch/load cleanup must finish before unpatch");
+        True(f.GetField<HarmonyLib.Harmony>("harmony")!.PatchedTypes.Count > 0, "draining patches were removed early");
+        GameWorld.HasPendingMaintenanceCleanup = false;
+        FreshWorld.Configuration.ConfigSynchronization.PendingLogin = true;
+        f.Tick();
+        True(!f.GetField<bool>("compatibilityDrained"), "a live ServerSync login must finish before registration removal");
+        FreshWorld.Configuration.ConfigSynchronization.PendingLogin = false;
+        f.Tick();
+        Equal(0, f.GetField<HarmonyLib.Harmony>("harmony")!.PatchedTypes.Count, "operational patches must be removed");
+        True(f.GetField<FileSystemWatcher>("watcher") == null, "watcher must be disposed");
+        True(FreshWorldCommands.Handler != null, "authenticated diagnostic command must remain");
     }
 
     private static void SyncedMemoryEdit()
@@ -842,7 +922,7 @@ internal static class Program
         public CommandRequestContext Request { get; }
         public FreshWorldScheduler? Scheduler => GetField<FreshWorldScheduler>("scheduler");
         public Fixture(Action<ConfigFile>? configure = null, Action<string, ZNet, ConfigFile>? beforeAwake = null,
-            bool skipStartupDelay = true)
+            bool skipStartupDelay = true, bool allowDisabled = false)
         {
             directory = Path.Combine(Path.GetTempPath(), "FreshWorld.Plugin.Tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
@@ -853,12 +933,17 @@ internal static class Program
             ZNetScene.instance = new ZNetScene(); WorldGenerator.instance = new WorldGenerator();
             DungeonDB.instance = new DungeonDB(); Game.instance = new Game(); EnvMan.instance = new EnvMan();
             MaintenancePipeline.Reset();
+            EmptyChunkSaveCompatibility.Reject = false;
+            GameWorld.HasPendingMaintenanceCleanup = false;
+            FreshWorld.Configuration.ConfigSynchronization.PendingLogin = false;
             JotunInvasionDiagnostics.Calls = 0; JotunInvasionDiagnostics.Fail = false;
             Plugin = new FreshWorldPlugin();
             configure?.Invoke(Plugin.Config);
             beforeAwake?.Invoke(directory, Net, Plugin.Config);
             Invoke("Awake");
-            True(GetField<bool>("supported"), "fixture plugin initialization: " + string.Join(" | ", Plugin.Logger.Messages));
+            Invoke("Start");
+            True(GetField<bool>("supported") || (allowDisabled && EmptyChunkSaveCompatibility.DisabledReason != null),
+                "fixture plugin initialization: " + string.Join(" | ", Plugin.Logger.Messages));
             Tick();
             // Most cases begin after the internal startup grace period; startup-specific tests keep it intact.
             if (skipStartupDelay) SetField("attachedAt", -30f);

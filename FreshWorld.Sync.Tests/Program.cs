@@ -96,6 +96,7 @@ public static class Program
         adapterType = assembly.GetType("FreshWorld.Configuration.ConfigSynchronization", true)!;
         var configType = assembly.GetType("FreshWorld.Configuration.FreshWorldConfig", true)!;
         var harmony = new Harmony("freshworld.sync.regression");
+        var adapterHarmony = new Harmony("freshworld.sync.regression.adapter");
         // Install the actual BepInEx serialization hooks; game-loop detours need the Unity runtime.
         harmony.PatchAll(syncType.GetNestedType("PreventSavingServerInfo", BindingFlags.NonPublic));
         harmony.PatchAll(syncType.GetNestedType("PreventConfigRereadChangingValues", BindingFlags.NonPublic));
@@ -103,7 +104,7 @@ public static class Program
         file = new ConfigFile(Path.Combine(root, "sighsorry.FreshWorld.cfg"), false);
         var config = Activator.CreateInstance(configType, file)!;
         adapter = Activator.CreateInstance(adapterType, BindingFlags.Instance | BindingFlags.NonPublic, null,
-            new object[] { file, config, harmony, (Action)(() => changes++), (Action<string>)(message => System.Console.WriteLine(message)) }, null)!;
+            new object[] { file, config, adapterHarmony, (Action)(() => changes++), (Action<string>)(message => System.Console.WriteLine(message)) }, null)!;
         sync = Get(adapterType, adapter, "sync")!;
         Require((bool)Get(syncType, sync, "ModRequired")! == false, "Unmodded clients became required.");
         var versionType = assembly.GetType("ServerSync.VersionCheck", true)!;
@@ -269,10 +270,37 @@ public static class Program
         ZRoutedRpc.instance.Register<ZPackage>("sighsorry.FreshWorld ConfigSync", (_, __) => { });
         peer.m_rpc.Register<ZPackage>("sighsorry.FreshWorld ConfigSync", (_, __) => { });
         var rpcKey = "sighsorry.FreshWorld ConfigSync".GetStableHashCode();
+        var loginBufferType = syncType.GetNestedType("SendConfigsAfterLogin", BindingFlags.NonPublic)!
+            .GetNestedType("BufferingSocket", BindingFlags.NonPublic)!;
+        var loginBuffer = FormatterServices.GetUninitializedObject(loginBufferType);
+        bool PendingLogin() => (bool)adapterType.GetProperty("HasPendingLogin", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(adapter)!;
+        Set(typeof(ZRpc), peer.m_rpc, "m_socket", loginBuffer);
+        Require(PendingLogin(), "Active ServerSync login was not detected.");
+        Set(typeof(ZRpc), peer.m_rpc, "m_socket", new WrappedSocket((ISocket)loginBuffer));
+        Require(PendingLogin(), "Another socket wrapper hid the active ServerSync login.");
+        Set(loginBufferType, loginBuffer, "finished", true);
+        Require(!PendingLogin(), "Finished ServerSync login still blocks disposal.");
+        Set(typeof(ZRpc), peer.m_rpc, "m_socket", socket);
+        Require(PendingLogin(), "Opaque foreign socket should defer live registration removal.");
+        Set(typeof(ZRpc), peer.m_rpc, "m_socket", FormatterServices.GetUninitializedObject(typeof(ZSteamSocket)));
+        Require(!PendingLogin(), "Native socket incorrectly blocks disposal.");
+        Set(typeof(ZRpc), peer.m_rpc, "m_socket", socket);
         ((IDisposable)adapter).Dispose();
         Require(!((System.Collections.IEnumerable)Get(syncType, null, "configSyncs")!).Cast<object>().Contains(sync), "Disposed sync retained registration.");
         Require(!((System.Collections.IDictionary)Get(typeof(ZRoutedRpc), ZRoutedRpc.instance, "m_functions")!).Contains(rpcKey) &&
             !((System.Collections.IDictionary)Get(typeof(ZRpc), peer.m_rpc, "m_functions")!).Contains(rpcKey), "Disposed sync retained live RPC handlers.");
+        adapterHarmony.UnpatchSelf();
+        var sendsBeforeDisposalEdit = broadcasts;
+        var changesBeforeDisposalEdit = changes;
+        Set(typeof(ZNet), null, "m_isServer", true); Set(syncType, null, "isServer", true);
+        zone.BoxedValue = rawConstructor.Invoke(new object[] { "1" });
+        Require(broadcasts == sendsBeforeDisposalEdit && changes == changesBeforeDisposalEdit,
+            "Disposed server sync still reacted to config edits after operational patches were removed.");
+        Set(typeof(ZNet), null, "m_isServer", false); Set(syncType, null, "isServer", false);
+        Set(syncType, null, "lockExempt", true);
+        zone.BoxedValue = rawConstructor.Invoke(new object[] { "2" });
+        Require(broadcasts == sendsBeforeDisposalEdit && changes == changesBeforeDisposalEdit,
+            "Disposed administrator sync still reacted to config edits after operational patches were removed.");
     }
 
     private static ZPackage Package(ConfigEntryBase[] entries, bool partial) =>
@@ -293,7 +321,12 @@ public static class Program
         catch (TargetInvocationException error) when (error.InnerException is ArgumentException) { checks++; return; }
         throw new Exception("Invalid configuration passed validation.");
     }
-    private sealed class TestSocket : ISocket
+    private sealed class WrappedSocket : TestSocket
+    {
+        public readonly ISocket Original;
+        internal WrappedSocket(ISocket original) : base("Steam_111") => Original = original;
+    }
+    private class TestSocket : ISocket
     {
         internal string Identity; internal bool Connected = true;
         internal TestSocket(string identity) => Identity = identity;

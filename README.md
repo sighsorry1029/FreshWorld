@@ -39,9 +39,13 @@ The initial save is mandatory. A save failure or the 180-second save timeout pre
 
 When hosting a world, FreshWorld includes previously saved chunks that are now completely empty in the game's normal save process. This prevents an old chunk file from restoring deleted objects after a world reload. The correction adds no extra save or cfg option and does not remove duplicates already present in the world.
 
-With the verified Upgrade World 1.85 save patches active, FreshWorld leaves empty-chunk cleanup to Upgrade World. Running both strategies previously could leave a saved chunk entry pointing to a missing file. FreshWorld checks the active patches after startup and at saving, so plugin load order does not select the wrong strategy. No Upgrade World dependency is required.
+With a recognized Upgrade World empty-chunk implementation, FreshWorld leaves that cleanup to Upgrade World. Running both strategies previously could leave a saved chunk entry pointing to a missing file. Recognition checks the active patch set, shared state and relevant method bodies, not the plugin version or whole DLL identity. The implementations supplied in Upgrade World 1.85 and 1.86 pass the same check. No Upgrade World dependency is required.
 
-Incomplete or unrecognized Upgrade World save patches block new world saves before preparation and produce an error with their identities. If this error appears, stop play and resolve the mod combination before restarting; unsaved progress cannot be safely persisted in that state. Turning off automatic restoration does not disable these save checks. This compatibility fix does not repair existing missing files or corrupted worlds.
+Incomplete or unrecognized combinations disable FreshWorld maintenance and its save changes. **FreshWorld does not cancel world saves.** At startup, its operational patches are not installed until compatibility passes. If a conflict appears later, queued work is cancelled and active work stops at its next cleanup boundary. Applied changes remain; pending destruction messages, temporary zone loads and active configuration logins finish before operational patches are removed. New configuration synchronization stops during this cleanup. An unrecognized socket wrapper can defer final removal until that peer disconnects. Authenticated `freshworld status` remains available and reports the reason.
+
+Resolve the conflicting mod combination and restart to re-enable FreshWorld. A disabled FreshWorld does not verify or repair another mod's save behavior. This fix does not recover previously unsaved progress, missing files or corrupted worlds.
+
+Compatibility is checked after plugin initialization, before maintenance admission and when preparing a save snapshot. Relevant method-body analysis is cached per loaded assembly; active patches are rechecked without reanalyzing IL. Unrelated build changes are allowed, but an unrecognized compiler or algorithm change can still disable FreshWorld. Replacing DLLs or changing save patches during a running save is unsupported.
 
 ## General: automatic scheduling
 

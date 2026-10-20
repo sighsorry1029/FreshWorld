@@ -80,7 +80,7 @@ namespace HarmonyLib
         public string Id { get; } = id;
         public List<Type> PatchedTypes { get; } = new();
         public void PatchAll(Type type) => PatchedTypes.Add(type);
-        public void UnpatchSelf() { }
+        public void UnpatchSelf() => PatchedTypes.Clear();
     }
     [AttributeUsage(AttributeTargets.Class)]
     public sealed class HarmonyPatch(Type type, string name, params Type[] argumentTypes) : Attribute
@@ -158,6 +158,7 @@ namespace FreshWorld.Engine
 
     internal static class GameWorld
     {
+        public static bool HasPendingMaintenanceCleanup;
         public static int ProcessDeferredReleases() => 0;
     }
 }

@@ -23,6 +23,10 @@ internal sealed class ConfigSynchronization : IDisposable
     private static readonly FieldInfo Versions = AccessTools.Field(typeof(VersionCheck), "versionChecks");
     private static readonly FieldInfo VersionOwner = AccessTools.Field(typeof(VersionCheck), "ConfigSync");
     private static readonly FieldInfo RoutedHandlers = AccessTools.Field(typeof(ZRoutedRpc), "m_functions");
+    private static readonly Type LoginBuffer = typeof(ConfigSync).GetNestedType("SendConfigsAfterLogin", BindingFlags.NonPublic)!
+        .GetNestedType("BufferingSocket", BindingFlags.NonPublic)!;
+    private static readonly FieldInfo LoginFinished = AccessTools.Field(LoginBuffer, "finished");
+    private static readonly Dictionary<Type, FieldInfo?> SocketWrappers = new();
 
     private readonly ConfigFile file;
     private readonly FreshWorldConfig settings;
@@ -32,6 +36,7 @@ internal sealed class ConfigSynchronization : IDisposable
     private readonly ConfigEntryBase[] allEntries;
     private readonly ConfigSync sync;
     private bool disposed;
+    private bool suspended;
 
     internal ConfigSynchronization(ConfigFile file, FreshWorldConfig settings, Harmony harmony,
         Action changed, Action<string> warn)
@@ -100,7 +105,7 @@ internal sealed class ConfigSynchronization : IDisposable
 
     internal void Publish(long target = 0)
     {
-        if (!disposed && ZNet.instance != null && ZNet.instance.IsServer() && !ZNet.instance.HaveStopped)
+        if (!suspended && ZNet.instance != null && ZNet.instance.IsServer() && !ZNet.instance.HaveStopped)
             Broadcast.Invoke(sync, new object[] { target, allEntries });
     }
 
@@ -131,7 +136,7 @@ internal sealed class ConfigSynchronization : IDisposable
     {
         __state = false;
         var owner = active;
-        if (owner == null || !ReferenceEquals(owner.sync, __instance)) return false;
+        if (owner == null || owner.suspended || !ReferenceEquals(owner.sync, __instance)) return false;
         var net = ZNet.instance;
         // A routed sender ID alone is not identity. Match the actual RPC and live session first.
         if (net == null || !net.IsServer() || net.HaveStopped || ZNet.World == null) return false;
@@ -193,7 +198,7 @@ internal sealed class ConfigSynchronization : IDisposable
     private static bool ReceiveServer(ConfigSync __instance, ZRpc rpc)
     {
         var net = ZNet.instance;
-        if (active == null || !ReferenceEquals(active.sync, __instance) || net == null ||
+        if (active == null || active.suspended || !ReferenceEquals(active.sync, __instance) || net == null ||
             net.IsServer() || net.HaveStopped) return false;
         // Initial configs arrive before PeerInfo has made the server peer ready.
         return ConnectedPeer(net, rpc)?.m_server == true;
@@ -202,7 +207,7 @@ internal sealed class ConfigSynchronization : IDisposable
     private static bool SendChanges(ConfigSync __instance, ConfigEntryBase[] configs)
     {
         var owner = active;
-        if (owner == null || !ReferenceEquals(owner.sync, __instance)) return false;
+        if (owner == null || owner.suspended || !ReferenceEquals(owner.sync, __instance)) return false;
         var net = ZNet.instance;
         if (net == null || net.HaveStopped) return false;
         if (net.IsServer()) return true;
@@ -237,12 +242,60 @@ internal sealed class ConfigSynchronization : IDisposable
         return false;
     }
 
+    internal void Suspend()
+    {
+        if (suspended) return;
+        suspended = true;
+        file.SettingChanged -= OnSettingChanged;
+        sync.SourceOfTruthChanged -= OnSourceChanged;
+        // ServerSync keeps anonymous per-entry callbacks. Make them inert before removing our guards.
+        foreach (var entry in allEntries)
+            foreach (var registration in entry.Description.Tags.OfType<OwnConfigEntryBase>())
+                registration.SynchronizedConfig = false;
+    }
+
+    internal bool HasPendingLogin
+    {
+        get
+        {
+            if (ZNet.instance == null) return false;
+            foreach (var peer in ZNet.instance.GetPeers())
+            {
+                // Other embedded ServerSync copies can wrap our socket. Inspect without unwrapping it.
+                ISocket? socket = peer.m_rpc.GetSocket();
+                for (var depth = 0; socket != null; depth++)
+                {
+                    if (depth == 32) return true;
+                    var type = socket.GetType();
+                    if (type == LoginBuffer)
+                    {
+                        if (!(bool)LoginFinished.GetValue(socket)) return true;
+                        break;
+                    }
+                    if (!SocketWrappers.TryGetValue(type, out var original))
+                    {
+                        original = AccessTools.Field(type, "Original");
+                        if (original != null && !typeof(ISocket).IsAssignableFrom(original.FieldType)) original = null;
+                        SocketWrappers.Add(type, original);
+                    }
+                    if (original == null)
+                    {
+                        // An opaque foreign wrapper may hide an active login; retain guards until it leaves.
+                        if (type.Assembly != typeof(ZNet).Assembly) return true;
+                        break;
+                    }
+                    socket = (ISocket?)original.GetValue(socket);
+                }
+            }
+            return false;
+        }
+    }
+
     public void Dispose()
     {
         if (disposed) return;
         disposed = true;
-        file.SettingChanged -= OnSettingChanged;
-        sync.SourceOfTruthChanged -= OnSourceChanged;
+        Suspend();
         var rpcName = (sync.Name + " ConfigSync").GetStableHashCode();
         if (ZRoutedRpc.instance != null) ((IDictionary)RoutedHandlers.GetValue(ZRoutedRpc.instance)).Remove(rpcName);
         if (ZNet.instance != null)

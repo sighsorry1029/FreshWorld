@@ -277,6 +277,17 @@ internal static class GameWorld
         return released;
     }
 
+    // Raw destruction notifications may outlive the coroutine; do not remove their batching patch early.
+    internal static bool HasPendingMaintenanceCleanup
+    {
+        get
+        {
+            EnsureLoadWorld();
+            return DeferredReleases.Count != 0 || OwnedLoads.Count != 0 ||
+                (ZDOMan.instance != null && PendingDestruction(ZDOMan.instance).Count != 0);
+        }
+    }
+
     public static bool TryGetRoot(Vector2s zone, out GameObject root)
     {
         var roots = (IDictionary)(ZoneRoots.GetValue(ZoneSystem.instance)

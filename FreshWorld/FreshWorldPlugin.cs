@@ -32,10 +32,12 @@ namespace FreshWorld
         private ConfigSynchronization? configSync;
         private RuntimeSettings? settings;
         private Harmony? harmony;
+        private Harmony? commandHarmony;
         private FileSystemWatcher? watcher;
         private int reloadRequested;
         private int configValuesChanged;
         private bool supported;
+        private bool compatibilityDrained;
         private bool sessionFaulted;
         private ZNet? host;
         private long? worldUid;
@@ -66,18 +68,40 @@ namespace FreshWorld
             Instance = this;
             try
             {
+                EmptyChunkSaveCompatibility.Reset();
                 configuration = new FreshWorldConfig(Config);
                 harmony = new Harmony(PluginGuid);
+                commandHarmony = new Harmony(PluginGuid + ".Commands");
+                // Keep authenticated diagnostics available even if maintenance cannot be enabled.
+                foreach (var type in PatchTypes().Where(type => type.Namespace == "FreshWorld.Commands"))
+                    commandHarmony.PatchAll(type);
+                FreshWorldCommands.Register(HandleCommand, message => Logger.LogWarning(message));
+            }
+            catch (Exception error)
+            {
+                CleanupPlugin();
+                Logger.LogError("FreshWorld initialization failed; maintenance is disabled. " + error);
+            }
+        }
+
+        private static Type[] PatchTypes() => typeof(FreshWorldPlugin).Assembly.GetTypes().Where(type =>
+            (type.Namespace == "FreshWorld" || type.Namespace?.StartsWith("FreshWorld.", StringComparison.Ordinal) == true) &&
+            type.IsDefined(typeof(HarmonyPatch), inherit: false)).ToArray();
+
+        // All plugin Awake registrations precede Start. No FreshWorld world/save hooks run before arbitration.
+        private void Start()
+        {
+            if (!ReferenceEquals(Instance, this) || harmony == null) return;
+            if (EmptyChunkSaveCompatibility.Check() == EmptyChunkSaveCompatibility.Strategy.Unsupported) return;
+            try
+            {
                 // The embedded ServerSync library installs its own patches. Do not patch it twice.
                 // Unannotated helpers can have ordinary Prepare/Cleanup methods that Harmony treats as hooks.
-                foreach (var type in typeof(FreshWorldPlugin).Assembly.GetTypes().Where(type =>
-                    (type.Namespace == "FreshWorld" || type.Namespace?.StartsWith("FreshWorld.", StringComparison.Ordinal) == true) &&
-                    type.IsDefined(typeof(HarmonyPatch), inherit: false)))
+                foreach (var type in PatchTypes().Where(type => type.Namespace != "FreshWorld.Commands"))
                     harmony.PatchAll(type);
                 configSync = new ConfigSynchronization(Config, configuration, harmony,
                     () => Interlocked.Exchange(ref configValuesChanged, 1), message => Logger.LogWarning(message));
                 ReloadSettings(false);
-                FreshWorldCommands.Register(HandleCommand, message => Logger.LogWarning(message));
                 watcher = new FileSystemWatcher(Path.GetDirectoryName(Config.ConfigFilePath)!, Path.GetFileName(Config.ConfigFilePath));
                 watcher.Changed += OnConfigChanged;
                 watcher.Created += OnConfigChanged;
@@ -91,12 +115,6 @@ namespace FreshWorld
                 CleanupPlugin();
                 Logger.LogError("FreshWorld initialization failed; maintenance is disabled. " + error);
             }
-        }
-
-        // Unity Start follows plugin Awake registration; the save guard still checks again for late patches.
-        private void Start()
-        {
-            if (supported) EmptyChunkSaveCompatibility.Check();
         }
 
         internal static void LogSaveCompatibility(string message, bool error)
@@ -176,6 +194,11 @@ namespace FreshWorld
                 if (worldUid != null && (!ReferenceEquals(host, current) || worldUid != currentUid || !IsHost(current)))
                     StopSession();
 
+                if (EmptyChunkSaveCompatibility.DisabledReason != null)
+                {
+                    DrainDisabledMaintenance();
+                    return;
+                }
                 // File watchers only flag changes. All Unity and configuration work stays on this thread.
                 ApplyPendingSettings();
 
@@ -215,6 +238,7 @@ namespace FreshWorld
                     else if (runner == null)
                         TryDispatch(pendingManual.Run);
                 }
+                if (EmptyChunkSaveCompatibility.DisabledReason != null) return;
 
                 if (now < nextPoll) return;
                 nextPoll = now + SchedulePollIntervalSeconds;
@@ -274,10 +298,13 @@ namespace FreshWorld
         {
             try
             {
-                if (!supported || !IsCurrentRequest(context))
+                if (!IsCurrentRequest(context))
                 { context.Reply("Request rejected: this host session or your authority is no longer valid."); return; }
                 if (!Enum.IsDefined(typeof(FreshWorldCommandAction), action))
                 { context.Reply("Invalid command action."); return; }
+                if (EmptyChunkSaveCompatibility.DisabledReason != null)
+                { context.Reply(DisabledStatus()); return; }
+                if (!supported) { context.Reply("FreshWorld initialization is not complete; maintenance is unavailable."); return; }
                 if (!WorldReady()) { context.Reply("Request rejected: the world is not ready."); return; }
                 if (action == FreshWorldCommandAction.Invasions)
                 {
@@ -341,6 +368,7 @@ namespace FreshWorld
 
         private string StatusMessage()
         {
+            if (EmptyChunkSaveCompatibility.DisabledReason != null) return DisabledStatus();
             if (sessionFaulted) return "Maintenance is faulted for this world session. " + progress;
             if (runner != null) return "Running " + activeRunId + ": " + progress;
             if (pendingManual != null) return "Pending " + pendingManual.Run.Id + ": " + (pendingManual.LastWait ?? "waiting to start");
@@ -359,6 +387,11 @@ namespace FreshWorld
         private void TryDispatch(ScheduledRun run)
         {
             if (runner != null || settings == null || sessionFaulted) return;
+            if (EmptyChunkSaveCompatibility.Check() == EmptyChunkSaveCompatibility.Strategy.Unsupported)
+            {
+                DrainDisabledMaintenance();
+                return;
+            }
             if (!run.IsManual && !settings.AutomaticEnabled) return;
             var options = settings.Options;
             var request = pendingManual;
@@ -409,6 +442,11 @@ namespace FreshWorld
                     requester?.Reply("Manual reset: processing all eligible zones. AutomaticResetPercent does not apply.");
                 bool CanContinue()
                 {
+                    if (EmptyChunkSaveCompatibility.DisabledReason != null)
+                    {
+                        failure ??= new InvalidOperationException(DisabledStatus());
+                        return false;
+                    }
                     if (requester != null && !IsCurrentRequest(requester))
                     {
                         failure ??= new InvalidOperationException("The requester's connection, session, or authority is no longer valid.");
@@ -516,6 +554,37 @@ namespace FreshWorld
             CleanupPlugin();
         }
 
+        private static string DisabledStatus() => "FreshWorld disabled: " + EmptyChunkSaveCompatibility.DisabledReason +
+            " Maintenance and FreshWorld save changes are disabled. World saves are not blocked by FreshWorld. Restart after resolving the mod combination.";
+
+        private void DrainDisabledMaintenance()
+        {
+            // Called from Update/admission, never reentrantly from the save postfix.
+            // GuardedCoroutine cancels at the next yield boundary and runs every finally/cleanup.
+            configSync?.Suspend();
+            if (runner != null)
+            {
+                var active = runner;
+                if (!active.MoveNext() && ReferenceEquals(runner, active)) runner = null;
+            }
+            if (runner != null || compatibilityDrained) return;
+            CloseScheduler("FreshWorld save compatibility is disabled.");
+            if (IsHost(ZNet.instance) && ZoneSystem.instance != null && ZDOMan.instance != null)
+            {
+                GameWorld.ProcessDeferredReleases();
+                // Keep bounded destruction sending and delayed native load cleanup until drained.
+                if (GameWorld.HasPendingMaintenanceCleanup) return;
+            }
+            DisposeWatcher();
+            // ServerSync enumerates its registration set across login yields. Do not invalidate it.
+            if (configSync?.HasPendingLogin == true) return;
+            configSync?.Dispose();
+            configSync = null;
+            harmony?.UnpatchSelf();
+            compatibilityDrained = true;
+            Logger.LogWarning("FreshWorld maintenance cleanup finished; operational patches removed. Only authenticated command diagnostics remain.");
+        }
+
         private void CleanupPlugin()
         {
             supported = false;
@@ -526,6 +595,7 @@ namespace FreshWorld
                 TryCleanup(StopSession, "Could not stop the active world session.");
                 TryCleanup(FreshWorldCommands.Unregister, "Could not unregister the console command.");
                 TryCleanup(() => harmony?.UnpatchSelf(), "Could not remove Harmony patches.");
+                TryCleanup(() => commandHarmony?.UnpatchSelf(), "Could not remove command authentication patches.");
             }
             finally { Instance = null; }
         }
