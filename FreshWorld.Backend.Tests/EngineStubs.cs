@@ -73,10 +73,10 @@ public class DungeonDB
 public sealed class Prefab(string id) { public string name = id; }
 public readonly record struct LocationPrefab(string Name)
 {
-    public bool IsValid => true;
-    public bool IsLoaded => Fake.MetadataReady;
+    public bool IsValid => !Fake.NamedMetadata;
+    public bool IsLoaded { get { Fake.OnMetadataReady?.Invoke(); return Fake.MetadataReady; } }
     public void LoadAsync() { Fake.MetadataReferences++; Fake.OnMetadataLoad?.Invoke(); }
-    public void Release() => Fake.MetadataReferences--;
+    public void Release() { Fake.MetadataReferences--; Fake.OnMetadataRelease?.Invoke(); }
     public UnityEngine.GameObject Asset
     {
         get
@@ -125,6 +125,9 @@ internal static class Fake
     public static Action<string>? OnStart;
     public static Action<ZoneSystem.ZoneLocation>? OnResolve;
     public static Action? OnMetadataLoad;
+    public static Action? OnMetadataReady;
+    public static Action? OnMetadataRelease;
+    public static bool NamedMetadata;
     public static bool MetadataReady = true;
     public static int MetadataReferences;
     public static string? ThrowOnZone;
@@ -143,6 +146,7 @@ internal static class Fake
     {
         Calls = new(); Arguments = new(); Candidates = new(); MarkerZones = new(); PlayerZones = new(); VegetationPasses = new();
         OnStart = null; OnResolve = null; MetadataReady = true; MetadataReferences = 0; OnMetadataLoad = null; ThrowOnZone = null; ThrowOnStart = null;
+        OnMetadataReady = null; OnMetadataRelease = null; NamedMetadata = false;
         LoadOnPoke = true; HoldSave = false; IgnoreSave = false; SaveError = null;
         BorderRepairs = 0; LoadReleases = 0;
         ReleaseFailures = new();
@@ -260,8 +264,8 @@ namespace FreshWorld.Engine
 {
     public static class NativePlacement
     {
-        public static bool CanSpawnLocation(ZoneSystem zones, ZoneSystem.ZoneLocation location) { Fake.OnResolve?.Invoke(location); return true; }
-        public static bool IsValidLocationPrefab(ZoneSystem.ZoneLocation location) => location.m_prefab.IsValid;
+        public static bool CanSpawnLocation(ZoneSystem zones, ZoneSystem.ZoneLocation location) { Fake.OnMetadataReady?.Invoke(); Fake.OnResolve?.Invoke(location); return Fake.MetadataReady; }
+        public static bool IsValidLocationPrefab(ZoneSystem.ZoneLocation location) => !string.IsNullOrWhiteSpace(location.m_prefab.Name);
         public static List<UnityEngine.GameObject> TemporaryObjects(ZoneSystem zones) => zones.m_tempSpawnedObjects;
     }
     public static class GameWorld

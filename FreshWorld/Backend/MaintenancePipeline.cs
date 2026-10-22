@@ -251,76 +251,115 @@ internal sealed class MaintenancePipeline
         if (_options.LocationsEnabled) managedIds.UnionWith(_options.LocationIds);
         if (managedIds.Count == 0) yield break;
 
-        // Resolve every type represented in this world before comparing bounds. An unresolved
-        // custom location outside the apparent neighborhood can still extend into it. Request
-        // just its prefab, not every possible dungeon room, and release our reference each time.
-        var definitions = _zones.m_locationInstances.Values
-            .Where(location => location.m_location != null && NativePlacement.IsValidLocationPrefab(location.m_location))
-            .Select(location => location.m_location).Distinct().ToArray();
-        if (!definitions.Any(definition => managedIds.Contains(definition.m_prefab.Name))) yield break;
-        var resolved = new Dictionary<ZoneSystem.ZoneLocation, string>();
-        var planningTime = Stopwatch.StartNew();
-        var frameTime = Stopwatch.StartNew();
-        foreach (var definition in definitions)
+        var progress = new LocationPlanningProgress(_zones.m_locationInstances.Count);
+        var completed = false;
+        try
         {
-            if (frameTime.Elapsed.TotalMilliseconds >= _options.FrameBudgetMilliseconds)
+            // Resolve every type represented in this world before comparing bounds. An unresolved
+            // custom location outside the apparent neighborhood can still extend into it. Request
+            // just its prefab, not every possible dungeon room, and release our reference each time.
+            var definitions = _zones.m_locationInstances.Values
+                .Where(location => location.m_location != null && NativePlacement.IsValidLocationPrefab(location.m_location))
+                .Select(location => location.m_location).Distinct().ToArray();
+            progress.Definitions = definitions.Length;
+            if (!definitions.Any(definition => managedIds.Contains(definition.m_prefab.Name)))
             {
-                yield return null;
-                frameTime.Restart();
+                completed = true;
+                yield break;
             }
-            var reference = definition.m_prefab;
-            var id = reference.Name;
-            var acquired = false;
-            var waiting = Stopwatch.StartNew();
-            try
+            var resolved = new Dictionary<ZoneSystem.ZoneLocation, string>();
+            var planningTime = Stopwatch.StartNew();
+            var frameTime = Stopwatch.StartNew();
+            progress.Enter(PlanningStage.BetweenPrefabs);
+            foreach (var definition in definitions)
             {
-                if (reference.IsValid)
+                if (frameTime.Elapsed.TotalMilliseconds >= _options.FrameBudgetMilliseconds)
                 {
-                    // Native LoadAsync increments the reference before invoking callbacks,
-                    // including callbacks that can run synchronously and throw.
-                    acquired = true;
-                    reference.LoadAsync();
-                }
-                while (true)
-                {
-                    yield return WaitUntilUnpaused(waiting, planningTime);
-                    RequireWorld();
-                    if (planningTime.Elapsed.TotalSeconds >= 180)
-                        throw new TimeoutException("Location reservation planning did not finish within 180 seconds.");
-                    // Named mod references may instead provide their own native readiness hook.
-                    if (acquired ? reference.IsLoaded : NativePlacement.CanSpawnLocation(_zones, definition)) break;
-                    if (waiting.Elapsed.TotalSeconds >= 30)
-                        throw new TimeoutException("Location metadata did not load before planning: " + id);
                     yield return null;
+                    frameTime.Restart();
                 }
-                if (acquired) _ = reference.Asset; // Allow asset-resolution hooks to finalize metadata.
-                resolved[definition] = id;
+                var reference = definition.m_prefab;
+                var id = reference.Name;
+                var acquired = false;
+                var metadataResolved = false;
+                var waiting = Stopwatch.StartNew();
+                progress.BeginPrefab(id);
+                try
+                {
+                    if (reference.IsValid)
+                    {
+                        // Native LoadAsync increments the reference before invoking callbacks,
+                        // including callbacks that can run synchronously and throw.
+                        acquired = true;
+                        reference.LoadAsync();
+                    }
+                    progress.Readiness = acquired ? "IsLoaded" : "CanSpawnLocation";
+                    progress.Enter(PlanningStage.WaitForPrefab);
+                    while (true)
+                    {
+                        yield return WaitUntilUnpaused(waiting, planningTime, progress.Timer);
+                        RequireWorld();
+                        if (planningTime.Elapsed.TotalSeconds >= 180)
+                            throw new TimeoutException("Location reservation planning did not finish within 180 seconds.");
+                        // Named mod references may instead provide their own native readiness hook.
+                        var ready = acquired ? reference.IsLoaded : NativePlacement.CanSpawnLocation(_zones, definition);
+                        progress.LastReady = ready;
+                        if (ready) break;
+                        if (waiting.Elapsed.TotalSeconds >= 30)
+                            throw new TimeoutException("Location metadata did not load before planning: " + id);
+                        yield return null;
+                    }
+                    progress.Enter(PlanningStage.ResolveAsset);
+                    if (acquired) _ = reference.Asset; // Allow asset-resolution hooks to finalize metadata.
+                    resolved[definition] = id;
+                    metadataResolved = true;
+                }
+                finally
+                {
+                    // Capture the original stop before cleanup can change its stage or throw.
+                    // Disposal also reaches this path, so do not label every stop as a failure.
+                    if (!metadataResolved) progress.ReportStopped(_warn);
+                    if (acquired)
+                    {
+                        if (metadataResolved) progress.Enter(PlanningStage.ReleasePrefab);
+                        reference.Release();
+                    }
+                }
+                progress.CompletePrefab();
             }
-            finally
+            progress.Enter(PlanningStage.ValidateDefinitions);
+            progress.Prefab = null;
+            RequireWorld();
+            foreach (var location in _zones.m_locationInstances.Values)
             {
-                if (acquired) reference.Release();
+                progress.Prefab = null;
+                var definition = location.m_location;
+                if (definition == null || !NativePlacement.IsValidLocationPrefab(definition)) continue;
+                progress.Prefab = definition.m_prefab.Name;
+                if (!resolved.TryGetValue(definition, out var id) || !string.Equals(id, progress.Prefab, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Location definitions changed during planning; retry maintenance: " + progress.Prefab);
             }
+            ReserveLocationFootprints(managedIds, overrides, progress);
+            completed = true;
+            if (!_options.ZonesEnabled && _overlappingLocations.Count > 0)
+            {
+                var examples = _overlappingLocations.Take(8).Select(anchor =>
+                    _zones.m_locationInstances[anchor].m_location.m_prefab.Name + " at " + anchor);
+                _warn($"Location reset: {_overlappingLocations.Count} overlapping location footprints preserved ({string.Join(", ", examples)}). Their zones are reserved; review location placement and LocationResetRadii before retrying.");
+            }
+            _log($"Location plan: {_managedLocations.Count} managed locations; {_reservedLocationZones.Count} sectors excluded from individual resets; {_locationZoneGroups.Count} zone groups; {progress.Definitions} definitions in {progress.Timer.Elapsed.TotalSeconds:F1}s.");
         }
-        RequireWorld();
-        foreach (var location in _zones.m_locationInstances.Values)
+        finally
         {
-            var definition = location.m_location;
-            if (definition == null || !NativePlacement.IsValidLocationPrefab(definition)) continue;
-            if (!resolved.TryGetValue(definition, out var id) || !string.Equals(id, definition.m_prefab.Name, StringComparison.Ordinal))
-                throw new InvalidOperationException("Location definitions changed during planning; retry maintenance: " + definition.m_prefab.Name);
+            if (!completed) progress.ReportStopped(_warn);
         }
-        ReserveLocationFootprints(managedIds, overrides);
-        if (!_options.ZonesEnabled && _overlappingLocations.Count > 0)
-        {
-            var examples = _overlappingLocations.Take(8).Select(anchor =>
-                _zones.m_locationInstances[anchor].m_location.m_prefab.Name + " at " + anchor);
-            _warn($"Location reset: {_overlappingLocations.Count} overlapping location footprints preserved ({string.Join(", ", examples)}). Their zones are reserved; review location placement and LocationResetRadii before retrying.");
-        }
-        _log($"Location plan: {_managedLocations.Count} managed locations; {_reservedLocationZones.Count} sectors excluded from individual resets; {_locationZoneGroups.Count} zone groups.");
     }
 
-    private void ReserveLocationFootprints(HashSet<string> managedIds, IReadOnlyDictionary<string, float> overrides)
+    private void ReserveLocationFootprints(HashSet<string> managedIds, IReadOnlyDictionary<string, float> overrides,
+        LocationPlanningProgress progress)
     {
+        progress.Enter(PlanningStage.BuildFootprints);
+        progress.Prefab = null;
         _locationFootprints.Clear();
         _managedLocations.Clear();
         _reservedLocationZones.Clear();
@@ -329,9 +368,12 @@ internal sealed class MaintenancePipeline
         _locationGroupAnchors.Clear();
         foreach (var pair in _zones.m_locationInstances)
         {
+            progress.Anchor = pair.Key;
+            progress.Prefab = null;
             var location = pair.Value;
             if (location.m_location == null || !NativePlacement.IsValidLocationPrefab(location.m_location)) continue;
             var id = location.m_location.m_prefab.Name;
+            progress.Prefab = id;
             overrides.TryGetValue(id, out var minimumRadius);
             var footprint = new LocationFootprint(pair.Key, location, minimumRadius);
             _locationFootprints.Add(pair.Key, footprint);
@@ -339,13 +381,19 @@ internal sealed class MaintenancePipeline
                 _managedLocations.Add(pair.Key);
         }
         if (_managedLocations.Count == 0) return;
+        progress.Enter(PlanningStage.GroupFootprints);
+        progress.Prefab = null;
+        progress.Anchor = null;
         var bySector = new Dictionary<Vector2s, List<LocationFootprint>>();
         foreach (var footprint in _locationFootprints.Values)
+        {
+            progress.Anchor = footprint.Anchor;
             foreach (var sector in footprint.Zones)
             {
                 if (!bySector.TryGetValue(sector, out var entries)) bySector.Add(sector, entries = new());
                 entries.Add(footprint);
             }
+        }
         var reservedAnchors = new HashSet<Vector2s>();
         foreach (var start in _managedLocations.OrderBy(zone => zone.x).ThenBy(zone => zone.y))
         {
@@ -357,6 +405,7 @@ internal sealed class MaintenancePipeline
             while (pending.Count > 0)
             {
                 var anchor = pending.Dequeue();
+                progress.Anchor = anchor;
                 anchors.Add(anchor);
                 var footprint = _locationFootprints[anchor];
                 group.UnionWith(footprint.Zones);
@@ -612,17 +661,101 @@ internal sealed class MaintenancePipeline
             throw new TimeoutException($"World save did not finish within {_options.SaveTimeoutSeconds}s.");
     }
 
-    private IEnumerator WaitUntilUnpaused(Stopwatch? timer = null, Stopwatch? additionalTimer = null)
+    private IEnumerator WaitUntilUnpaused(Stopwatch? timer = null, Stopwatch? additionalTimer = null,
+        Stopwatch? diagnosticTimer = null)
     {
         while (Time.timeScale <= 0f)
         {
             RequireWorld();
             timer?.Stop();
             additionalTimer?.Stop();
+            diagnosticTimer?.Stop();
             yield return null;
         }
         timer?.Start();
         additionalTimer?.Start();
+        diagnosticTimer?.Start();
+    }
+
+    private enum PlanningStage
+    {
+        CollectDefinitions, BetweenPrefabs, LoadAsync, WaitForPrefab, ResolveAsset,
+        ReleasePrefab, ValidateDefinitions, BuildFootprints, GroupFootprints
+    }
+
+    // Bounded, run-local diagnostics. No per-frame formatting, logging, history, or extra asset queries.
+    private sealed class LocationPlanningProgress
+    {
+        public readonly Stopwatch Timer = Stopwatch.StartNew();
+        public int Definitions;
+        public string? Prefab;
+        public Vector2s? Anchor;
+        public string? Readiness;
+        public bool? LastReady;
+        private readonly int _instances;
+        private readonly long[] _ticks = new long[(int)PlanningStage.GroupFootprints + 1];
+        private PlanningStage _stage;
+        private long _stageStart;
+        private long _prefabStart = -1;
+        private int _completed;
+        private long _slowestTicks;
+        private string? _slowestPrefab;
+        private bool _reported;
+
+        public LocationPlanningProgress(int instances) => _instances = instances;
+
+        public void Enter(PlanningStage stage)
+        {
+            var now = Timer.ElapsedTicks;
+            _ticks[(int)_stage] += now - _stageStart;
+            _stageStart = now;
+            _stage = stage;
+        }
+
+        public void BeginPrefab(string id)
+        {
+            Prefab = id;
+            Readiness = null;
+            LastReady = null;
+            _prefabStart = Timer.ElapsedTicks;
+            Enter(PlanningStage.LoadAsync);
+        }
+
+        public void CompletePrefab()
+        {
+            var elapsed = Timer.ElapsedTicks - _prefabStart;
+            if (_slowestPrefab == null || elapsed > _slowestTicks)
+            {
+                _slowestTicks = elapsed;
+                _slowestPrefab = Prefab;
+            }
+            _completed++;
+            Enter(PlanningStage.BetweenPrefabs);
+            Prefab = null;
+            _prefabStart = -1;
+            Readiness = null;
+            LastReady = null;
+        }
+
+        public void ReportStopped(Action<string> warn)
+        {
+            if (_reported) return;
+            _reported = true;
+            try
+            {
+                var now = Timer.ElapsedTicks;
+                double Seconds(long ticks) => (double)ticks / Stopwatch.Frequency;
+                double StageSeconds(PlanningStage stage) =>
+                    Seconds(_ticks[(int)stage] + (_stage == stage ? now - _stageStart : 0));
+                var prefabTime = _prefabStart >= 0 ? FormattableString.Invariant($"{Seconds(now - _prefabStart):F2}s") : "n/a";
+                var anchor = Anchor is { } zone ? $"{zone.x},{zone.y}" : "n/a";
+                warn(FormattableString.Invariant($"Location planning stopped: stage={_stage}; prefab='{Prefab ?? "<none>"}'; anchor={anchor}; definitions={_completed}/{Definitions}; instances={_instances}; elapsed={Seconds(now):F2}s; stageElapsed={Seconds(now - _stageStart):F2}s; prefabElapsed={prefabTime}; readiness={Readiness ?? "n/a"}; lastReady={LastReady?.ToString() ?? "unknown"}; collect={StageSeconds(PlanningStage.CollectDefinitions):F2}s, between={StageSeconds(PlanningStage.BetweenPrefabs):F2}s, load={StageSeconds(PlanningStage.LoadAsync):F2}s, wait={StageSeconds(PlanningStage.WaitForPrefab):F2}s, asset={StageSeconds(PlanningStage.ResolveAsset):F2}s, release={StageSeconds(PlanningStage.ReleasePrefab):F2}s, validate={StageSeconds(PlanningStage.ValidateDefinitions):F2}s, footprints={StageSeconds(PlanningStage.BuildFootprints):F2}s, groups={StageSeconds(PlanningStage.GroupFootprints):F2}s; slowestCompleted='{_slowestPrefab ?? "<none>"}' ({Seconds(_slowestTicks):F2}s). No reset stage started in this run."));
+            }
+            catch (Exception)
+            {
+                // A diagnostic sink must not replace the original failure or prevent reference cleanup.
+            }
+        }
     }
 
     private bool IsSameWorld() => ReferenceEquals(ZNet.instance, _network) &&

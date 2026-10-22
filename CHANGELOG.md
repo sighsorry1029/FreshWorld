@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.6
+
+- Added a location planning report on failure or cancellation, including the current prefab or anchor, processing stage, progress, stage timings, and slowest completed prefab.
+- Added definition count and elapsed time to the existing planning summary, without per-frame logging or extra asset queries. Restoration rules and time limits are unchanged.
+
 ## 1.1.5
 
 - Fixed FreshWorld blocking world saves after an Upgrade World update. Compatibility now checks the relevant cleanup logic and active patches instead of a fixed DLL identity; Upgrade World 1.85 and 1.86 share the recognized implementation.

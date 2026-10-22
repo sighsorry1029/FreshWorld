@@ -7,6 +7,12 @@ using FreshWorld.Engine;
 var tests = new (string Name, Action Body)[]
 {
     ("metadata references are released when planning is cancelled or fails", LocationMetadataLifetime),
+    ("planning diagnostics identify native and named metadata failures without replacing them", PlanningFailureDiagnostics),
+    ("planning cancellation reports once without logging during loading waits", PlanningCancellationDiagnostics),
+    ("planning diagnostics cannot block cleanup or hide the original stop", PlanningDiagnosticSinkFailure),
+    ("planning reports definition changes and invalid bounds before reset", PlanningBoundsDiagnostics),
+    ("successful planning adds no per-prefab log lines", PlanningSuccessDiagnostics),
+    ("planning failures retain completed progress without carrying state into the next run", PlanningProgressDiagnostics),
     ("lazy neighboring bounds are resolved even outside the apparent reservation", HiddenNeighborLocation),
     ("replaced managed definitions abort before any reset", ReplacedPlanningDefinition),
     ("late mapped instances wait for the next reservation plan", LateMappedInstance),
@@ -132,6 +138,136 @@ static void LocationMetadataLifetime()
         True(!Fake.Calls.Any(call => call.Contains(".change:")));
     }
 }
+
+static void PlanningFailureDiagnostics()
+{
+    foreach (var stage in new[] { "LoadAsync", "WaitForPrefab", "ResolveAsset", "ReleasePrefab", "NamedReadiness" })
+    {
+        Fake.Reset(); Fake.AddZone(0);
+        var failure = new InvalidOperationException("fixture " + stage);
+        switch (stage)
+        {
+            case "LoadAsync": Fake.OnMetadataLoad = () => throw failure; break;
+            case "WaitForPrefab": Fake.OnMetadataReady = () => throw failure; break;
+            case "ResolveAsset": Fake.OnResolve = _ => throw failure; break;
+            case "ReleasePrefab": Fake.OnMetadataRelease = () => throw failure; break;
+            case "NamedReadiness": Fake.NamedMetadata = true; Fake.OnMetadataReady = () => throw failure; break;
+        }
+        var run = Run(MultiZoneOptions());
+        True(!run.Success); True(ReferenceEquals(failure, run.Errors.Single()));
+        var diagnostic = run.Warnings.Single(message => message.StartsWith("Location planning stopped:"));
+        True(diagnostic.Contains("stage=" + (stage == "NamedReadiness" ? "WaitForPrefab" : stage) + ";"));
+        True(diagnostic.Contains("prefab='cave'")); True(diagnostic.Contains("definitions=0/1"));
+        True(diagnostic.Contains("elapsed=")); True(diagnostic.Contains("stageElapsed="));
+        True(diagnostic.Contains("prefabElapsed="));
+        if (stage == "NamedReadiness") True(diagnostic.Contains("readiness=CanSpawnLocation"));
+        if (stage == "WaitForPrefab") True(diagnostic.Contains("readiness=IsLoaded"));
+        Equal(0, Fake.MetadataReferences);
+        True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    }
+}
+
+static void PlanningCancellationDiagnostics()
+{
+    Fake.AddZone(0); Fake.MetadataReady = false;
+    var warnings = new List<string>(); var logs = new List<string>(); var completed = new List<bool>();
+    using var lease = MaintenanceGate.Acquire();
+    using var runner = new GuardedCoroutine(new MaintenancePipeline(MultiZoneOptions(), true, logs.Add, warnings.Add).Run(),
+        () => true, Fake.UnexpectedErrors.Add, completed.Add);
+    True(runner.MoveNext()); // Mandatory save boundary.
+    True(runner.MoveNext());
+    var waitingLogCount = logs.Count;
+    for (var i = 0; i < 20; i++) True(runner.MoveNext());
+    Equal(waitingLogCount, logs.Count); Equal(0, warnings.Count); Equal(1, Fake.MetadataReferences);
+    runner.Dispose(); runner.Dispose();
+    Equal(1, completed.Count); True(!completed[0]); Equal(0, Fake.MetadataReferences);
+    Equal(1, warnings.Count);
+    True(warnings[0].Contains("stage=WaitForPrefab")); True(warnings[0].Contains("lastReady=False"));
+    True(!Fake.Calls.Any(call => call.Contains(".change:")));
+}
+
+static void PlanningDiagnosticSinkFailure()
+{
+    Fake.AddZone(0);
+    var failure = new InvalidOperationException("asset failure");
+    Fake.OnResolve = _ => throw failure;
+    var errors = new List<Exception>(); var completed = new List<bool>(); var warningCalls = 0;
+    using (MaintenanceGate.Acquire())
+    {
+        using var runner = new GuardedCoroutine(new MaintenancePipeline(MultiZoneOptions(), true, _ => { }, _ =>
+        {
+            warningCalls++;
+            throw new InvalidOperationException("diagnostic sink failure");
+        }).Run(), () => true, errors.Add, completed.Add);
+        Drain(runner);
+        True(!completed.Single()); True(ReferenceEquals(failure, errors.Single()));
+        Equal(1, warningCalls); Equal(0, Fake.MetadataReferences);
+        True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    }
+
+    Fake.Reset(); Fake.AddZone(0);
+    Fake.OnResolve = _ => throw failure;
+    Fake.OnMetadataRelease = () => throw new InvalidOperationException("cleanup failure");
+    var run = Run(MultiZoneOptions());
+    True(!run.Success); Equal(0, Fake.MetadataReferences);
+    True(run.Warnings.Single().Contains("stage=ResolveAsset")); // Cleanup must not replace the recorded stage.
+    True(run.Errors.Single().Message.Contains("cleanup failure")); // Preserve existing exception behavior.
+}
+
+static void PlanningBoundsDiagnostics()
+{
+    foreach (var invalidBounds in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0);
+        Fake.OnResolve = definition =>
+        {
+            if (invalidBounds) definition.m_exteriorRadius = float.NaN;
+            else
+            {
+                var location = ZoneSystem.instance.m_locationInstances[new(0, 0)];
+                location.m_location = new("changed");
+                ZoneSystem.instance.m_locationInstances[new(0, 0)] = location;
+            }
+        };
+        var run = Run(MultiZoneOptions()); True(!run.Success);
+        var diagnostic = run.Warnings.Single();
+        True(diagnostic.Contains("stage=" + (invalidBounds ? "BuildFootprints" : "ValidateDefinitions")));
+        True(diagnostic.Contains("prefab='" + (invalidBounds ? "cave" : "changed") + "'"));
+        True(diagnostic.Contains("definitions=1/1"));
+        if (invalidBounds) True(diagnostic.Contains("anchor=0,0"));
+        Equal(0, Fake.MetadataReferences); True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    }
+}
+
+static void PlanningSuccessDiagnostics()
+{
+    Fake.AddZone(0); Fake.AddZone(5, location: "other");
+    var logs = new List<string>();
+    var run = Run(MultiZoneOptions(), logs: logs);
+    True(run.Success); True(!run.Warnings.Any(message => message.Contains("planning stopped")));
+    var planLogs = logs.Where(message => message.StartsWith("Location plan:")).ToArray();
+    Equal(1, planLogs.Length); True(planLogs[0].Contains("2 definitions in "));
+    True(!logs.Any(message => message.Contains("stage=") || message.Contains("prefab='")));
+    Sequence([0, 5], Changed("zones")); Equal(0, Fake.MetadataReferences);
+}
+
+static void PlanningProgressDiagnostics()
+{
+    Fake.AddZone(0); Fake.AddZone(5, location: "other");
+    var requests = 0;
+    Fake.OnMetadataLoad = () => { if (++requests == 2) throw new InvalidOperationException("second prefab failure"); };
+    var run = Run(MultiZoneOptions()); True(!run.Success);
+    var diagnostic = run.Warnings.Single();
+    True(diagnostic.Contains("prefab='other'")); True(diagnostic.Contains("definitions=1/2"));
+    True(diagnostic.Contains("slowestCompleted='cave'")); Equal(0, Fake.MetadataReferences);
+    True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    Fake.OnMetadataLoad = () => throw new InvalidOperationException("first prefab failure");
+    var next = Run(MultiZoneOptions()); True(!next.Success);
+    True(next.Warnings.Single().Contains("definitions=0/2"));
+    True(next.Warnings.Single().Contains("slowestCompleted='<none>'"));
+    Equal(0, Fake.MetadataReferences);
+}
+
 static void HiddenNeighborLocation()
 {
     Fake.AddZone(0); Fake.AddZone(2, location: "other"); Fake.AddZone(3, location: null); Fake.AddZone(6, location: null);
@@ -1693,13 +1829,14 @@ static void AlwaysProtectedAfterSave()
     True(!Fake.Calls.Contains("zones.change:0"));
 }
 
-static (bool Success, List<Exception> Errors, List<string> Warnings) Run(RunOptions options, bool includeVegetation = true, int resetPercent = 100)
+static (bool Success, List<Exception> Errors, List<string> Warnings) Run(RunOptions options, bool includeVegetation = true, int resetPercent = 100,
+    List<string>? logs = null)
 {
     using var lease = MaintenanceGate.Acquire();
     var completed = new List<bool>();
     var errors = new List<Exception>();
     var warnings = new List<string>();
-    using var runner = new GuardedCoroutine(new MaintenancePipeline(options, includeVegetation, _ => { }, warnings.Add, resetPercent).Run(),
+    using var runner = new GuardedCoroutine(new MaintenancePipeline(options, includeVegetation, message => logs?.Add(message), warnings.Add, resetPercent).Run(),
         () => true, errors.Add, completed.Add);
     Drain(runner);
     Equal(1, completed.Count);
