@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.8
+
+- Removed the overall 180-second location planning limit so large location registries can finish loading without stopping normal progress.
+- Kept the independent 30-second timeout for each prefab, pause handling, failure diagnostics, and reference cleanup. Reset and protection rules are unchanged.
+- Added regression checks for long planning runs, individual prefab timeouts, readiness at the deadline, and paused loading.
+
 ## 1.1.7
 
 - Added optional Path of Valheiman protection for Warden and Power altars and active Blight objectives, including saved objects in unloaded zones. Blight veins and ordinary mobs do not reserve zones by themselves.

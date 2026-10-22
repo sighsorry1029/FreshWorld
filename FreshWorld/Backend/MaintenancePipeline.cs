@@ -272,7 +272,6 @@ internal sealed class MaintenancePipeline
                 yield break;
             }
             var resolved = new Dictionary<ZoneSystem.ZoneLocation, string>();
-            var planningTime = Stopwatch.StartNew();
             var frameTime = Stopwatch.StartNew();
             progress.Enter(PlanningStage.BetweenPrefabs);
             foreach (var definition in definitions)
@@ -301,14 +300,13 @@ internal sealed class MaintenancePipeline
                     progress.Enter(PlanningStage.WaitForPrefab);
                     while (true)
                     {
-                        yield return WaitUntilUnpaused(waiting, planningTime, progress.Timer);
+                        yield return WaitUntilUnpaused(waiting, progress.Timer);
                         RequireWorld();
-                        if (planningTime.Elapsed.TotalSeconds >= 180)
-                            throw new TimeoutException("Location reservation planning did not finish within 180 seconds.");
                         // Named mod references may instead provide their own native readiness hook.
                         var ready = acquired ? reference.IsLoaded : NativePlacement.CanSpawnLocation(_zones, definition);
                         progress.LastReady = ready;
                         if (ready) break;
+                        // Each prefab has its own deadline; completed loads do not consume later prefabs' time.
                         if (waiting.Elapsed.TotalSeconds >= 30)
                             throw new TimeoutException("Location metadata did not load before planning: " + id);
                         yield return null;
@@ -605,19 +603,16 @@ internal sealed class MaintenancePipeline
         return requested;
     }
 
-    private IEnumerator WaitUntilUnpaused(Stopwatch? timer = null, Stopwatch? additionalTimer = null,
-        Stopwatch? diagnosticTimer = null)
+    private IEnumerator WaitUntilUnpaused(Stopwatch? timer = null, Stopwatch? diagnosticTimer = null)
     {
         while (Time.timeScale <= 0f)
         {
             RequireWorld();
             timer?.Stop();
-            additionalTimer?.Stop();
             diagnosticTimer?.Stop();
             yield return null;
         }
         timer?.Start();
-        additionalTimer?.Start();
         diagnosticTimer?.Start();
     }
 

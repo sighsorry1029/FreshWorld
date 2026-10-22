@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using FreshWorld.Backend;
 using FreshWorld.Configuration;
 using FreshWorld.Runtime;
@@ -11,6 +10,10 @@ var tests = new (string Name, Action Body)[]
     ("orphan Blight links share one controller scan per frame and detect a later event", PovIndexCost),
     ("PoV options control stage protection independently and disabled Blight does not scan controllers", PovOptions),
     ("metadata references are released when planning is cancelled or fails", LocationMetadataLifetime),
+    ("progressing location metadata loads can take over 180 seconds in total", PlanningSlowProgress),
+    ("an unready prefab still times out after 30 active seconds before any reset", PlanningPrefabTimeout),
+    ("metadata ready on the deadline-crossing poll is accepted", PlanningReadyAtDeadline),
+    ("paused time does not consume the location metadata timeout", PlanningPauseTimeout),
     ("planning diagnostics identify native and named metadata failures without replacing them", PlanningFailureDiagnostics),
     ("planning cancellation reports once without logging during loading waits", PlanningCancellationDiagnostics),
     ("planning diagnostics cannot block cleanup or hide the original stop", PlanningDiagnosticSinkFailure),
@@ -121,6 +124,94 @@ foreach (var (name, body) in tests)
 }
 System.Console.WriteLine($"{tests.Length - failures}/{tests.Length} backend regression tests passed.");
 return failures == 0 ? 0 : 1;
+
+static void PlanningSlowProgress()
+{
+    using var time = Stopwatch.UseManualTime();
+    for (var i = 0; i < 10; i++) Fake.AddZone(i * 5, location: i == 0 ? "cave" : "cave" + i);
+    var loaded = 0;
+    var polls = 0;
+    Fake.OnMetadataLoad = () => { loaded++; polls = 0; Fake.MetadataReady = false; };
+    Fake.OnMetadataReady = () =>
+    {
+        if (++polls == 1) time.Advance(TimeSpan.FromSeconds(20));
+        else Fake.MetadataReady = true;
+    };
+    var logs = new List<string>();
+    var options = MultiZoneOptions();
+    options.VegetationEnabled = false;
+    options.LocationsEnabled = false;
+    var run = Run(options, logs: logs);
+    True(run.Success, string.Join("; ", run.Errors.Select(error => error.Message)));
+    Equal(10, loaded); Equal(0, Fake.MetadataReferences);
+    True(logs.Single(message => message.StartsWith("Location plan:")).Contains("10 definitions in 200"));
+    Equal(0, run.Warnings.Count);
+    // Restoration is admitted only after every definition has resolved.
+    Equal(10, Changed("zones").Count);
+}
+
+static void PlanningPrefabTimeout()
+{
+    foreach (var named in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.NamedMetadata = named; Fake.MetadataReady = false;
+        using var time = Stopwatch.UseManualTime();
+        using var lease = MaintenanceGate.Acquire();
+        var completed = new List<bool>(); var errors = new List<Exception>(); var warnings = new List<string>();
+        using var runner = new GuardedCoroutine(new MaintenancePipeline(MultiZoneOptions(), true, _ => { }, warnings.Add).Run(),
+            () => true, errors.Add, completed.Add);
+        True(runner.MoveNext()); // Save boundary, before any metadata load.
+        True(runner.MoveNext());
+        time.Advance(TimeSpan.FromSeconds(29)); True(runner.MoveNext()); Equal(0, errors.Count);
+        time.Advance(TimeSpan.FromSeconds(1)); True(!runner.MoveNext());
+        Sequence([false], completed); True(errors.Single() is TimeoutException);
+        True(errors[0].Message.Contains("cave")); Equal(0, Fake.MetadataReferences);
+        var diagnostic = warnings.Single();
+        True(diagnostic.Contains("stage=WaitForPrefab")); True(diagnostic.Contains("prefab='cave'"));
+        True(diagnostic.Contains("lastReady=False"));
+        True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    }
+}
+
+static void PlanningReadyAtDeadline()
+{
+    foreach (var named in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.NamedMetadata = named; Fake.MetadataReady = false;
+        using var time = Stopwatch.UseManualTime();
+        using var lease = MaintenanceGate.Acquire();
+        var completed = new List<bool>();
+        using var runner = NewRunner(MultiZoneOptions(), completed);
+        True(runner.MoveNext());
+        time.Advance(TimeSpan.FromSeconds(31)); Fake.MetadataReady = true;
+        Drain(runner);
+        Sequence([true], completed); Equal(0, Fake.MetadataReferences);
+        Sequence([0], Changed("zones"));
+    }
+}
+
+static void PlanningPauseTimeout()
+{
+    foreach (var named in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.NamedMetadata = named; Fake.MetadataReady = false;
+        using var time = Stopwatch.UseManualTime();
+        using var lease = MaintenanceGate.Acquire();
+        var completed = new List<bool>(); var errors = new List<Exception>(); var warnings = new List<string>();
+        using var runner = new GuardedCoroutine(new MaintenancePipeline(MultiZoneOptions(), true, _ => { }, warnings.Add).Run(),
+            () => true, errors.Add, completed.Add);
+        True(runner.MoveNext()); True(runner.MoveNext());
+        time.Advance(TimeSpan.FromSeconds(20)); True(runner.MoveNext());
+        UnityEngine.Time.timeScale = 0; True(runner.MoveNext());
+        time.Advance(TimeSpan.FromMinutes(5)); True(runner.MoveNext());
+        UnityEngine.Time.timeScale = 1; True(runner.MoveNext()); Equal(0, errors.Count);
+        time.Advance(TimeSpan.FromSeconds(9)); True(runner.MoveNext());
+        time.Advance(TimeSpan.FromSeconds(1)); True(!runner.MoveNext());
+        Sequence([false], completed); True(errors.Single() is TimeoutException);
+        True(warnings.Single().Contains("elapsed=30.00s")); Equal(0, Fake.MetadataReferences);
+        True(!Fake.Calls.Any(call => call.Contains(".change:")));
+    }
+}
 
 static void LocationMetadataLifetime()
 {
