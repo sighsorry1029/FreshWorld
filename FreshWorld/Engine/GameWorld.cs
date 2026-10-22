@@ -67,6 +67,32 @@ internal static class GameWorld
 
     public static IEnumerable<ZDO> AllZDOs() => ObjectsById(ZDOMan.instance).Values.ToArray();
 
+    // Local saved-sector lookup, including unloaded sectors. Queued deletions are being replaced
+    // by this reset and must not suppress their replacements. No whole-world cache or scan.
+    internal static bool HasRemainingPrefabNearZone(Vector2s zone, int prefab, float border)
+    {
+        HashSet<ZDOID>? pending = null;
+        var center = ZoneSystem.GetZonePos(zone);
+        for (var x = -1; x <= 1; ++x)
+        for (var z = -1; z <= 1; ++z)
+        {
+            var zx = (int)zone.x + x;
+            var zz = (int)zone.y + z;
+            if (zx < short.MinValue || zx > short.MaxValue || zz < short.MinValue || zz > short.MaxValue) continue;
+            foreach (var item in GetZDOs(new Vector2s(zx, zz)))
+            {
+                if (item.GetPrefab() != prefab) continue;
+                var position = item.GetPosition();
+                var dx = Math.Max(0, Math.Abs(position.x - center.x) - 32);
+                var dz = Math.Max(0, Math.Abs(position.z - center.z) - 32);
+                if (dx * dx + dz * dz > border * border) continue;
+                pending ??= new HashSet<ZDOID>(PendingDestruction(ZDOMan.instance));
+                if (!pending.Contains(item.m_uid)) return true;
+            }
+        }
+        return false;
+    }
+
     // DestroyZDO only queues IDs. Finish the group's queued deletions on the host before
     // releasing generation state; leave notifications queued for the normal bounded sender.
     public static void CompleteZoneDeletions(HashSet<Vector2s> zones, bool protectEpicLoot,
@@ -90,7 +116,7 @@ internal static class GameWorld
                 throw new InvalidOperationException("An object changed during location zone group deletion; regeneration was not enabled.");
             HandleDestroyed(manager, id);
         }
-        if (zones.Any(zone => GetZDOs(zone).Count > 0 || HasPendingZoneLoad(zone)))
+        if (zones.Any(zone => GetZDOs(zone).Count != 0 || HasPendingZoneLoad(zone)))
             throw new InvalidOperationException("Objects or pending loads appeared during location zone group deletion; regeneration was not enabled.");
     }
 

@@ -7,6 +7,7 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../FreshWorld/Backend/MaintenanceSave.cs" Link="Production/MaintenanceSave.cs" />
     <Compile Include="../FreshWorld/Backend/TrackedOperations.cs" Link="Production/TrackedOperations.cs" />
     <Compile Include="../FreshWorld/Backend/MaintenancePipeline.cs" Link="Production/MaintenancePipeline.cs" />
     <Compile Include="../FreshWorld/Backend/MaintenanceGate.cs" Link="Production/MaintenanceGate.cs" />
@@ -15,6 +16,7 @@
     <Compile Include="../FreshWorld/Engine/EpicLootProtection.cs" Link="Production/EpicLootProtection.cs" />
     <Compile Include="../FreshWorld/Engine/JotunInvasionProtection.cs" Link="Production/JotunInvasionProtection.cs" />
     <Compile Include="../FreshWorld/Engine/AlwaysProtectedObjects.cs" Link="Production/AlwaysProtectedObjects.cs" />
+    <Compile Include="../FreshWorld/Engine/PathOfValheimProtection.cs" Link="Production/PathOfValheimProtection.cs" />
     <Compile Include="../FreshWorld.World.Tests/PersistentEventStub.cs" Link="Boundary/PersistentEventStub.cs" />
     <Compile Include="../FreshWorld/Runtime/GuardedCoroutine.cs" Link="Production/GuardedCoroutine.cs" />
   </ItemGroup>

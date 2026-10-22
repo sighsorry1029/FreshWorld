@@ -144,6 +144,46 @@ public sealed class EnvMan
 
 namespace FreshWorld.Engine
 {
+    internal sealed class PathOfValheimAzurite : IDisposable
+    {
+        internal static int Cancellations;
+        internal static bool FailCancel;
+        internal static Action? OnCancel;
+        internal static PathOfValheimAzurite? TryCreate(Action<string> warn) => new();
+        internal void Configure(bool enabled) { }
+        internal void BeforeMaintenance() => CancelScan();
+        internal void EndSession() => CancelScan();
+        internal void CancelScan()
+        {
+            Cancellations++;
+            OnCancel?.Invoke();
+            if (FailCancel) throw new InvalidOperationException("injected scan cancellation failure");
+        }
+        public void Dispose() { }
+    }
+    internal sealed class PathOfValheimRepair
+    {
+        public static int Created, Mutations, Disposals, HoldFrames;
+        public static bool MutateBeforeYield, Fail;
+        private readonly Action requireAuthority;
+        public PathOfValheimRepair(Action requireAuthority, Action<string> log) { Created++; this.requireAuthority = requireAuthority; }
+        public string Summary => "PoV altar repair: restored=" + Mutations + ".";
+        public IEnumerator Run()
+        {
+            try
+            {
+                requireAuthority();
+                if (MutateBeforeYield) Mutations++;
+                for (var i = 0; i < HoldFrames; i++) yield return null;
+                requireAuthority();
+                if (Fail) throw new InvalidOperationException("injected repair failure");
+                Mutations++;
+            }
+            finally { Disposals++; }
+        }
+        public static void Reset() { Created = Mutations = Disposals = HoldFrames = 0; MutateBeforeYield = Fail = false; }
+    }
+
     internal static class JotunInvasionDiagnostics
     {
         public static int Calls;

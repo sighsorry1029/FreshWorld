@@ -6,6 +6,10 @@ using FreshWorld.Engine;
 
 var tests = new (string Name, Action Body)[]
 {
+    ("PoV objectives override empty absolute lists and SafeZones zero across all reset stages", PovStages),
+    ("PoV snapshot follows saving and late linked objectives stop loading retries", PovArrival),
+    ("orphan Blight links share one controller scan per frame and detect a later event", PovIndexCost),
+    ("PoV options control stage protection independently and disabled Blight does not scan controllers", PovOptions),
     ("metadata references are released when planning is cancelled or fails", LocationMetadataLifetime),
     ("planning diagnostics identify native and named metadata failures without replacing them", PlanningFailureDiagnostics),
     ("planning cancellation reports once without logging during loading waits", PlanningCancellationDiagnostics),
@@ -1765,6 +1769,102 @@ static void InvasionUnavailable()
     True(result.Success); Equal(0, result.Errors.Count);
     True(!Fake.Calls.Any(call => call.EndsWith("change:0")));
     True(Fake.Calls.Contains("zones.change:1"));
+}
+
+static ZDO AddPov(string prefab, int sector, string? uid = null, string key = "pt_blight_zone")
+{
+    var zdo = new ZDO { Prefab = prefab, Zone = new(sector, 0), HasTreasure = false };
+    if (uid != null) zdo.Strings[key.GetStableHashCode()] = uid;
+    ZDOMan.instance.Objects.Add(zdo);
+    return zdo;
+}
+
+static void PovStages()
+{
+    foreach (var zoneReset in new[] { true, false })
+    {
+        Fake.Reset();
+        for (var i = 0; i < 7; i++) Fake.AddZone(i, marker: !zoneReset);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        AddPov("PT_WardenAltar", 0); AddPov("PT_PowerAltar", 1);
+        var controller = AddPov("PT_CorruptionZone", 2, "active", "pt_blight_uid");
+        AddPov("PT_BlightAltar", 3, "active", "pt_blight_uid"); AddPov("PT_RuneMonolith", 4, "active");
+        AddPov("PT_AzuriteVein", 5, "orphan");
+        Fake.OnStart = _ => controller.Ints["pt_blight_state".GetStableHashCode()] = 3;
+        var options = new RunOptions { ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationSafeZones = 0,
+            LocationSafeZones = 0, AlwaysProtectedPrefabs = [], EpicLootProtectionEnabled = false };
+        True(Run(options).Success);
+        for (var i = 0; i < 5; i++) True(!Fake.Calls.Any(call => call.EndsWith("change:" + i)));
+        True(Fake.Calls.Any(call => call.EndsWith("change:5")));
+        True(Fake.Calls.Any(call => call.EndsWith("change:6")));
+        foreach (var args in Fake.Arguments.Values)
+        {
+            for (var i = 0; i < 5; i++) True(!args.CanResetTerrain!(new(i, 0)));
+            True(args.CanResetTerrain!(new(6, 0)));
+            True(args.AlwaysProtected!.IsProtectedObject(ZDOMan.instance.Objects.First(z => z.Prefab == "PT_BlightAltar")));
+        }
+    }
+}
+
+static void PovIndexCost()
+{
+    for (var i = 0; i < 500; i++) AddPov("PT_RuneMonolith", i, "orphan-" + i);
+    var pov = new PathOfValheimProtection();
+    var before = GameWorld.AllSnapshotCount; pov.CaptureControllers();
+    foreach (var zdo in ZDOMan.instance.Objects) True(!pov.IsProtectedObject(zdo));
+    Equal(before + 1, GameWorld.AllSnapshotCount);
+    UnityEngine.Time.frameCount++;
+    foreach (var zdo in ZDOMan.instance.Objects) True(!pov.IsProtectedObject(zdo));
+    Equal(before + 2, GameWorld.AllSnapshotCount);
+    AddPov("PT_CorruptionZone", 900, "orphan-0", "pt_blight_uid");
+    UnityEngine.Time.frameCount++;
+    True(pov.IsProtectedObject(ZDOMan.instance.Objects[0]));
+    Equal(before + 3, GameWorld.AllSnapshotCount);
+}
+
+static void PovOptions()
+{
+    foreach (var altars in new[] { true, false })
+    foreach (var blight in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1);
+        AddPov("PT_WardenAltar", 0); AddPov("PT_CorruptionZone", 1, "active", "pt_blight_uid");
+        var options = new RunOptions { ZoneSafeZones = 1, VegetationEnabled = false, LocationsEnabled = false,
+            AlwaysProtectedPrefabs = [], PathOfValheimAltarProtectionEnabled = altars, PathOfValheimBlightProtectionEnabled = blight };
+        True(Run(options).Success);
+        Equal(!altars, Changed("zones").Contains(0)); Equal(!blight, Changed("zones").Contains(1));
+    }
+    Fake.Reset();
+    var controller = AddPov("PT_CorruptionZone", 0, "active", "pt_blight_uid");
+    var disabled = new PathOfValheimProtection(false, false);
+    var scans = GameWorld.AllSnapshotCount;
+    disabled.CaptureControllers(); True(!disabled.IsProtectedObject(controller));
+    Equal(scans, GameWorld.AllSnapshotCount);
+}
+
+static void PovArrival()
+{
+    foreach (var resources in new[] { true, false })
+    {
+        Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        using var lease = MaintenanceGate.Acquire(); var completed = new List<bool>();
+        using var runner = NewRunner(new() { ZonesEnabled = false, VegetationEnabled = resources,
+            LocationsEnabled = !resources, AlwaysProtectedPrefabs = [] }, completed);
+        True(runner.MoveNext()); True(GameWorld.Pending.Contains(new(0, 0)));
+        AddPov("PT_BlightAltar", 0, "late", "pt_blight_uid");
+        AddPov("PT_CorruptionZone", 10, "late", "pt_blight_uid");
+        UnityEngine.Time.frameCount++;
+        Drain(runner); Sequence([true], completed);
+        True(!Fake.Calls.Any(IsSupplementChange)); Equal(0, GameWorld.Pending.Count);
+    }
+    Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1); Fake.HoldSave = true;
+    using var saveLease = MaintenanceGate.Acquire(); var finished = new List<bool>();
+    using var saveRunner = NewRunner(new() { VegetationEnabled = false, LocationsEnabled = false,
+        AlwaysProtectedPrefabs = [] }, finished, advancePastSave: false);
+    True(saveRunner.MoveNext()); AddPov("PT_PowerAltar", 0); ZNet.instance.Saving = false;
+    Fake.OnStart = _ => ZDOMan.instance.Objects.Clear();
+    Drain(saveRunner); Sequence([true], finished);
+    True(!Fake.Calls.Contains("zones.change:0")); True(Fake.Calls.Contains("zones.change:1"));
 }
 
 static void AlwaysProtectedStages()

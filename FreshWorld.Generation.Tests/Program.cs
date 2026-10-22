@@ -9,7 +9,10 @@ var tests = new (string Name, Action Test)[]
     ("vegetation waits for loaded zone even when its root already exists", VegetationWaitsForLoad),
     ("locations wait for loaded zone even when its root already exists", LocationWaitsForLoad),
     ("location asset readiness is checked before object removal", LocationWaitsForAsset),
-    ("exact vegetation and fractions reset while cloned definitions and old ghosts survive", VegetationScope),
+    ("exact vegetation and fractions reset with original metadata identities and old ghosts preserved", VegetationScope),
+    ("disabled vegetation and its fractions survive without placement or terrain edits", DisabledVegetation),
+    ("vegetation metadata follows registry replacement during loading", VegetationReload),
+    ("multi-prefab EWD entries fail before deletion rather than duplicating uncleared variants", VegetationVariants),
     ("vegetation-only placement disables original terrain height and preserves previous hook state", VegetationWithoutTerrain),
     ("dense vegetation-only pass after ores performs no additional terrain restoration", VegetationGroups),
     ("native vegetation failure restores registry RNG ghost mode and tracked temporary objects", VegetationFailure),
@@ -53,7 +56,9 @@ static void Reset()
     ZoneSystem.instance.Generated.Add(zone);
     ZoneSystem.instance.Roots.Add(zone, new GameObject("root") { Heightmap = new Heightmap() });
     ZoneSystem.instance.Loaded.Add(zone);
-    ZoneSystem.instance.m_vegetation.Add(new() { m_prefab = new("rock4_copper"), m_enable = false });
+    ExpandWorldData.Vegetation.VegetationSpawning.Prefabs = new();
+    ExpandWorldData.Vegetation.VegetationSpawning.Extra = new();
+    ZoneSystem.instance.m_vegetation.Add(new() { m_prefab = new("rock4_copper"), m_enable = true });
     ZoneSystem.instance.m_vegetation.Add(new() { m_prefab = new("silvervein"), m_enable = true });
     AddLocation("Hildir_cave");
 }
@@ -152,6 +157,10 @@ static void VegetationScope()
 {
     var zones = ZoneSystem.instance;
     var original = zones.m_vegetation;
+    var secondCopper = new ZoneSystem.ZoneVegetation { m_prefab = new("rock4_copper"), m_enable = true };
+    original.Add(secondCopper);
+    ExpandWorldData.Vegetation.VegetationSpawning.Extra[original[0]] = "custom data";
+    ExpandWorldData.Vegetation.VegetationSpawning.Extra[secondCopper] = "custom scale and clearance";
     var oldGhost = new GameObject("existing"); var newGhost = new GameObject("copper");
     zones.Temporary.Add(oldGhost);
     ZNetScene.instance.Prefabs["rock4_copper_frac"] = new();
@@ -162,14 +171,16 @@ static void VegetationScope()
     zones.VegetationPlacement = (areas, objects) =>
     {
         Equal(false, ReferenceEquals(original, zones.m_vegetation));
-        Equal(true, zones.m_vegetation[0].m_enable); Equal(false, zones.m_vegetation[1].m_enable);
+        Sequence(new[] { original[0], secondCopper }, zones.m_vegetation);
+        Sequence(new[] { "custom data", "custom scale and clearance" },
+            zones.m_vegetation.Select(v => ExpandWorldData.Vegetation.VegetationSpawning.Extra[v]));
         Equal(1, areas.Count); Equal(true, TerrainResetter.Active);
         objects.Add(newGhost); UnityEngine.Random.state = new(999); ZNetView.StartGhostInit(); WearNTear.RandomDamage = true;
     };
     var errors = new List<Exception>(); var finishes = new List<bool>();
     using var runner = Start(Vegetation(), errors, finishes); Drain(runner);
     Sequence(new[] { "rock4_copper", "rock4_copper_frac" }, GameWorld.Removed.Select(zdo => zdo.Name));
-    Equal(true, ReferenceEquals(original, zones.m_vegetation)); Equal(false, original[0].m_enable);
+    Equal(true, ReferenceEquals(original, zones.m_vegetation)); Equal(true, original[0].m_enable);
     Equal(true, original[1].m_enable); Equal(false, TerrainResetter.Active);
     Equal(new UnityEngine.Random.State(77), UnityEngine.Random.state); Equal(false, ZNetView.Ghost);
     Equal(false, WearNTear.RandomDamage);
@@ -212,7 +223,7 @@ static void VegetationGroups()
     var created = new List<GameObject>();
     zones.VegetationPlacement = (_, objects) =>
     {
-        bool terrain = zones.m_vegetation[0].m_enable;
+        bool terrain = zones.m_vegetation[0].m_prefab.name == "rock4_copper";
         Sequence(new[] { terrain ? "rock4_copper" : "Beech1" },
             zones.m_vegetation.Where(v => v.m_enable).Select(v => v.m_prefab.name));
         Equal(terrain, TerrainResetter.Active);
@@ -235,6 +246,57 @@ static void VegetationGroups()
     Equal(true, ReferenceEquals(original, zones.m_vegetation)); Equal(false, TerrainResetter.Active);
 }
 static void VegetationFailure() => PlacementFailure(true);
+
+static void DisabledVegetation()
+{
+    var zones = ZoneSystem.instance;
+    zones.m_vegetation[0].m_enable = false;
+    ZNetScene.instance.Prefabs["rock4_copper_frac"] = new();
+    GameWorld.Objects[Zone()] = new() { new("rock4_copper", new()), new("rock4_copper_frac", new()) };
+    var errors = new List<Exception>(); var finishes = new List<bool>();
+    using var runner = Start(Vegetation(), errors, finishes); Drain(runner);
+    Success(errors, finishes);
+    Equal(0, GameWorld.Removed.Count); Equal(0, zones.VegetationCalls); Equal(0, TerrainResetter.Restored.Count);
+    Equal(false, zones.m_vegetation[0].m_enable);
+}
+
+static void VegetationReload()
+{
+    var zones = ZoneSystem.instance; zones.Loaded.Clear();
+    var errors = new List<Exception>(); var finishes = new List<bool>();
+    using var runner = Start(Vegetation(), errors, finishes);
+    Equal(true, runner.MoveNext());
+    var replacement = new ZoneSystem.ZoneVegetation { m_prefab = new("rock4_copper"), m_enable = true };
+    var registry = new List<ZoneSystem.ZoneVegetation> { replacement };
+    zones.m_vegetation = registry;
+    ExpandWorldData.Vegetation.VegetationSpawning.Prefabs = new();
+    ExpandWorldData.Vegetation.VegetationSpawning.Extra = new() { [replacement] = "reloaded data" };
+    zones.VegetationPlacement = (_, _) => Equal("reloaded data",
+        ExpandWorldData.Vegetation.VegetationSpawning.Extra[zones.m_vegetation.Single()]);
+    zones.Loaded.Add(Zone()); Drain(runner); Success(errors, finishes);
+    Equal(true, ReferenceEquals(registry, zones.m_vegetation)); Equal(1, zones.VegetationCalls);
+}
+
+static void VegetationVariants()
+{
+    foreach (var duringLoad in new[] { false, true })
+    {
+        Reset(); var zones = ZoneSystem.instance;
+        if (duringLoad) zones.Loaded.Clear();
+        GameWorld.Objects[Zone()] = new() { new("rock4_copper", new()), new("silvervein", new()) };
+        var errors = new List<Exception>(); var finishes = new List<bool>();
+        using var runner = Start(Vegetation(), errors, finishes);
+        if (duringLoad) Equal(true, runner.MoveNext());
+        var entry = zones.m_vegetation[0];
+        ExpandWorldData.Vegetation.VegetationSpawning.Prefabs = new()
+            { [entry] = new() { entry.m_prefab, new("silvervein") } };
+        zones.Loaded.Add(Zone()); Drain(runner);
+        Equal(1, errors.Count); Equal(true, errors[0].Message.Contains("multi-prefab entry 'rock4_copper'"));
+        Sequence(new[] { false }, finishes);
+        Equal(0, GameWorld.Removed.Count); Equal(0, zones.VegetationCalls); Equal(0, TerrainResetter.Restored.Count);
+    }
+}
+
 static void LocationFailure() => PlacementFailure(false);
 static void PlacementFailure(bool vegetation)
 {

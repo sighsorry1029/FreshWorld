@@ -19,13 +19,14 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact twenty bindings in three sections and game-day defaults", () =>
+        Check("exact twenty-four bindings in four sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius",
-                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.PieceBlacklist" };
-            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg is not the twenty-key design");
+                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.PieceBlacklist",
+                "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.AzuriteVegetation" };
+            Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg does not match the expected keys");
             Assert(snapshot.Options.AutomaticResetPercent == 100, "default must preserve full reset scope");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
@@ -67,16 +68,49 @@ internal static class ConfigRegressions
             foreach (var treasure in new[] { true, false })
             foreach (var bounty in new[] { true, false })
             {
-                file.Set("Protection", "EpicLootProtection", treasure.ToString());
-                file.Set("Protection", "EpicLootBountyProtection", bounty.ToString());
+                file.Set("EpicLoot", "EpicLootProtection", treasure.ToString());
+                file.Set("EpicLoot", "EpicLootBountyProtection", bounty.ToString());
                 var options = cfg.Capture().Options;
                 Assert(options.EpicLootProtectionEnabled == treasure && options.EpicLootBountyProtectionEnabled == bounty,
                     "EpicLoot options are not independent");
             }
             Assert(original.Options.EpicLootProtectionEnabled && !original.Options.EpicLootBountyProtectionEnabled,
                 "edits changed an existing run snapshot");
-            file.Set("Protection", "EpicLootBountyProtection", "invalid");
+            file.Set("EpicLoot", "EpicLootBountyProtection", "invalid");
             Invalid(() => cfg.Capture());
+        });
+        Check("PoV switches are independently validated and captured for the next run", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var original = cfg.Capture();
+            Assert(original.Options.PathOfValheimAltarProtectionEnabled && original.Options.PathOfValheimBlightProtectionEnabled,
+                "PoV objectives must be protected by default");
+            foreach (var altar in new[] { true, false })
+            foreach (var blight in new[] { true, false })
+            {
+                file.Set("Path of Valheiman", "AltarProtection", altar.ToString());
+                file.Set("Path of Valheiman", "BlightProtection", blight.ToString());
+                var options = cfg.Capture().Options;
+                Assert(options.PathOfValheimAltarProtectionEnabled == altar && options.PathOfValheimBlightProtectionEnabled == blight,
+                    "PoV switches are coupled");
+            }
+            foreach (var key in new[] { "AltarProtection", "BlightProtection" })
+            {
+                file.Set("Path of Valheiman", key, "invalid"); Invalid(() => cfg.Capture());
+                file.Set("Path of Valheiman", key, "false");
+            }
+            Assert(original.Options.PathOfValheimAltarProtectionEnabled && original.Options.PathOfValheimBlightProtectionEnabled && file.SaveCount == 0,
+                "edits mutated the existing run or Capture wrote the cfg");
+        });
+        Check("PoV vegetation is opt-in and independent of reset switches", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var original = cfg.Capture();
+            Assert(!original.PathOfValheimAzuriteVegetationEnabled, "regeneration defaults");
+            file.Set("General", "Enabled", "false"); file.Set("Reset", "Resources", "false");
+            file.Set("Path of Valheiman", "AzuriteVegetation", "true");
+            var current = cfg.Capture();
+            Assert(current.PathOfValheimAzuriteVegetationEnabled, "independent regeneration");
+            file.Set("Path of Valheiman", "AzuriteVegetation", "maybe"); Invalid(() => cfg.Capture());
+            Assert(!original.PathOfValheimAzuriteVegetationEnabled && file.SaveCount == 0, "old snapshot or file changed");
         });
         Check("startup and performance remain fixed and removed keys stay unbound", () =>
         {

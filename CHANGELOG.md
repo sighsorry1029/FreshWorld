@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.7
+
+- Added optional Path of Valheiman protection for Warden and Power altars and active Blight objectives, including saved objects in unloaded zones. Blight veins and ordinary mobs do not reserve zones by themselves.
+- Added `freshworld pov` to restore missing Warden and Power altars from PoV's recorded coordinates after a successful world save. Existing objects and ambiguous matches are skipped.
+- Added server-synced `AzuriteVegetation`, disabled by default. Natural azurite can regenerate through vegetation while keeping PoV promotion and Blight spawning. Existing nearby veins prevent overlapping placement; enabling the option does not remove old duplicates or restore mined grades.
+- Preserved Expand World Data vegetation metadata during resource resets, respected disabled definitions, and rejected mixed-prefab entries before deletion when safe replacement cannot be verified.
+- Moved `EpicLootProtection` and `EpicLootBountyProtection` from `[Protection]` to `[EpicLoot]`. Move custom values to the new section; they are not migrated automatically. Configuration Manager now orders General, Reset, Protection, EpicLoot, and Path of Valheiman. Earlier PoV preview settings use `[Path of Valheiman]` instead of `[Path of Valheim]`.
+
 ## 1.1.6
 
 - Added a location planning report on failure or cancellation, including the current prefab or anchor, processing stage, progress, stage timings, and slowest completed prefab.

@@ -1,6 +1,6 @@
 # FreshWorld
 
-FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. Settings are organized into **three sections**, with automatic restoration every **24 game days** by default.
+FreshWorld restores generated zones, selected resources and terrain, and selected locations in Valheim. It supports single-player worlds, local hosts, and dedicated servers. Settings are organized into **five sections**, with automatic restoration every **24 game days** by default.
 
 
 ![](https://i.ibb.co/WS2DPzB/freshzones.gif) <br>
@@ -156,8 +156,6 @@ ZoneSafeZones = 1
 ResourceSafeZones = 0
 LocationSafeZones = 0
 AlwaysProtectedPrefabs = Player_tombstone
-EpicLootProtection = true
-EpicLootBountyProtection = false
 PieceBlacklist = fire_pit
 ~~~
 
@@ -201,6 +199,71 @@ FreshWorld captures the initial objects after saving and rechecks each target zo
 
 This list is independent of the EpicLoot switches. A listed EpicLoot prefab remains protected by this rule even if its EpicLoot-specific protection is disabled. Ordinary base markers and the built-in Jotun invasion protection remain separate.
 
+## EpicLoot
+
+```ini
+[EpicLoot]
+EpicLootProtection = true
+EpicLootBountyProtection = false
+```
+
+Configuration Manager shows sections in this order: General, Reset, Protection, EpicLoot, and Path of Valheiman. Existing custom values from `[Protection]` must be moved to `[EpicLoot]`; this section change does not migrate them automatically. If using the earlier PoV preview, rename `[Path of Valheim]` to `[Path of Valheiman]` while keeping its values.
+
+### Treasure maps
+
+With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, including when ResourceSafeZones or LocationSafeZones is 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.
+
+Neighboring zones remain eligible for restoration, including resource placement, terrain edits, and terrain-border repairs that cross into the treasure zone. A location whose footprint intersects a protected treasure sector is skipped as a whole. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty protection has its own setting below. Existing player, base, and tombstone rules remain separate.
+
+FreshWorld takes the initial treasure snapshot after the pre-maintenance save and rechecks saved objects in each target zone before an attempt or loading retry. Once observed, a protected zone remains protected for that run. A found or removed chest no longer triggers this treasure rule on the next run, although ordinary base-marker protection may still apply. A pending controller must contain treasure spawn data, must not be marked as a bounty, and must not have finished placement.
+
+There is no expiry or limit on protected treasure zones: an unfound chest can retain its one zone indefinitely. This does not recreate previously lost chests, clear old map pins, cancel contracts, grant rewards, or alter player progress. The recognized saved markers were checked against EpicLoot 0.14.10. Other reset tools are outside this protection.
+
+### Bounties
+
+`EpicLootBountyProtection` is disabled by default. Set it to `true` to protect pending bounty spawn controllers, bounty targets, and all their adds. Each object's current zone (1x1) is excluded from direct zone, resource, and location resets, even with SafeZones=0. FreshWorld also prevents direct or recursive deletion of those objects. If a target and its adds occupy different zones, each zone is protected; this is not a fixed area around the map pin or the original spawn point.
+
+FreshWorld reads saved world tags, so protection does not require loaded components, creator metadata, or an online quest owner. It captures the initial set after the pre-maintenance save and rechecks each target zone before an attempt or loading retry to detect new or moved objects. Observed zones stay protected until the run ends. The next run starts fresh. Neighboring terrain edits and border repairs can still affect a protected zone, as with treasure protection.
+
+This switch is independent of `EpicLootProtection`, uses ServerSync, and supports server cfg hot reload. Changes apply to the next run. Set it to false to disable both bounty-zone protection and bounty-object deletion immunity. No EpicLoot dependency is required.
+
+EpicLoot can leave tagged creatures behind when a bounty is abandoned. Those objects continue to protect their zones while the tags remain. FreshWorld does not infer quest status, remove abandoned targets, alter player progress, grant rewards, or repair previously lost targets. Marker recognition was checked against EpicLoot 0.14.10.
+
+## Path of Valheiman objectives
+
+```ini
+[Path of Valheiman]
+AltarProtection = true
+BlightProtection = true
+AzuriteVegetation = false
+```
+
+These options are synchronized by ServerSync and support host cfg hot reload. Protection changes apply to the next run. Disabling a protection option removes only that PoV protection; other protection rules still apply.
+
+With `AltarProtection=true`, FreshWorld protects `PT_WardenAltar` and `PT_PowerAltar`. With `BlightProtection=true`, it also protects active Blight controllers and their linked altars, monoliths, and warden bosses. Each object's own zone (1x1) is excluded from zone, resource, and location resets, even with SafeZones=0 or an empty AlwaysProtectedPrefabs list. FreshWorld terrain restoration and border repairs also skip these zones. Path of Valheiman is optional; no new mod dependency is required.
+
+Blight protection uses saved controller state and event links, including unloaded objects. It does not reserve the whole event radius. Observed objectives and zones remain protected for the current run. The next run reevaluates them, so orphaned event objects do not receive permanent protection from this rule. Ordinary Blight mobs, all azurite veins, and unrelated natural monoliths do not qualify. PoV can replenish its event veins and still controls event cleanup, progress, and rewards.
+
+Run `freshworld pov` to restore missing `PT_WardenAltar` and `PT_PowerAltar` objects at PoV's recorded map coordinates. It checks saved objects in active and inactive zones, saves before creating anything, and rechecks each position before creation. Existing altars and ambiguous nearby matches are skipped. It does not reset zones or change PoV progression, discovery, or map records. The command is manual and independent of the two protection switches; automatic resets never repair altars.
+
+Lost Warden offerings cannot be recovered. Height is calculated the same way as PoV placement; edited terrain may require a position check. Protection does not prevent native placement from extending across a zone boundary. See [PoV compatibility and altar recovery](docs/path-of-valheim-compatibility.md) for matching rules and validation limits.
+
+### Azurite vegetation
+
+Enable `AzuriteVegetation` to place natural `PT_AzuriteVein` through the game's vegetation system. EWD is optional: existing definitions take priority, including disabled entries; otherwise FreshWorld supplies defaults for Mountains and the other PoV resource biomes. Zone resets can then replenish veins when the zones generate again. To replenish them in retained zones through resource reset, add `PT_AzuriteVein` to `ResourceIds`. It is not added to resource lists automatically.
+
+PoV's initial world-wide natural placement and timed natural regeneration are disabled while this option is on. The original vein prefab, Divine promotion, mining, and Blight's own vein creation remain in use. New veins start plain and can qualify for promotion again; previous grades are not restored. Blight replenishment pauses during FreshWorld maintenance and resumes after cleanup.
+
+Existing veins are kept when enabling the option. If a live vein remains in a zone or within 6m of its boundary, that vegetation pass skips azurite there while placing other vegetation normally. This includes saved, unloaded veins and Blight veins. Veins already queued for deletion do not block their replacements. This prevents adding a second distribution over PoV's old one; it does not merge existing duplicates. A retained neighboring vein can leave a reset zone without new azurite until a later generation pass.
+
+This is a different placement policy: it does not preserve PoV's exact coordinates, respawn delay, or its seeded-vein 12m building avoidance. Normal vegetation placement and FreshWorld protection rules apply. Turning it off restores PoV's policy and removes only FreshWorld's default definitions. On worlds without PoV's placement-complete key, turning it off can start native world-wide placement. Custom EWD definitions remain yours to manage. Configuration changes wait until current maintenance finishes.
+
+## Expand World Data vegetation
+
+Resource reset preserves the original vegetation definitions and their attached EWD metadata, including custom ZDO data, scale, and clearance. It rechecks definitions after zone loading. Disabled definitions are no longer forced on; a prefab with no enabled definition and its fractured form are left untouched.
+
+EWD vegetation entries that mix different prefabs are rejected before deleting objects in that resource zone. Use separate single-prefab entries for supplemental resource reset. This restriction does not change ordinary zone regeneration. Earlier stages or zones in the same maintenance run may already have completed when an unsupported entry is detected.
+
 ## Jotun invasions
 
 FreshWorld protects the 1x1 zone containing each `BlackIce_Core` or `BlackIce_Core_outer`, even with SafeZones=0. If they are on opposite sides of a zone border, both zones are protected. Protection depends on the objective objects, not the event's radius or active state. It does not require a player, creator metadata, a building marker, or Jotunn. There is no additional cfg option, and these fixed prefabs do not need to be added to AlwaysProtectedPrefabs.
@@ -217,41 +280,23 @@ Use `freshworld invasions` to inspect a ready host's current invasion state. It 
 
 The report matches ice by position, not event ownership. Overlapping event areas may count the same object. A missing core is a reason to investigate, not proof of which mod removed it; a core ZDO does not prove that the objective works. Ice outside active areas is counted without removing it. Inspection scans the host's ZDO registry once per request and does not load zones, save the world, change ownership, end events, or start restoration. An inspection error leaves maintenance state unchanged.
 
-## EpicLoot treasure maps
-
-With `EpicLootProtection=true` (the default), FreshWorld protects unfound EpicLoot treasure chests and pending treasure spawn controllers. Each protects only its own zone (1x1) from direct zone, resource, and location restoration, including when ResourceSafeZones or LocationSafeZones is 0. Protection does not require a Piece component, creator metadata, a loaded zone, or the owner to be online. EpicLoot is not a required dependency. The setting is server-authoritative through ServerSync; cfg reloads and accepted administrator edits apply to the next run, not an active run.
-
-Neighboring zones remain eligible for restoration, including resource placement, terrain edits, and terrain-border repairs that cross into the treasure zone. A location whose footprint intersects a protected treasure sector is skipped as a whole. The chest and pending treasure controller themselves are protected from FreshWorld deletion, but their surrounding terrain can change. Set `EpicLootProtection=false` to disable both treasure-zone protection and individual treasure-object deletion immunity. Bounty protection has its own setting below. Existing player, base, and tombstone rules remain separate.
-
-FreshWorld takes the initial treasure snapshot after the pre-maintenance save and rechecks saved objects in each target zone before an attempt or loading retry. Once observed, a protected zone remains protected for that run. A found or removed chest no longer triggers this treasure rule on the next run, although ordinary base-marker protection may still apply. A pending controller must contain treasure spawn data, must not be marked as a bounty, and must not have finished placement.
-
-There is no expiry or limit on protected treasure zones: an unfound chest can retain its one zone indefinitely. This does not recreate previously lost chests, clear old map pins, cancel contracts, grant rewards, or alter player progress. The recognized saved markers were checked against EpicLoot 0.14.10. Other reset tools are outside this protection.
-
-## EpicLoot bounties
-
-`EpicLootBountyProtection` is disabled by default. Set it to `true` to protect pending bounty spawn controllers, bounty targets, and all their adds. Each object's current zone (1x1) is excluded from direct zone, resource, and location resets, even with SafeZones=0. FreshWorld also prevents direct or recursive deletion of those objects. If a target and its adds occupy different zones, each zone is protected; this is not a fixed area around the map pin or the original spawn point.
-
-FreshWorld reads saved world tags, so protection does not require loaded components, creator metadata, or an online quest owner. It captures the initial set after the pre-maintenance save and rechecks each target zone before an attempt or loading retry to detect new or moved objects. Observed zones stay protected until the run ends. The next run starts fresh. Neighboring terrain edits and border repairs can still affect a protected zone, as with treasure protection.
-
-This switch is independent of `EpicLootProtection`, uses ServerSync, and supports server cfg hot reload. Changes apply to the next run. Set it to false to disable both bounty-zone protection and bounty-object deletion immunity. No EpicLoot dependency is required.
-
-EpicLoot can leave tagged creatures behind when a bounty is abandoned. Those objects continue to protect their zones while the tags remain. FreshWorld does not infer quest status, remove abandoned targets, alter player progress, grant rewards, or repair previously lost targets. Marker recognition was checked against EpicLoot 0.14.10.
 
 ## Manual commands and permissions
 
-Use the game's F5 console. If it is unavailable, add -console to the game's launch options. Native autocomplete completes the command name and offers status and invasions as arguments. FreshWorld does not require enabling devcommands.
+Use the game's F5 console. If it is unavailable, add -console to the game's launch options. Native autocomplete completes the command name and offers status, invasions, and pov as arguments. FreshWorld does not require enabling devcommands.
 
 | Command | Action |
 |---|---|
 | freshworld | Request one restoration using the current host cfg. |
 | freshworld status | Show running or pending work, or the applied policy and last recorded result while idle, without starting restoration. |
 | freshworld invasions | Inspect active Jotun invasions and host objective ZDOs without changing the world. |
+| freshworld pov | Save and restore missing Warden and Power altars at PoV's recorded coordinates. |
 
-Only these three command forms are accepted. Reset settings and protection rules are explained above and in the cfg descriptions.
+Only these four command forms are accepted. Reset settings and protection rules are explained above and in the cfg descriptions.
 
-Manual restoration requests do not wait for the automatic schedule polling interval. They still require a ready world, completion of the initial 30-second grace period, an unpaused host, no conflicting save or maintenance, a valid cfg, and valid authority. The grace period starts once when the world becomes ready; it is not added before every run. Invasion inspection requires a ready world and valid authority, but remains available during maintenance or when reset settings are invalid.
+Manual restoration requests do not wait for the automatic schedule polling interval. They still require a ready world, completion of the initial 30-second grace period, an unpaused host, no conflicting save or maintenance, a valid cfg, and valid authority. The grace period starts once when the world becomes ready; it is not added before every run. Invasion inspection requires a ready world and valid authority, remains available when reset settings are invalid, and can run during maintenance. PoV altar repair requires idle maintenance and rejects requests during startup, pause, a world save, pending work, or a session fault. Retry the command after the condition clears. Repair shares the maintenance lock and leaves the automatic reset schedule unchanged.
 
-An existing pending or active request is not overwritten. Each requester is limited to one command per second; repeated commands within that second, including status and invasions, are silently ignored. The requester receives acceptance, waiting reasons, and completion or failure messages.
+An existing pending or active request is not overwritten. Each requester is limited to one command per second; repeated commands within that second, including status, invasions, and pov, are silently ignored. The requester receives acceptance, waiting reasons, and completion or failure messages.
 
 The person hosting a world inside their own game process can run commands without an administrator entry. A dedicated server's own console can also run them without a connected player. This includes authenticated RCON tools that execute the registered command inside the server process without a Valheim player connection. The RCON provider controls its own authentication; FreshWorld receives no RCON identity and continues to validate the active server, world, session, and run state.
 

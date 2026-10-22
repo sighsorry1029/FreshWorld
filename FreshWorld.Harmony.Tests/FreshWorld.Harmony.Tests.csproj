@@ -19,6 +19,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../FreshWorld/Engine/TerrainDataCodec.cs" Link="TerrainDataCodec.cs" />
+    <Compile Include="../FreshWorld/Engine/PathOfValheimAzurite.cs" Link="Engine/PathOfValheimAzurite.cs" />
+    <Compile Include="../FreshWorld/Backend/MaintenanceGate.cs" Link="Backend/MaintenanceGate.cs" />
     <Compile Include="$(TerrainResetterSource)" Link="TerrainResetter.cs" />
     <Compile Include="../FreshWorld/Commands/CommandSyntax.cs" Link="Commands/CommandSyntax.cs" />
     <Compile Include="../FreshWorld/Commands/CommandRequestContext.cs" Link="Commands/CommandRequestContext.cs" />
@@ -34,6 +36,9 @@
     <Reference Include="MonoMod.RuntimeDetour" HintPath="$(BepInExDir)/MonoMod.RuntimeDetour.dll" Private="true" />
     <Reference Include="Mono.Cecil" HintPath="$(BepInExDir)/Mono.Cecil.dll" Private="true" />
     <Reference Include="BepInEx" HintPath="$(BepInExDir)/BepInEx.dll" Private="true" />
+    <!-- Resolve PluginInfo.Instance's base class without replacing the simulated Unity boundary. -->
+    <Reference Include="UnityEngine" HintPath="$(ManagedDir)/UnityEngine.dll" Aliases="GameUnity" Private="false" ExternallyResolved="true" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(ManagedDir)/UnityEngine.CoreModule.dll" Aliases="GameUnity" Private="false" ExternallyResolved="true" />
     <!-- BepInEx's converter registers Unity types at runtime. Do not reference these at compile time:
          the game-shaped terrain/command fixtures deliberately define their own minimal Unity API. -->
     <None Include="$(ManagedDir)/UnityEngine.dll" Link="UnityEngine.dll" CopyToOutputDirectory="PreserveNewest" />

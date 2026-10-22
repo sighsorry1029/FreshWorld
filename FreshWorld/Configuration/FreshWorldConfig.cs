@@ -16,9 +16,13 @@ namespace FreshWorld.Configuration
         public bool AutomaticEnabled => Schedule.AutomaticEnabled;
         public ScheduleSettings Schedule { get; }
         public RunOptions Options { get; }
+        public bool PathOfValheimAzuriteVegetationEnabled { get; }
         public float StartupDelaySeconds => 30;
-        internal RuntimeSettings(ScheduleSettings schedule, RunOptions options)
-        { Schedule = schedule; Options = options; }
+        internal RuntimeSettings(ScheduleSettings schedule, RunOptions options, bool azuriteVegetation)
+        {
+            Schedule = schedule; Options = options;
+            PathOfValheimAzuriteVegetationEnabled = azuriteVegetation;
+        }
     }
 
     public sealed class RunOptions
@@ -47,6 +51,8 @@ namespace FreshWorld.Configuration
         public int LocationSafeZones { get; }
         public bool EpicLootProtectionEnabled { get; }
         public bool EpicLootBountyProtectionEnabled { get; }
+        public bool PathOfValheimAltarProtectionEnabled { get; }
+        public bool PathOfValheimBlightProtectionEnabled { get; }
         public int MaxZonesPerFrame => 64;
         public double FrameBudgetMilliseconds => 8;
         public float SaveTimeoutSeconds => 180;
@@ -56,7 +62,8 @@ namespace FreshWorld.Configuration
             bool vegetationEnabled, string[] vegetationIds, string[] terrainVegetationIds, float vegetationTerrainRadius,
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
             bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled, string[] alwaysProtectedPrefabs,
-            int automaticResetPercent, IReadOnlyDictionary<string, float> locationResetRadii)
+            int automaticResetPercent, IReadOnlyDictionary<string, float> locationResetRadii,
+            bool pathOfValheimAltarProtectionEnabled, bool pathOfValheimBlightProtectionEnabled)
         {
             AutomaticResetPercent = automaticResetPercent;
             this.locationResetRadii = locationResetRadii.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
@@ -71,6 +78,8 @@ namespace FreshWorld.Configuration
             LocationSafeZones = locationSafeZones;
             EpicLootProtectionEnabled = epicLootProtectionEnabled;
             EpicLootBountyProtectionEnabled = epicLootBountyProtectionEnabled;
+            PathOfValheimAltarProtectionEnabled = pathOfValheimAltarProtectionEnabled;
+            PathOfValheimBlightProtectionEnabled = pathOfValheimBlightProtectionEnabled;
         }
     }
 
@@ -87,6 +96,8 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<string> dailyTimes, gameDayInterval, automaticResetPercent, vegetationIds, terrainVegetationIds, locationIds, locationResetRadii;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
         private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs;
+        private readonly ConfigEntry<string> pathOfValheimAltarProtection, pathOfValheimBlightProtection;
+        private readonly ConfigEntry<string> pathOfValheimAzuriteVegetation;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
 
         public FreshWorldConfig(ConfigFile config)
@@ -147,21 +158,32 @@ namespace FreshWorld.Configuration
             alwaysProtectedPrefabs = Bind("Protection", "AlwaysProtectedPrefabs", DefaultAlwaysProtectedPrefabs,
                 "Comma-separated exact prefab IDs that FreshWorld must preserve, regardless of SafeZones or PieceBlacklist. Each object's own zone is excluded from all direct reset stages, terrain restoration, and border repairs. No Piece component or creator is required. Objects are also protected from direct and recursive deletion. Observed zones stay protected until the run ends. Empty disables this list; ordinary marker protection still applies. Native placement from neighboring zones can cross the boundary. Changes apply to the next run.",
                 180);
-            epicLootProtection = Bind("Protection", "EpicLootProtection", "true",
-                "Protect unfound EpicLoot treasure chests and pending treasure controllers in their own zones, even when SafeZones=0. Also prevent FreshWorld from deleting those objects through a reset in another zone. Set false to disable both protections on the next run. EpicLoot is optional.",
-                150, ConfigPresentation.DrawToggle);
-            epicLootBountyProtection = Bind("Protection", "EpicLootBountyProtection", "false",
-                "Protect pending EpicLoot bounty controllers, targets, and their adds. Each object's current zone is excluded from direct resets, even when SafeZones=0, and FreshWorld cannot delete the object. Neighboring terrain edits can still reach it. Abandoned bounty objects remain protected while their tags exist. Changes apply to the next run. EpicLoot is optional.",
-                140, ConfigPresentation.DrawToggle);
             pieceBlacklist = Bind("Protection", "PieceBlacklist", DefaultPieceBlacklist,
                 "Comma-separated exact prefab IDs excluded from automatic base markers. Other Pieces with creator != 0 protect their zones when the stage's SafeZones > 0. Default fire_pit prevents lone campfires from protecting zones. Empty excludes no Pieces. Excluded Pieces can still share protection from other markers. Player_tombstone remains a separate base marker. AlwaysProtectedPrefabs overrides this blacklist.",
                 100);
+
+            epicLootProtection = Bind("EpicLoot", "EpicLootProtection", "true",
+                "Protect unfound EpicLoot treasure chests and pending treasure controllers in their own zones, even when SafeZones=0. Also prevent FreshWorld from deleting those objects through a reset in another zone. Set false to disable both protections on the next run. EpicLoot is optional.",
+                150, ConfigPresentation.DrawToggle);
+            epicLootBountyProtection = Bind("EpicLoot", "EpicLootBountyProtection", "false",
+                "Protect pending EpicLoot bounty controllers, targets, and their adds. Each object's current zone is excluded from direct resets, even when SafeZones=0, and FreshWorld cannot delete the object. Neighboring terrain edits can still reach it. Abandoned bounty objects remain protected while their tags exist. Changes apply to the next run. EpicLoot is optional.",
+                140, ConfigPresentation.DrawToggle);
+
+            pathOfValheimAltarProtection = Bind("Path of Valheiman", "AltarProtection", "true",
+                "Protect PT_WardenAltar and PT_PowerAltar and their own zones from FreshWorld resets, terrain restoration, and direct or recursive deletion, even when SafeZones=0. Does not recreate missing altars. Other protection rules still apply when disabled. Changes apply to the next run. Path of Valheiman is optional.",
+                200, ConfigPresentation.DrawToggle);
+            pathOfValheimBlightProtection = Bind("Path of Valheiman", "BlightProtection", "true",
+                "Protect active Blight controllers, linked altars, monoliths, and wardens in their own zones, even when SafeZones=0. Ordinary mobs and azurite veins are not protected by this rule; PoV replenishes them. Observed protection lasts until the run ends. Closed events and orphan objects gain no protection on a later run. PoV still controls event completion and cleanup. Other protection rules still apply when disabled. Changes apply to the next run. Path of Valheiman is optional.",
+                100, ConfigPresentation.DrawToggle);
+            pathOfValheimAzuriteVegetation = Bind("Path of Valheiman", "AzuriteVegetation", "false",
+                "Use vegetation placement for natural PT_AzuriteVein on the host instead of PoV's initial world-wide placement and timed regeneration. Uses existing vegetation definitions, including disabled EWD entries, or adds defaults. Zones create new plain veins when generated again; for selected resource resets add PT_AzuriteVein to ResourceIds. Existing veins in or within 6m of a zone suppress its azurite placement. PoV promotion and Blight generation remain active. Existing veins are not moved or removed by enabling this option. PoV's original coordinates, respawn delay and 12m building avoidance are not reproduced. False restores PoV policy; on a world without its placement-complete key this can start native world-wide placement. Changes apply after current maintenance. Path of Valheiman is optional; EWD is not required.",
+                90, ConfigPresentation.DrawToggle);
 
             ConfigEntry<T> Bind<T>(string section, string key, T value, string description, int order,
                 Action<ConfigEntryBase>? drawer = null, string? displayName = null, object[]? choices = null) =>
                 config.Bind(section, key, value, new ConfigDescription(description, null, new ConfigurationManagerAttributes
                 {
-                    CategoryOrder = section == "General" ? 300 : section == "Reset" ? 200 : 100,
+                    CategoryOrder = section == "General" ? 300 : section == "Reset" ? 200 : section == "Protection" ? 100 : section == "EpicLoot" ? 75 : 50,
                     Order = order, DispName = displayName, CustomDrawer = drawer, AcceptableValues = choices
                 }));
         }
@@ -201,11 +223,14 @@ namespace FreshWorld.Configuration
                 zoneProtection, blacklist, new[] { "Player_tombstone" },
                 ReadBool(Value(vegetationEnabled), "Reset.Resources"), vegetation, terrainVegetation, terrain, vegetationProtection,
                 ReadBool(Value(locationsEnabled), "Reset.Locations"), locations, locationProtection,
-                ReadBool(Value(epicLootProtection), "Protection.EpicLootProtection"),
-                ReadBool(Value(epicLootBountyProtection), "Protection.EpicLootBountyProtection"),
+                ReadBool(Value(epicLootProtection), "EpicLoot.EpicLootProtection"),
+                ReadBool(Value(epicLootBountyProtection), "EpicLoot.EpicLootBountyProtection"),
                 OptionalIds(Value(alwaysProtectedPrefabs), "Protection.AlwaysProtectedPrefabs"),
-                ReadPercentage(Value(automaticResetPercent)), ParseLocationRadii(Value(locationResetRadii)));
-            return new RuntimeSettings(schedule, options);
+                ReadPercentage(Value(automaticResetPercent)), ParseLocationRadii(Value(locationResetRadii)),
+                ReadBool(Value(pathOfValheimAltarProtection), "Path of Valheiman.AltarProtection"),
+                ReadBool(Value(pathOfValheimBlightProtection), "Path of Valheiman.BlightProtection"));
+            return new RuntimeSettings(schedule, options,
+                ReadBool(Value(pathOfValheimAzuriteVegetation), "Path of Valheiman.AzuriteVegetation"));
         }
         private static bool ReadBool(string text, string key)
         {

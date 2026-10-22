@@ -7,12 +7,17 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../FreshWorld/Backend/MaintenanceGate.cs" Link="Production/MaintenanceGate.cs" />
+    <Compile Include="../FreshWorld/Runtime/GuardedCoroutine.cs" Link="Production/GuardedCoroutine.cs" />
+    <Compile Include="../FreshWorld/Backend/MaintenanceSave.cs" Link="Production/MaintenanceSave.cs" />
     <ProjectReference Include="../FreshWorld.Core/FreshWorld.Core.csproj" />
     <Compile Include="../FreshWorld/Engine/GameWorld.cs" Link="Production/GameWorld.cs" />
     <Compile Include="../FreshWorld/Engine/EpicLootProtection.cs" Link="Production/EpicLootProtection.cs" />
     <Compile Include="../FreshWorld/Engine/JotunInvasionProtection.cs" Link="Production/JotunInvasionProtection.cs" />
     <Compile Include="../FreshWorld/Engine/JotunInvasionDiagnostics.cs" Link="Production/JotunInvasionDiagnostics.cs" />
     <Compile Include="../FreshWorld/Engine/AlwaysProtectedObjects.cs" Link="Production/AlwaysProtectedObjects.cs" />
+    <Compile Include="../FreshWorld/Engine/PathOfValheimProtection.cs" Link="Production/PathOfValheimProtection.cs" />
+    <Compile Include="../FreshWorld/Engine/PathOfValheimRepair.cs" Link="Production/PathOfValheimRepair.cs" />
     <Compile Include="../FreshWorld/Engine/ResetZones.cs" Link="Production/ResetZones.cs" />
     <Compile Include="../FreshWorld/Engine/BaseProtection.cs" Link="Production/BaseProtection.cs" />
     <Compile Include="../FreshWorld/Configuration/FreshWorldConfig.cs" Link="Production/FreshWorldConfig.cs" />

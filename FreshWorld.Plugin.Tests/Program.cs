@@ -57,6 +57,13 @@ internal static class Program
             Test("backend failure is persisted and reported without retry", FailureNotification);
             Test("status reports idle policy and the last result without reserving or dispatching maintenance", ReadOnlyStatus);
             Test("invasion inspection is independent of configuration and scheduler admission", InvasionInspection);
+            Test("PoV repair rejects unsafe or conflicting admission without replacing work", PovRepairAdmission);
+            Test("PoV repair completion does not consume or move the reset schedule", PovRepairSchedule);
+            Test("reset and repair discard native regeneration snapshots before any execution", PovScanExclusion);
+            Test("native scan cleanup failure releases admission and cannot break session teardown", PovScanFailure);
+            Test("PoV repair cancels on authority session and subsystem changes", PovRepairCancellation);
+            Test("PoV repair releases its lease on stop shutdown compatibility failure and execution failure", PovRepairCleanup);
+            Test("PoV repair excludes resets and defers config changes until completion", PovRepairExclusion);
             Test("invasion inspection failure preserves active and pending maintenance", InvasionInspectionFailure);
             Test("invasion inspection requires a ready world and current authority", InvasionInspectionAuthority);
             Test("plugin shutdown unregisters command and releases backend lease", ShutdownCleansUp);
@@ -490,8 +497,8 @@ internal static class Program
             c.Set("Reset", "Locations", "true");
             c.Set("Protection", "LocationSafeZones", "0");
             c.Set("Protection", "PieceBlacklist", "piece_workbench,custom_marker");
-            c.Set("Protection", "EpicLootProtection", "false");
-            c.Set("Protection", "EpicLootBountyProtection", "false");
+            c.Set("EpicLoot", "EpicLootProtection", "false");
+            c.Set("EpicLoot", "EpicLootBountyProtection", "false");
             c.Set("Reset", "LocationIds", "Hildir_cave");
         }, skipStartupDelay: false);
         f.Run();
@@ -503,8 +510,8 @@ internal static class Program
         f.Plugin.Config.Set("Reset", "Locations", "false");
         f.Plugin.Config.Set("Protection", "LocationSafeZones", "1");
         f.Plugin.Config.Set("Protection", "PieceBlacklist", "");
-        f.Plugin.Config.Set("Protection", "EpicLootProtection", "true");
-        f.Plugin.Config.Set("Protection", "EpicLootBountyProtection", "true");
+        f.Plugin.Config.Set("EpicLoot", "EpicLootProtection", "true");
+        f.Plugin.Config.Set("EpicLoot", "EpicLootBountyProtection", "true");
         Time.realtimeSinceStartup = 30;
         f.Tick();
         var dispatched = MaintenancePipeline.Created.Single();
@@ -825,6 +832,144 @@ internal static class Program
         Equal(RunStatus.Failed, scheduler.Attempts.Single().Status, "interrupted active run persisted as failure");
     }
 
+    private static void PovScanExclusion()
+    {
+        foreach (var repair in new[] { false, true })
+        {
+            using var f = new Fixture();
+            PathOfValheimAzurite.OnCancel = () =>
+            {
+                True(MaintenanceGate.IsActive, "gate must already exclude reentrant native work");
+                Equal(0, MaintenancePipeline.Mutations + PathOfValheimRepair.Mutations, "cancellation must precede first mutation");
+            };
+            if (repair) f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request); else f.Run();
+            True(PathOfValheimAzurite.Cancellations == 1, "exactly one admission cancellation");
+            PathOfValheimAzurite.OnCancel = null;
+            f.Tick();
+            True(MaintenanceGate.IsAvailable, "completion released gate");
+        }
+    }
+
+    private static void PovScanFailure()
+    {
+        foreach (var repair in new[] { false, true })
+        {
+            using var f = new Fixture();
+            PathOfValheimAzurite.FailCancel = true;
+            if (repair) f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request); else f.Run();
+            True(MaintenanceGate.IsAvailable, "failed admission leaked gate");
+            Equal(0, MaintenancePipeline.Mutations + PathOfValheimRepair.Mutations, "failed cancellation admitted work");
+            f.Plugin.StopSession();
+            True(f.Scheduler == null && f.GetField<ZNet>("host") == null, "external cleanup failure blocked session teardown");
+            PathOfValheimAzurite.FailCancel = false;
+        }
+    }
+
+    private static void PovRepairAdmission()
+    {
+        var cases = new Action<Fixture>[] {
+            f => f.Request.Authorized = false,
+            f => f.Net.Uid++,
+            f => ZoneSystem.instance.LocationsGenerated = false,
+            f => f.Net.Saving = true,
+            f => Time.timeScale = 0,
+            f => f.SetField("sessionFaulted", true),
+            f => f.SetField("attachedAt", 0f),
+            f => GameWorld.HasPendingMaintenanceCleanup = true,
+            f => { f.SetField("attachedAt", 0f); f.Run(); },
+            f => { MaintenancePipeline.HoldFrames = 5; f.Run(); },
+            f => f.Scheduler!.GetDue(new ScheduleClock(DateTimeOffset.UtcNow, 24)),
+            f => EmptyChunkSaveCompatibility.Reject = true
+        };
+        foreach (var change in cases)
+        {
+            using var f = new Fixture(); change(f);
+            var prior = f.GetField<object>("runner"); var pending = f.GetField<object>("pendingManual");
+            f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request);
+            Equal(0, PathOfValheimRepair.Created, "invalid repair admitted");
+            True(ReferenceEquals(prior, f.GetField<object>("runner")) && ReferenceEquals(pending, f.GetField<object>("pendingManual")), "existing work replaced");
+        }
+        using (var f = new Fixture())
+        using (var lease = MaintenanceGate.Acquire())
+        {
+            f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request);
+            Equal(0, PathOfValheimRepair.Created, "foreign lease ignored");
+        }
+    }
+
+    private static void PovRepairSchedule()
+    {
+        using var f = new Fixture(); var scheduler = f.Scheduler;
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request); f.Tick();
+        Equal(1, PathOfValheimRepair.Mutations, "repair ran");
+        Equal(0, MaintenancePipeline.Created.Count, "repair started a reset");
+        True(ReferenceEquals(scheduler, f.Scheduler) && scheduler!.Attempts.Count == 0 && scheduler.PendingRun == null, "repair consumed history");
+        True(MaintenanceGate.IsAvailable && !f.GetField<bool>("activePovRepair"), "repair retained lease");
+        HasReply(f.Request, "Completed. PoV altar repair");
+        f.Net.Seconds = 24 * EnvMan.instance.m_dayLengthSec; Time.realtimeSinceStartup = 1; f.Tick();
+        Equal(1, MaintenancePipeline.Created.Count, "repair moved original reset deadline");
+    }
+
+    private static void PovRepairCancellation()
+    {
+        var changes = new Action<Fixture>[] {
+            f => f.Request.Authorized = false,
+            f => f.Net.Uid++,
+            f => ZNet.instance = new ZNet { Uid = f.Net.Uid },
+            f => ZoneSystem.instance = new(),
+            f => ZDOMan.instance = new(),
+            f => ZNetScene.instance = new(),
+            f => WorldGenerator.instance = new(),
+            f => ZNet.m_loadError = true
+        };
+        foreach (var partial in new[] { false, true })
+        foreach (var change in changes)
+        {
+            using var f = new Fixture();
+            PathOfValheimRepair.HoldFrames = 10; PathOfValheimRepair.MutateBeforeYield = true;
+            f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request);
+            if (partial) f.Tick();
+            change(f); f.Tick();
+            Equal(partial ? 1 : 0, PathOfValheimRepair.Mutations, "mutation after cancellation");
+            if (partial) Equal(1, PathOfValheimRepair.Disposals, "started repair not disposed once");
+            True(MaintenanceGate.IsAvailable && !f.GetField<bool>("activePovRepair"), "cancelled repair retained state");
+            f.Tick(); Equal(1, PathOfValheimRepair.Created, "cancelled repair retried");
+        }
+    }
+
+    private static void PovRepairCleanup()
+    {
+        foreach (var kind in new[] { "stop", "shutdown", "compatibility", "failure" })
+        {
+            using var f = new Fixture(); PathOfValheimRepair.HoldFrames = kind == "failure" ? 0 : 10;
+            PathOfValheimRepair.Fail = kind == "failure";
+            f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request); f.Tick();
+            if (kind == "stop") f.Plugin.StopSession();
+            else if (kind == "shutdown") f.Dispose();
+            else if (kind == "compatibility") { EmptyChunkSaveCompatibility.DisabledReason = "injected late failure"; f.Tick(); }
+            True(MaintenanceGate.IsAvailable && !f.GetField<bool>("activePovRepair"), "repair cleanup failed: " + kind);
+            Equal(1, PathOfValheimRepair.Disposals, "repair not disposed once: " + kind);
+            if (kind == "failure") True(!f.GetField<bool>("sessionFaulted"), "isolated repair failure faulted reset schedule");
+        }
+    }
+
+    private static void PovRepairExclusion()
+    {
+        using var f = new Fixture(); PathOfValheimRepair.HoldFrames = 2;
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request);
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Status, f.Request); HasReply(f.Request, "Running PoV altar repair");
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request); f.Run();
+        Equal(1, PathOfValheimRepair.Created, "duplicate repair admitted"); Equal(0, MaintenancePipeline.Created.Count, "reset overlapped repair");
+        var before = f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings");
+        f.Plugin.Config.Set("Reset", "Zones", "false"); f.SetField("configValuesChanged", 1);
+        f.Tick(); True(ReferenceEquals(before, f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings")), "reload during repair");
+        f.Net.Seconds = 24 * EnvMan.instance.m_dayLengthSec; Time.realtimeSinceStartup = 1; f.Tick();
+        Equal(0, MaintenancePipeline.Created.Count, "due reset overlapped repair");
+        Time.realtimeSinceStartup = 2; f.Tick();
+        True(!f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings")!.Options.ZonesEnabled, "reload not applied after repair");
+        Equal(1, MaintenancePipeline.Created.Count, "due reset did not resume after repair");
+    }
+
     private static void InvasionInspection()
     {
         using var f = new Fixture(config => config.Set("General", "Enabled", "false"));
@@ -933,6 +1078,8 @@ internal static class Program
             ZNetScene.instance = new ZNetScene(); WorldGenerator.instance = new WorldGenerator();
             DungeonDB.instance = new DungeonDB(); Game.instance = new Game(); EnvMan.instance = new EnvMan();
             MaintenancePipeline.Reset();
+            PathOfValheimRepair.Reset();
+            PathOfValheimAzurite.Cancellations = 0; PathOfValheimAzurite.FailCancel = false; PathOfValheimAzurite.OnCancel = null;
             EmptyChunkSaveCompatibility.Reject = false;
             GameWorld.HasPendingMaintenanceCleanup = false;
             FreshWorld.Configuration.ConfigSynchronization.PendingLogin = false;

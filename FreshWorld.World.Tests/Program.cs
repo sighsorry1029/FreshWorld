@@ -1,4 +1,6 @@
 using System.Reflection;
+using FreshWorld.Backend;
+using FreshWorld.Runtime;
 using BepInEx.Configuration;
 using FreshWorld.Configuration;
 using FreshWorld.Engine;
@@ -6,6 +8,20 @@ using UnityEngine;
 
 var tests = new (string Name, Action Body)[]
 {
+    ("PoV altars are absolute objectives without Piece creator or configured entries", PovAltars),
+    ("PoV protection switches are independent and explicit absolute entries still win", PovSwitches),
+    ("PoV repair restores only missing records without loading zones and is repeatable", PovRepair),
+    ("PoV repair skips rounded existing positions nearby altars overlapping and invalid records", PovRepairAmbiguity),
+    ("PoV repair rejects missing contracts data or prefab before mutation", PovRepairUnavailable),
+    ("PoV repair stops on refused or failed saves without objects or event leaks", PovRepairSaveFailure),
+    ("PoV repair rechecks record removal and inactive object arrival after saving", PovRepairSaveRace),
+    ("PoV repair rechecks after height hooks and waits for a later save or pause", PovRepairPlacementRace),
+    ("PoV repair cancels during save and on subsystem replacement", PovRepairCancellation),
+    ("PoV creation failure removes only the captured new object and stops the batch", PovRepairCreationFailure),
+    ("PoV Blight protects linked objectives and fallback wardens only with an active controller", PovBlight),
+    ("PoV protection observes late controllers and retains completion only until the next run", PovBlightLifetime),
+    ("PoV guards recursive and group deletion without blocking native event cleanup", PovDeletion),
+    ("PoV vegetation checks saved sectors and borders but excludes queued deletions", PovVegetationNeighbors),
     ("sector and world enumeration return snapshots", Snapshots),
     ("native sector query includes portals and isolates shared out-of-map buckets", SectorPortals),
     ("short coordinate edges do not wrap occupied or protected zones and repair borders", CoordinateEdges),
@@ -93,6 +109,9 @@ static void Reset()
     PersistentEventSystem.instance = new();
     Minimap.instance = new(); ClutterSystem.instance = new(); ZRoutedRpc.instance = new();
     Heightmap.Reset(); TerrainResetter.Borders = null;
+    WorldGenerator.instance = new(); DungeonDB.instance = new();
+    ZNet.m_loadError = false; ZNet.WorldSaveStarted = null; Application.Reset(); Time.timeScale = 1;
+    BepInEx.Bootstrap.Chainloader.PluginInfos.Clear(); PassiveTree.WorldKeys.Records.Clear(); PassiveTree.WorldKeys.Synced = true;
     UnityEngine.Object.ResetDestroyCallbacks();
     BaseProtection.Configure([], []);
 }
@@ -973,6 +992,277 @@ static void TreasureSpawners()
         GameWorld.RemoveZDO(zdo);
         Equal(kind == "pending", zdo.Valid);
     }
+}
+
+static ZDO PovObject(long id, string prefab, int sector, string? uid = null, string key = "pt_blight_zone")
+{
+    var zdo = new ZDO(id, prefab, new(sector * 64, 0, 0));
+    if (uid != null) zdo.Strings[key.GetStableHashCode()] = uid;
+    ZDOMan.instance.Add(zdo);
+    return zdo;
+}
+
+static AlwaysProtectedObjects PovProtection()
+{
+    var pov = new PathOfValheimProtection(); pov.CaptureControllers();
+    return new AlwaysProtectedObjects(Array.Empty<string>(), pov.IsProtectedObject);
+}
+
+static void PovAltars()
+{
+    PovObject(1, "PT_WardenAltar", 0); PovObject(2, "PT_PowerAltar", 2);
+    PovObject(3, "PT_RuneMonolith", 3); PovObject(4, "PT_AzuriteVein", 4);
+    var protection = PovProtection(); Equal(2, protection.Capture());
+    True(!protection.CanResetZone(new(0, 0))); True(!protection.CanResetZone(new(2, 0)));
+    True(protection.CanResetZone(new(1, 0))); True(protection.CanResetZone(new(3, 0)));
+    True(protection.CanResetZone(new(4, 0)));
+}
+
+static void PovSwitches()
+{
+    var altar = PovObject(1, "PT_WardenAltar", 0);
+    var controller = PovObject(2, "PT_CorruptionZone", 1, "event", "pt_blight_uid");
+    var monolith = PovObject(3, "PT_RuneMonolith", 2, "event");
+    foreach (var protectAltars in new[] { true, false })
+    foreach (var protectBlight in new[] { true, false })
+    {
+        var pov = new PathOfValheimProtection(protectAltars, protectBlight); pov.CaptureControllers();
+        Equal(protectAltars, pov.IsProtectedObject(altar));
+        Equal(protectBlight, pov.IsProtectedObject(controller));
+        Equal(protectBlight, pov.IsProtectedObject(monolith));
+        var explicitProtection = new AlwaysProtectedObjects(new[] { "PT_WardenAltar" }, pov.IsProtectedObject);
+        True(explicitProtection.IsProtectedObject(altar)); True(!explicitProtection.CanResetZone(new(0, 0)));
+    }
+}
+
+static void PreparePov(params string[] records)
+{
+    BepInEx.Bootstrap.Chainloader.PluginInfos["treextr.pathofvalheiman"] = new();
+    PassiveTree.WorldKeys.Records.AddRange(records);
+    foreach (var name in new[] { "PT_WardenAltar", "PT_PowerAltar" })
+    {
+        var prefab = new GameObject(); prefab.AddComponent(new ZNetView(new ZDO(0, name, new())));
+        ZNetScene.instance.RegisterPrefab(name, prefab);
+    }
+}
+
+static (PathOfValheimRepair? Repair, Exception? Error) RepairPov(Action<int>? onYield = null, Action? authority = null)
+{
+    PathOfValheimRepair? repair = null; Exception? failure = null;
+    using var lease = MaintenanceGate.Acquire();
+    try
+    {
+        repair = new PathOfValheimRepair(authority ?? (() => { }), _ => { });
+        using var run = new GuardedCoroutine(repair.Run(), () => true, e => failure = e, _ => { });
+        var ticks = 0;
+        while (run.MoveNext())
+        {
+            onYield?.Invoke(++ticks);
+            if (ticks > 200) throw new Exception("repair did not finish");
+        }
+    }
+    catch (Exception error) { failure = error; }
+    Equal(0, Application.ListenerCount); True(ZNet.WorldSaveStarted == null);
+    return (repair, failure);
+}
+
+static void PovRepair()
+{
+    PreparePov("pov_warden_altars_2_-64_0", "pov_warden_altar_1_-64_0", "pov_power_at_640_64",
+        "pov_power_at_done_1", "pov_mpower_4", "unrelated_key");
+    var before = PassiveTree.WorldKeys.Records.ToArray();
+    var (repair, error) = RepairPov(); if (error != null) throw error;
+    Equal(2, ZDOMan.instance.Created.Count); Equal(1, ZNet.instance.SaveCalls);
+    Equal(0, ZoneSystem.instance.Pokes); Equal(2, ZDOMan.instance.Dirtied.Count);
+    foreach (var zdo in ZDOMan.instance.Created)
+    {
+        True(zdo.IsValid() && zdo.Persistent && !zdo.Distant);
+        Equal(ZDO.ObjectType.Prioritized, zdo.Type); Equal(ZDOMan.GetSessionID(), zdo.Owner);
+        Equal(77f, zdo.GetPosition().y); Equal(0, zdo.Ints.Count); Equal(0L, zdo.Creator);
+    }
+    True(repair!.Summary.Contains("restored=2")); True(before.SequenceEqual(PassiveTree.WorldKeys.Records));
+    (repair, error) = RepairPov(); True(error == null); True(repair!.Summary.Contains("existing=2"));
+    Equal(2, ZDOMan.instance.Created.Count); Equal(1, ZNet.instance.SaveCalls); // No-op does not save.
+}
+
+static void PovRepairAmbiguity()
+{
+    PreparePov("pov_warden_altars_2_-64_0", "pov_power_at_128_0", "pov_power_at_256_0", "pov_power_at_260_0",
+        "pov_power_at_invalid", "pov_power_at_2147483647_0", "pov_power_at_done_1");
+    ZDOMan.instance.Add(new(1, "PT_WardenAltar", new(-63.5f, 100, 0.5f)));
+    ZDOMan.instance.Add(new(2, "PT_PowerAltar", new(150, -30, 0))); // Moved / nearby altar, not safe to duplicate.
+    var (repair, error) = RepairPov(); True(error == null); True(repair!.Summary.Contains("existing=1, skipped=3, invalid records=2"));
+    Equal(0, ZNet.instance.SaveCalls); Equal(0, ZDOMan.instance.Created.Count);
+}
+
+static void PovRepairUnavailable()
+{
+    var cases = new Action[] {
+        () => BepInEx.Bootstrap.Chainloader.PluginInfos.Clear(),
+        () => BepInEx.Bootstrap.Chainloader.PluginInfos["treextr.pathofvalheiman"].Instance = new object(),
+        () => PassiveTree.WorldKeys.Synced = false,
+        () => ZNetScene.instance = new(),
+        () => ZNetScene.instance.GetPrefab("PT_WardenAltar".GetStableHashCode())!.GetComponent<ZNetView>()!.m_persistent = false
+    };
+    foreach (var change in cases)
+    {
+        Reset(); PreparePov("pov_warden_altars_2_64_0"); change();
+        True(RepairPov().Error != null); Equal(0, ZNet.instance.SaveCalls); Equal(0, ZDOMan.instance.Created.Count);
+    }
+}
+
+static void PovRepairSaveFailure()
+{
+    foreach (var ignore in new[] { true, false })
+    {
+        Reset(); PreparePov("pov_warden_altars_2_64_0");
+        ZNet.instance.IgnoreSave = ignore; if (!ignore) ZNet.instance.SaveError = "injected save failure";
+        True(RepairPov().Error != null); Equal(1, ZNet.instance.SaveCalls); Equal(0, ZDOMan.instance.Created.Count);
+    }
+}
+
+static void PovRepairSaveRace()
+{
+    foreach (var removeRecord in new[] { true, false })
+    {
+        Reset(); PreparePov("pov_warden_altars_2_64_0");
+        ZNet.instance.OnSave = () => {
+            if (removeRecord) PassiveTree.WorldKeys.Records.Clear();
+            else ZDOMan.instance.Add(new(1, "PT_WardenAltar", new(64, 30, 0)));
+        };
+        True(RepairPov().Error == null); Equal(0, ZDOMan.instance.Created.Count);
+    }
+}
+
+static void PovRepairPlacementRace()
+{
+    PreparePov("pov_warden_altars_2_64_0");
+    WorldGenerator.instance.OnHeight = () => ZDOMan.instance.Add(new(1, "PT_WardenAltar", new(64, 30, 0)));
+    True(RepairPov().Error == null); Equal(0, ZDOMan.instance.Created.Count);
+    Reset(); PreparePov("pov_warden_altars_2_64_0", "pov_power_at_256_0");
+    var waits = 0;
+    var (_, error) = RepairPov(_ => {
+        if (ZDOMan.instance.Created.Count != 1) return;
+        if (waits++ == 0) { ZNet.instance.Saving = true; Time.timeScale = 0; }
+        else if (waits == 3) { ZNet.instance.Saving = false; Time.timeScale = 1; }
+    });
+    if (error != null) throw error; Equal(2, ZDOMan.instance.Created.Count); True(waits >= 3);
+}
+
+static void PovRepairCancellation()
+{
+    PreparePov("pov_warden_altars_2_64_0"); ZNet.instance.HoldSave = true;
+    var authorized = true;
+    True(RepairPov(_ => { if (ZNet.instance.SaveCalls > 0) authorized = false; },
+        () => { if (!authorized) throw new Exception("authority revoked"); }).Error != null);
+    Equal(0, ZDOMan.instance.Created.Count);
+    Reset(); PreparePov("pov_warden_altars_2_64_0");
+    True(RepairPov(_ => ZoneSystem.instance = new()).Error != null); Equal(0, ZDOMan.instance.Created.Count);
+}
+
+static void PovRepairCreationFailure()
+{
+    PreparePov("pov_warden_altars_2_64_0", "pov_power_at_256_0");
+    var old = new ZDO(1, "unrelated", new(64, 0, 0)); ZDOMan.instance.Add(old);
+    ZDOMan.instance.OnRotate = _ => throw new Exception("injected rotation failure");
+    True(RepairPov().Error != null); Equal(1, ZDOMan.instance.Created.Count);
+    True(ZDOMan.instance.Destroyed.SequenceEqual(ZDOMan.instance.Created)); True(old.IsValid());
+    Equal(0, ZDOMan.instance.Dirtied.Count);
+}
+
+static void PovBlight()
+{
+    foreach (var state in new[] { -1, 0, 1, 2, 3, 4 })
+    {
+        ZDOMan.instance.ClearObjects();
+        var controller = PovObject(1, "PT_CorruptionZone", 0, "event", "pt_blight_uid");
+        controller.Ints["pt_blight_state".GetStableHashCode()] = state;
+        var altar = PovObject(2, "PT_BlightAltar", 1, "event", "pt_blight_uid");
+        var monolith = PovObject(3, "PT_RuneMonolith", 2, "event"); // Borrowed: own=false.
+        var vein = PovObject(4, "PT_AzuriteVein", 3, "event");
+        var boss = PovObject(5, "fallback_champion", 4, "event"); boss.Bools["pt_blight_warden".GetStableHashCode()] = true;
+        var mob = PovObject(6, "ordinary_blight_mob", 5, "event"); mob.Bools["pt_blight".GetStableHashCode()] = true;
+        var orphan = PovObject(7, "PT_RuneMonolith", 6, "missing"); orphan.Bools["pt_blight_own".GetStableHashCode()] = true;
+        var unlinked = PovObject(8, "PT_RuneMonolith", 7);
+        var wrongKey = PovObject(9, "PT_BlightAltar", 8, "event");
+        var protection = PovProtection(); var active = state >= 0 && state <= 2;
+        Equal(active ? 4 : 0, protection.Capture());
+        foreach (var objective in new[] { controller, altar, monolith, boss })
+            Equal(active, protection.IsProtectedObject(objective));
+        foreach (var other in new[] { vein, mob, orphan, unlinked, wrongKey }) True(!protection.IsProtectedObject(other));
+        True(protection.CanResetZone(new(3, 0))); // Replenished veins do not reserve their sectors.
+        True(protection.CanResetZone(new(9, 0))); // Never a circle around the controller.
+    }
+}
+
+static void PovBlightLifetime()
+{
+    var monolith = PovObject(1, "PT_RuneMonolith", 2, "late");
+    var protection = PovProtection(); Equal(0, protection.Capture());
+    True(protection.CanResetZone(new(2, 0)));
+    var controller = PovObject(2, "PT_CorruptionZone", 10, "late", "pt_blight_uid");
+    UnityEngine.Time.frameCount++;
+    True(!protection.CanResetZone(new(2, 0))); // Controller is elsewhere and arrived after a miss.
+    controller.Ints["pt_blight_state".GetStableHashCode()] = 3;
+    True(protection.IsProtectedObject(monolith));
+    True(!protection.CanResetZone(new(2, 0)));
+    var next = PovProtection(); Equal(0, next.Capture()); True(next.CanResetZone(new(2, 0)));
+    controller.Ints["pt_blight_state".GetStableHashCode()] = 1;
+    True(!next.CanResetZone(new(2, 0))); // Known controller state is read live.
+    monolith.Strings.Remove("pt_blight_zone".GetStableHashCode());
+    GameWorld.RemoveZDO(monolith, false, false, next); True(monolith.Valid);
+    // Clearing a claim during normal cleanup does not expose a recorded objective to a
+    // cross-sector Spawned connection later in the same run. It is ordinary next run.
+    controller.Valid = false;
+    var afterRemoval = PovProtection(); Equal(0, afterRemoval.Capture());
+    True(afterRemoval.CanResetZone(new(2, 0)));
+
+    var duplicate = PovObject(3, "PT_CorruptionZone", 10, "duplicate", "pt_blight_uid");
+    duplicate.Ints["pt_blight_state".GetStableHashCode()] = 3;
+    var duplicateStone = PovObject(4, "PT_RuneMonolith", 4, "duplicate");
+    var duplicateRun = PovProtection(); True(!duplicateRun.IsProtectedObject(duplicateStone));
+    PovObject(5, "PT_CorruptionZone", 11, "duplicate", "pt_blight_uid");
+    UnityEngine.Time.frameCount++;
+    True(duplicateRun.IsProtectedObject(duplicateStone));
+}
+
+static void PovDeletion()
+{
+    var child = PovObject(2, "PT_BlightAltar", 9, "event", "pt_blight_uid");
+    PovObject(3, "PT_CorruptionZone", 10, "event", "pt_blight_uid");
+    var parent = PovObject(1, "spawner", 0); parent.Spawned = child.m_uid;
+    var protection = PovProtection(); protection.Capture();
+    GameWorld.RemoveZDO(parent, false, false, protection);
+    True(!parent.Valid && child.Valid); Equal(0L, child.Owner);
+    var altar = PovObject(4, "PT_WardenAltar", 1);
+    GameWorld.RemoveZDO(altar, false, false, protection); True(altar.Valid); Equal(0L, altar.Owner);
+    try
+    {
+        GameWorld.CompleteZoneDeletions(new() { new(9, 0) }, false, false, protection);
+        throw new Exception("Protected event objective accepted for group deletion.");
+    }
+    catch (InvalidOperationException) { }
+    // PoV's normal cleanup calls the game, never FreshWorld's deletion helper.
+    ZDOMan.instance.DestroyZDO(child); True(!child.Valid);
+}
+
+static void PovVegetationNeighbors()
+{
+    var zone = new Vector2s(0, 0); var hash = "PT_AzuriteVein".GetStableHashCode();
+    True(!GameWorld.HasRemainingPrefabNearZone(zone, hash, 6));
+    var vein = new ZDO(1, "PT_AzuriteVein", new(37, 800, 0)); ZDOMan.instance.Add(vein);
+    True(GameWorld.HasRemainingPrefabNearZone(zone, hash, 6)); // Neighbor sector, vertical offset ignored.
+    True(!GameWorld.HasRemainingPrefabNearZone(new(-1, 0), hash, 6));
+    ZDOMan.instance.DeferDeletion = true; ZDOMan.instance.DestroyZDO(vein);
+    True(vein.Valid && !GameWorld.HasRemainingPrefabNearZone(zone, hash, 6));
+    var retained = new ZDO(2, "PT_AzuriteVein", new(0, 0, 0)); ZDOMan.instance.Add(retained);
+    True(GameWorld.HasRemainingPrefabNearZone(zone, hash, 6));
+    ZDOMan.instance.DestroyZDO(retained);
+    var corner = new ZDO(3, "PT_AzuriteVein", new(37, 0, 37)); ZDOMan.instance.Add(corner);
+    True(!GameWorld.HasRemainingPrefabNearZone(zone, hash, 6)); // Outside the rounded border.
+    var timer = new ZDO(4, "PT_AzuriteStump", new()); ZDOMan.instance.Add(timer);
+    True(!GameWorld.HasRemainingPrefabNearZone(zone, hash, 6));
+    GameWorld.RemoveZDO(timer); True(ZDOMan.instance.DestructionQueue.Contains(timer.m_uid));
 }
 
 static void TreasureLifetime()

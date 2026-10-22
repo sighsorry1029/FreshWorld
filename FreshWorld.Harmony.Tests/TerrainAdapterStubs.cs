@@ -29,6 +29,25 @@ public sealed class ZDOMan
 }
 public sealed class ZoneSystem
 {
+    public sealed class ZoneVegetation
+    {
+        public string m_name = "";
+        public GameObject m_prefab = null!;
+        public bool m_enable, m_blockCheck, m_forcePlacement;
+        public Heightmap.Biome m_biome;
+        public float m_min, m_max, m_minAltitude, m_scaleMin, m_scaleMax, m_maxTilt;
+        public int m_groupSizeMin, m_groupSizeMax;
+    }
+    public List<ZoneVegetation> m_vegetation = new();
+    public List<ZoneVegetation> Seen = new();
+    public bool Failure;
+    public void Spawn(Vector2s zoneID) => SpawnZone(zoneID);
+    public void Place(Vector2s zoneID) => PlaceVegetation(zoneID);
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SpawnZone(Vector2s zoneID) => PlaceVegetation(zoneID);
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void PlaceVegetation(Vector2s zoneID)
+    { Seen = new(m_vegetation); if (Failure) throw new InvalidOperationException("injected placement failure"); }
     public static ZoneSystem? instance;
     public static Vector2s GetZone(Vector3 p) => new((int)Math.Floor((p.x + 32) / 64), (int)Math.Floor((p.z + 32) / 64));
     public static Vector3 GetZonePos(Vector2s zone) => new(zone.x * 64, 0, zone.y * 64);
@@ -39,7 +58,7 @@ public sealed class ZoneSystem
 }
 public sealed class Heightmap
 {
-    public enum Biome { None }
+    [Flags] public enum Biome { None = 0, Mountain = 4, BlackForest = 8, Swamp = 16, Plains = 32, Mistlands = 64, AshLands = 128, DeepNorth = 256 }
     public enum BiomeArea { Everything }
 }
 public sealed class WorldGenerator
@@ -66,6 +85,9 @@ namespace FreshWorld.Engine
 {
     internal static class GameWorld
     {
+        internal static bool HasPendingMaintenanceCleanup;
+        internal static bool RemainingVein;
+        internal static bool HasRemainingPrefabNearZone(Vector2s zone, int prefab, float border) => RemainingVein;
         public static IEnumerable<ZDO> AllZDOs() => throw new InvalidOperationException("Startup discovery enumerated a world.");
     }
 }

@@ -48,6 +48,15 @@ public sealed class ZNetScene
     public GameObject? GetPrefab(string name) => Prefabs.GetValueOrDefault(name);
 }
 public sealed class Heightmap : UnityEngine.Object { }
+// EWD keeps metadata by definition identity and replaces these maps during YAML reload.
+namespace ExpandWorldData.Vegetation
+{
+    public static class VegetationSpawning
+    {
+        public static Dictionary<ZoneSystem.ZoneVegetation, List<GameObject>> Prefabs = new();
+        public static Dictionary<ZoneSystem.ZoneVegetation, string> Extra = new();
+    }
+}
 public struct PrefabReference(bool valid, string? name, GameObject? asset = null)
 {
     public static int AssetReads;
@@ -226,3 +235,5 @@ namespace FreshWorld.Engine
         protected override bool ExecuteZone(Vector2s zone) => true;
     }
 }
+
+namespace FreshWorld.Engine { internal static class PathOfValheimAzurite { internal static void EnsureVegetation(ZoneSystem zones) { } } }

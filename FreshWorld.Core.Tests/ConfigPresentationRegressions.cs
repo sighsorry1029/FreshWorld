@@ -11,7 +11,7 @@ internal static class ConfigPresentationRegressions
     {
         var checks = new (string Name, Action Body)[]
         {
-            ("presentation metadata preserves three sections and orders related settings together", Order),
+            ("presentation metadata orders five sections and related settings together", Order),
             ("drawing valid or malformed values never normalizes or writes them", DrawWithoutEdits),
             ("explicit toggle and selector edits apply only the chosen config values", EditControls),
             ("numeric edits remain raw and are rejected until corrected", EditNumbers),
@@ -39,7 +39,9 @@ internal static class ConfigPresentationRegressions
         {
             ("General", new[] { "Enabled", "AutomaticResetPercent", "Mode", "GameDayInterval", "DailyTimes" }, 300),
             ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds", "LocationResetRadii" }, 200),
-            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "AlwaysProtectedPrefabs", "EpicLootProtection", "EpicLootBountyProtection", "PieceBlacklist" }, 100)
+            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "AlwaysProtectedPrefabs", "PieceBlacklist" }, 100),
+            ("EpicLoot", new[] { "EpicLootProtection", "EpicLootBountyProtection" }, 75),
+            ("Path of Valheiman", new[] { "AltarProtection", "BlightProtection", "AzuriteVegetation" }, 50)
         };
         foreach (var (section, keys, categoryOrder) in expected)
         {
@@ -48,7 +50,7 @@ internal static class ConfigPresentationRegressions
             Require(entries.All(entry => Metadata(entry).CategoryOrder == categoryOrder && entry.Description.AcceptableValues == null), section + " metadata");
         }
         Require(Metadata(file.Get("General", "Enabled")).DispName == "Automatic Runs", "Display name must not rename the cfg key.");
-        Require(file.BoundKeys.Count() == 20, "Unexpected new settings.");
+        Require(file.BoundKeys.Count() == 23, "Unexpected settings.");
     }
 
     private static void DrawWithoutEdits()
@@ -90,11 +92,11 @@ internal static class ConfigPresentationRegressions
         Require(protection.GetSerializedValue() == "2", "SafeZones saved its display label instead of its cfg value.");
         Require(!snapshot.Options.LocationsEnabled && snapshot.Options.LocationIds.Length == 16, "Presentation altered unrelated defaults.");
         Require(snapshot.Options.EpicLootProtectionEnabled, "EpicLoot protection must remain enabled by default.");
-        file.Set("Protection", "EpicLootProtection", "false");
+        file.Set("EpicLoot", "EpicLootProtection", "false");
         Require(!config.Capture().Options.EpicLootProtectionEnabled && snapshot.Options.EpicLootProtectionEnabled,
             "EpicLoot toggle changed an existing run snapshot.");
         GUILayout.Toggles.Enqueue(true);
-        var bounty = file.Get("Protection", "EpicLootBountyProtection");
+        var bounty = file.Get("EpicLoot", "EpicLootBountyProtection");
         Metadata(bounty).CustomDrawer!(bounty);
         Require(config.Capture().Options.EpicLootBountyProtectionEnabled && !snapshot.Options.EpicLootBountyProtectionEnabled,
             "Bounty drawer failed to update its setting or changed an existing snapshot.");

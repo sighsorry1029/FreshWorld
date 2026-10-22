@@ -20,7 +20,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.1.6";
+        public const string ModVersion = "1.1.7";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -30,6 +30,7 @@ namespace FreshWorld
 
         private FreshWorldConfig configuration = null!;
         private ConfigSynchronization? configSync;
+        private PathOfValheimAzurite? povAzurite;
         private RuntimeSettings? settings;
         private Harmony? harmony;
         private Harmony? commandHarmony;
@@ -51,6 +52,7 @@ namespace FreshWorld
         private float nextReleaseSweep;
         private ManualRequest? pendingManual;
         private string? activeRunId;
+        private bool activePovRepair;
         private string progress = "Idle.";
 
         private sealed class ManualRequest
@@ -101,6 +103,7 @@ namespace FreshWorld
                     harmony.PatchAll(type);
                 configSync = new ConfigSynchronization(Config, configuration, harmony,
                     () => Interlocked.Exchange(ref configValuesChanged, 1), message => Logger.LogWarning(message));
+                povAzurite = PathOfValheimAzurite.TryCreate(message => Logger.LogWarning(message));
                 ReloadSettings(false);
                 watcher = new FileSystemWatcher(Path.GetDirectoryName(Config.ConfigFilePath)!, Path.GetFileName(Config.ConfigFilePath));
                 watcher.Changed += OnConfigChanged;
@@ -149,6 +152,7 @@ namespace FreshWorld
                     return;
                 }
                 settings = next;
+                povAzurite?.Configure(next.PathOfValheimAzuriteVegetationEnabled);
                 if (reloadFile) configSync?.Publish();
                 Logger.LogInfo($"Configuration applied: automatic={next.AutomaticEnabled}, schedule={next.Schedule.Mode}, timezone={next.Schedule.TimeZone.Id}, safeZones={next.Options.ZoneSafeZones}/{next.Options.VegetationSafeZones}/{next.Options.LocationSafeZones} (zones/resources/locations).");
                 nextPoll = 0;
@@ -156,6 +160,7 @@ namespace FreshWorld
             catch (Exception error)
             {
                 settings = null;
+                TryCleanup(() => povAzurite?.Configure(false), "Could not stop PoV azurite vegetation after invalid configuration.");
                 CloseScheduler("The host configuration is invalid.");
                 Logger.LogError("Invalid FreshWorld configuration; new maintenance is disabled until the cfg is corrected. " + error.Message);
             }
@@ -306,6 +311,11 @@ namespace FreshWorld
                 { context.Reply(DisabledStatus()); return; }
                 if (!supported) { context.Reply("FreshWorld initialization is not complete; maintenance is unavailable."); return; }
                 if (!WorldReady()) { context.Reply("Request rejected: the world is not ready."); return; }
+                if (action == FreshWorldCommandAction.Pov)
+                {
+                    StartPovRepair(context);
+                    return;
+                }
                 if (action == FreshWorldCommandAction.Invasions)
                 {
                     // Inspection must not attach/reconfigure a scheduler or fault an active reset.
@@ -331,7 +341,7 @@ namespace FreshWorld
                     return;
                 }
                 if (runner != null || activeRunId != null)
-                { context.Reply("Maintenance is already running: " + activeRunId + ". " + progress); return; }
+                { context.Reply("Maintenance is already running: " + (activePovRepair ? "PoV altar repair" : activeRunId) + ". " + progress); return; }
                 if (pendingManual != null)
                 {
                     if (!IsCurrentRequest(pendingManual.Context)) CancelPendingManual("The earlier request lost its authority or session.");
@@ -366,11 +376,75 @@ namespace FreshWorld
             }
         }
 
+        private void StartPovRepair(CommandRequestContext context)
+        {
+            // This operation has no scheduled run ID and must not consume the reset schedule.
+            if (runner != null || activeRunId != null || pendingManual != null || scheduler?.PendingRun != null ||
+                !MaintenanceGate.IsAvailable || GameWorld.HasPendingMaintenanceCleanup)
+            { context.Reply("PoV altar repair is unavailable while maintenance is running, pending, or cleaning up."); return; }
+            AttachHost(context.Network);
+            if (sessionFaulted || settings == null)
+            { context.Reply("PoV altar repair is unavailable: maintenance is faulted or the host cfg is invalid."); return; }
+            if (Time.realtimeSinceStartup - attachedAt < settings.StartupDelaySeconds ||
+                Time.timeScale <= 0f || context.Network.IsSaving())
+            { context.Reply("PoV altar repair is unavailable during startup, pause, or a world save; try again afterward."); return; }
+            if (EmptyChunkSaveCompatibility.Check() == EmptyChunkSaveCompatibility.Strategy.Unsupported)
+            { DrainDisabledMaintenance(); context.Reply(DisabledStatus()); return; }
+
+            var activeZones = ZoneSystem.instance;
+            var activeManager = ZDOMan.instance;
+            var activeScene = ZNetScene.instance;
+            var activeGenerator = WorldGenerator.instance;
+            bool CanContinue() => EmptyChunkSaveCompatibility.DisabledReason == null && IsCurrentRequest(context) &&
+                WorldReady() && ReferenceEquals(activeZones, ZoneSystem.instance) &&
+                ReferenceEquals(activeManager, ZDOMan.instance) && ReferenceEquals(activeScene, ZNetScene.instance) &&
+                ReferenceEquals(activeGenerator, WorldGenerator.instance);
+            void RequireAuthority()
+            {
+                if (!CanContinue()) throw new InvalidOperationException("PoV repair lost its authority, world session, or compatibility contract.");
+            }
+            try
+            {
+                RequireAuthority();
+                var repair = new PathOfValheimRepair(RequireAuthority,
+                    message => { progress = message; Logger.LogInfo(message); context.Reply(message); });
+                backendLease = AcquireMaintenanceLease();
+                activePovRepair = true;
+                progress = "Checking recorded PoV altars.";
+                Exception? failure = null;
+                runner = new GuardedCoroutine(repair.Run(), CanContinue,
+                    error => { failure = error; Logger.LogError("PoV altar repair failed: " + error); },
+                    success =>
+                    {
+                        try
+                        {
+                            var result = (success ? "Completed. " : "Stopped: " + (failure?.Message ?? "authority or world session changed") + ". ") +
+                                repair.Summary + (success ? " Changes use the game's normal saves." : " Completed changes remain; no automatic retry.");
+                            progress = result;
+                            if (success) Logger.LogInfo(result); else Logger.LogWarning(result);
+                            context.Reply(result);
+                        }
+                        finally
+                        {
+                            backendLease?.Dispose(); backendLease = null; activePovRepair = false;
+                        }
+                    });
+                context.Reply("Starting PoV altar repair. Only missing Warden and Power altars with recorded coordinates will be restored.");
+            }
+            catch (Exception error)
+            {
+                runner?.Dispose(); runner = null;
+                backendLease?.Dispose(); backendLease = null; activePovRepair = false;
+                Logger.LogWarning("PoV altar repair could not start: " + error);
+                context.Reply("PoV altar repair could not start: " + error.Message);
+            }
+        }
+
         private string StatusMessage()
         {
             if (EmptyChunkSaveCompatibility.DisabledReason != null) return DisabledStatus();
             if (sessionFaulted) return "Maintenance is faulted for this world session. " + progress;
-            if (runner != null) return "Running " + activeRunId + ": " + progress;
+            if (runner != null) return "Running " + (activePovRepair ? "PoV altar repair" : activeRunId) + ": " + progress;
             if (pendingManual != null) return "Pending " + pendingManual.Run.Id + ": " + (pendingManual.LastWait ?? "waiting to start");
             if (settings == null) return "The host cfg is invalid; new maintenance is disabled.";
             var pending = scheduler?.PendingRun;
@@ -426,7 +500,7 @@ namespace FreshWorld
             var activeHost = host;
             var activeWorldUid = worldUid;
             var requester = pendingManual?.Run.Id == run.Id ? pendingManual.Context : null;
-            backendLease = MaintenanceGate.Acquire();
+            backendLease = AcquireMaintenanceLease();
             try
             {
                 activeScheduler.BeginRun(run, lastClock);
@@ -533,12 +607,25 @@ namespace FreshWorld
             }
         }
 
+        private IDisposable AcquireMaintenanceLease()
+        {
+            var lease = MaintenanceGate.Acquire();
+            try
+            {
+                // Discard PoV's in-flight world snapshot before any save, plan or mutation.
+                povAzurite?.BeforeMaintenance();
+                return lease;
+            }
+            catch { lease.Dispose(); throw; }
+        }
+
         internal void StopSession()
         {
             runner?.Dispose();
             runner = null;
             backendLease?.Dispose();
             backendLease = null;
+            TryCleanup(() => povAzurite?.EndSession(), "Could not discard the PoV azurite scan at session end.");
             CloseScheduler("The hosting world session ended.");
             host = null;
             worldUid = null;
@@ -546,6 +633,7 @@ namespace FreshWorld
             nextReleaseSweep = 0;
             sessionFaulted = false;
             activeRunId = null;
+            activePovRepair = false;
             progress = "Idle.";
         }
 
@@ -580,6 +668,8 @@ namespace FreshWorld
             if (configSync?.HasPendingLogin == true) return;
             configSync?.Dispose();
             configSync = null;
+            povAzurite?.Dispose();
+            povAzurite = null;
             harmony?.UnpatchSelf();
             compatibilityDrained = true;
             Logger.LogWarning("FreshWorld maintenance cleanup finished; operational patches removed. Only authenticated command diagnostics remain.");
@@ -593,6 +683,7 @@ namespace FreshWorld
                 TryCleanup(DisposeWatcher, "Could not stop configuration watching.");
                 TryCleanup(() => { configSync?.Dispose(); configSync = null; }, "Could not stop configuration synchronization.");
                 TryCleanup(StopSession, "Could not stop the active world session.");
+                TryCleanup(() => { povAzurite?.Dispose(); povAzurite = null; }, "Could not stop PoV azurite compatibility.");
                 TryCleanup(FreshWorldCommands.Unregister, "Could not unregister the console command.");
                 TryCleanup(() => harmony?.UnpatchSelf(), "Could not remove Harmony patches.");
                 TryCleanup(() => commandHarmony?.UnpatchSelf(), "Could not remove command authentication patches.");

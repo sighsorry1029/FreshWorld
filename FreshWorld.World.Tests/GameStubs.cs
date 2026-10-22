@@ -3,6 +3,25 @@ using System.Reflection;
 using System.Reflection.Emit;
 using UnityEngine;
 
+namespace BepInEx.Bootstrap
+{
+    public static class Chainloader
+    {
+        public static readonly Dictionary<string, PluginInfo> PluginInfos = new();
+        public sealed class PluginInfo { public object Instance = new PassiveTree.TestPlugin(); }
+    }
+}
+namespace PassiveTree
+{
+    public sealed class TestPlugin { }
+    public static class WorldKeys
+    {
+        public static bool Synced { get; set; }
+        public static readonly List<string> Records = new();
+        public static IReadOnlyList<string> Lines() => Records;
+    }
+}
+
 public readonly record struct Vector2s(short x, short y) { public Vector2s(int x, int y) : this((short)x, (short)y) { } }
 public readonly record struct ZDOID(long Id)
 {
@@ -29,19 +48,28 @@ public static class ZDOExtraData { public enum ConnectionType { Spawned } }
 public static class ZDOVars { public static readonly int s_creator = "creator".GetStableHashCode(); }
 public class ZDO(long id, string prefab, Vector3 position)
 {
+    public enum ObjectType { Default, Prioritized }
+    private int prefabHash = prefab.GetStableHashCode();
+    public bool Persistent, Distant;
+    public ObjectType Type;
+    public Quaternion Rotation;
+    public void SetPrefab(int value) { prefabHash = value; Valid = true; }
+    public void SetRotation(Quaternion value) { ZDOMan.instance.OnRotate?.Invoke(this); Rotation = value; }
     public ZDOID m_uid = new(id);
     public bool Valid = true;
     public long Owner;
     public long Creator;
     public ZDOID Spawned;
     public readonly Dictionary<int, string> Strings = new();
+    public readonly Dictionary<int, int> Ints = new();
+    public int GetInt(int key) => Ints.GetValueOrDefault(key);
     public readonly Dictionary<int, bool> Bools = new();
     public readonly Dictionary<int, byte[]> Bytes = new();
     public string GetString(int key) => Strings.GetValueOrDefault(key, "");
     public bool GetBool(int key) => Bools.GetValueOrDefault(key);
     public byte[]? GetByteArray(int key) => Bytes.GetValueOrDefault(key);
     public bool IsValid() => Valid;
-    public int GetPrefab() => prefab.GetStableHashCode();
+    public int GetPrefab() => prefabHash;
     public long GetLong(int key) => key == ZDOVars.s_creator ? Creator : 0;
     public Vector3 GetPosition() => position;
     public void SetPosition(Vector3 value) => position = value;
@@ -57,6 +85,16 @@ public class ZDOMan
     private readonly Dictionary<int, List<ZDO>> portals = new();
     private readonly List<ZDOID> m_destroySendList = new();
     public readonly List<ZDO> Destroyed = new();
+    public readonly List<ZDO> Created = new();
+    public readonly List<ZDO> Dirtied = new();
+    public Action<ZDO>? OnRotate;
+    public ZDO CreateNewZDO(Vector3 at, int hash)
+    {
+        if (ZNet.instance.SaveCalls == 0 || ZNet.instance.IsSaving()) throw new Exception("creation before save barrier");
+        var obj = new ZDO(10000 + Created.Count, "", at) { Owner = GetSessionID(), Valid = false };
+        Created.Add(obj); Add(obj); return obj;
+    }
+    public void SetDirtySector(ZDO zdo) => Dirtied.Add(zdo);
     public Action<ZDO>? AfterDestroy;
     public bool DeferDeletion;
     private static int SectorToIndex(Vector2s zone) =>
@@ -95,6 +133,8 @@ public class ZDOMan
 }
 public class ZNetView(ZDO zdo)
 {
+    public ZDO.ObjectType m_type = ZDO.ObjectType.Prioritized;
+    public bool m_persistent = true;
     public GameObject gameObject = new();
     private ZDO? _zdo = zdo;
     public bool Reset;
@@ -152,6 +192,24 @@ public class ZNetPeer
 }
 public class ZNet
 {
+    public static bool m_loadError;
+    public static Action? WorldSaveStarted;
+    public long Uid = 42;
+    public long GetWorldUID() => Uid;
+    public bool Saving, IgnoreSave, HoldSave;
+    public string? SaveError;
+    public Action? OnSave;
+    public int SaveCalls;
+    public float SaveDoneTime;
+    public bool IsSaving() => Saving;
+    public void Save(bool sync)
+    {
+        SaveCalls++;
+        if (IgnoreSave) return;
+        WorldSaveStarted?.Invoke(); Saving = true; OnSave?.Invoke();
+        if (SaveError != null) Application.Emit(SaveError, LogType.Error);
+        if (!HoldSave) { Saving = false; SaveDoneTime++; }
+    }
     public static ZNet instance = new();
     public sealed class PlayerInfo { public ZDOID m_characterID; public Vector3 m_position; }
     public bool Server = true;
@@ -166,6 +224,8 @@ public class ZNet
 }
 public class ZoneSystem
 {
+    public static Vector3 GetZonePos(Vector2s zone) => new(zone.x * 64, 0, zone.y * 64);
+    public bool SkipSaving() => false;
     public static ZoneSystem instance = new();
     private sealed class ZoneData { public GameObject m_root = new(); }
     private Dictionary<Vector2s, ZoneData> m_zones = new();
@@ -210,10 +270,17 @@ public class ZoneSystem
     public bool HasRoot(Vector2s zone) => m_zones.ContainsKey(zone);
     public bool IsLoading(Vector2s zone) => m_loadingObjectsInZones.ContainsKey(zone);
 }
+public class DungeonDB
+{
+    public static DungeonDB instance = new();
+    public bool SkipSaving() => false;
+}
 public class WorldGenerator
 {
     public static WorldGenerator instance = new();
-    public float GetHeight(float x, float z) => 77;
+    public Action? OnHeight;
+    public float Height = 77;
+    public float GetHeight(float x, float z) { OnHeight?.Invoke(); return Height; }
 }
 public class ClutterSystem
 {
@@ -255,6 +322,17 @@ public class ZRoutedRpc
 }
 namespace UnityEngine
 {
+    public static class Time { public static int frameCount; public static float timeScale = 1; }
+    public readonly record struct Quaternion(float Yaw) { public static Quaternion Euler(float x, float y, float z) => new(y); }
+    public enum LogType { Error, Assert, Warning, Log, Exception }
+    public static class Application
+    {
+        public delegate void LogCallback(string message, string trace, LogType type);
+        public static event LogCallback? logMessageReceivedThreaded;
+        public static int ListenerCount => logMessageReceivedThreaded?.GetInvocationList().Length ?? 0;
+        public static void Emit(string message, LogType type) => logMessageReceivedThreaded?.Invoke(message, "", type);
+        public static void Reset() => logMessageReceivedThreaded = null;
+    }
     public struct Vector3
     {
         public float x, y, z;
@@ -345,4 +423,8 @@ namespace FreshWorld.Engine
         public static void ResetBorders(IReadOnlyDictionary<Vector2s, BorderDirection> borders, Func<Vector2s, bool>? canResetZone = null) =>
             Borders = borders.Where(pair => canResetZone == null || canResetZone(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value);
     }
+}
+namespace FreshWorld.Engine
+{
+
 }

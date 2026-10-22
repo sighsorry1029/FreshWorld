@@ -16,7 +16,8 @@ internal static class ConfigBindingRegression
         "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds",
         "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
         "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
-        "Protection.EpicLootProtection", "Protection.EpicLootBountyProtection", "Protection.AlwaysProtectedPrefabs"
+        "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.AlwaysProtectedPrefabs",
+        "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.AzuriteVegetation"
     };
 
     internal static int Run()
@@ -26,14 +27,17 @@ internal static class ConfigBindingRegression
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 20 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all 23 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
             ("General.Enabled", "not-a-boolean"),
             ("Reset.Locations", "maybe"),
-            ("Protection.EpicLootProtection", "maybe"),
-            ("Protection.EpicLootBountyProtection", "maybe"),
+            ("EpicLoot.EpicLootProtection", "maybe"),
+            ("EpicLoot.EpicLootBountyProtection", "maybe"),
+            ("Path of Valheiman.AltarProtection", "maybe"),
+            ("Path of Valheiman.BlightProtection", "maybe"),
+            ("Path of Valheiman.AzuriteVegetation", "maybe"),
             ("General.Mode", "ManualOnly"),
             ("General.Mode", "1"),
             ("General.Mode", @"GameDays\nDailyTimes"),
@@ -69,7 +73,7 @@ internal static class ConfigBindingRegression
     private static void ValidBinding()
     {
         var values = ValidValues();
-        values["Protection.EpicLootBountyProtection"] = "true";
+        values["EpicLoot.EpicLootBountyProtection"] = "true";
         using var fixture = new Fixture(values);
         AssertRawValues(fixture.File, values);
         var settings = fixture.Settings.Capture();
@@ -100,6 +104,7 @@ internal static class ConfigBindingRegression
         var before = fixture.Settings.Capture();
         var values = ValidValues();
         values["General.Mode"] = "DailyTimes";
+        values["Path of Valheiman.AzuriteVegetation"] = "true";
         values["General.DailyTimes"] = "06:10,18:20";
         values["General.GameDayInterval"] = "36";
         values["General.AutomaticResetPercent"] = "50";
@@ -112,11 +117,18 @@ internal static class ConfigBindingRegression
         values["Protection.LocationSafeZones"] = "1";
         values["Protection.PieceBlacklist"] = "";
         values["Protection.AlwaysProtectedPrefabs"] = "";
-        values["Protection.EpicLootProtection"] = "false";
-        values["Protection.EpicLootBountyProtection"] = "true";
+        values["EpicLoot.EpicLootProtection"] = "false";
+        values["EpicLoot.EpicLootBountyProtection"] = "true";
+        values["Path of Valheiman.AltarProtection"] = "true";
+        values["Path of Valheiman.BlightProtection"] = "false";
         fixture.Reload(values);
         AssertRawValues(fixture.File, values);
         var after = fixture.Settings.Capture();
+        Require(!before.PathOfValheimAzuriteVegetationEnabled && after.PathOfValheimAzuriteVegetationEnabled,
+            "Vegetation cfg reload changed the old snapshot or ignored the edit.");
+        Require(!before.Options.PathOfValheimAltarProtectionEnabled && before.Options.PathOfValheimBlightProtectionEnabled &&
+            after.Options.PathOfValheimAltarProtectionEnabled && !after.Options.PathOfValheimBlightProtectionEnabled,
+            "PoV reload changed the previous snapshot or coupled the switches.");
         Require(before.Options.AutomaticResetPercent == 20 && after.Options.AutomaticResetPercent == 50,
             "Percentage reload changed an old snapshot or failed to capture the new value.");
         Require(after.Schedule.Mode == ScheduleMode.DailyTimes &&
@@ -139,7 +151,7 @@ internal static class ConfigBindingRegression
     {
         using var fixture = new Fixture(ValidValues());
         var actual = fixture.File.Keys.Select(key => key.Section + "." + key.Key).OrderBy(key => key, StringComparer.Ordinal);
-        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The 20-key config schema changed.");
+        Require(actual.SequenceEqual(ExpectedKeys.OrderBy(key => key, StringComparer.Ordinal)), "The expected config schema changed.");
         foreach (var definition in fixture.File.Keys)
         {
             var entry = fixture.File[definition];
@@ -157,8 +169,8 @@ internal static class ConfigBindingRegression
             var choices = (object[]?)ReadPublicField(tag, "AcceptableValues", typeof(object[]));
             var expectsDrawer = key == "General.Enabled" || key == "General.GameDayInterval" || key == "General.AutomaticResetPercent" ||
                 key == "Reset.Zones" || key == "Reset.Resources" || key == "Reset.Locations" ||
-                key == "Reset.ResourceTerrainRadius" || key == "Protection.EpicLootProtection" ||
-                key == "Protection.EpicLootBountyProtection";
+                key == "Reset.ResourceTerrainRadius" || key == "EpicLoot.EpicLootProtection" ||
+                key == "EpicLoot.EpicLootBountyProtection" || key == "Path of Valheiman.AltarProtection" || key == "Path of Valheiman.BlightProtection" || key == "Path of Valheiman.AzuriteVegetation";
             Require(expectsDrawer ? drawer is Action<ConfigEntryBase> : drawer == null,
                 key + " has an unexpected custom drawer contract.");
             if (IsChoiceKey(key)) AssertChoices(entry, choices, key);
@@ -321,8 +333,11 @@ internal static class ConfigBindingRegression
         ["Protection.LocationSafeZones"] = "2",
         ["Protection.PieceBlacklist"] = "piece_beehive,piece_workbench",
         ["Protection.AlwaysProtectedPrefabs"] = "Player_tombstone,custom_marker",
-        ["Protection.EpicLootProtection"] = "true",
-        ["Protection.EpicLootBountyProtection"] = "false"
+        ["EpicLoot.EpicLootProtection"] = "true",
+        ["EpicLoot.EpicLootBountyProtection"] = "false",
+        ["Path of Valheiman.AltarProtection"] = "false",
+        ["Path of Valheiman.BlightProtection"] = "true",
+        ["Path of Valheiman.AzuriteVegetation"] = "false",
     };
 
     private static void Require(bool condition, string message)
@@ -355,7 +370,7 @@ internal static class ConfigBindingRegression
         private void Write(Dictionary<string, string> values)
         {
             var text = new StringBuilder();
-            foreach (var section in new[] { "General", "Reset", "Protection" })
+            foreach (var section in new[] { "General", "Reset", "Protection", "EpicLoot", "Path of Valheiman" })
             {
                 text.Append('[').Append(section).AppendLine("]");
                 foreach (var key in ExpectedKeys.Where(key => key.StartsWith(section + ".", StringComparison.Ordinal)))

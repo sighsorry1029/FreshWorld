@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading;
 using FreshWorld.Configuration;
 using UnityEngine;
 using FreshWorld.Engine;
@@ -28,6 +27,7 @@ internal sealed class MaintenancePipeline
     private readonly HashSet<Vector2s> _playerZones = new();
     private readonly EpicLootProtection _epicLoot;
     private readonly JotunInvasionProtection _invasions = new();
+    private readonly PathOfValheimProtection _pathOfValheim;
     private readonly AlwaysProtectedObjects _alwaysProtected;
     private ITrackedOperation? _activeOperation;
     private readonly Dictionary<Vector2s, LocationFootprint> _locationFootprints = new();
@@ -44,7 +44,10 @@ internal sealed class MaintenancePipeline
         if (resetPercent < 0 || resetPercent > 100) throw new ArgumentOutOfRangeException(nameof(resetPercent));
         _resetPercent = resetPercent;
         _options = options;
-        _alwaysProtected = new AlwaysProtectedObjects(options.AlwaysProtectedPrefabs);
+        _pathOfValheim = new PathOfValheimProtection(options.PathOfValheimAltarProtectionEnabled, options.PathOfValheimBlightProtectionEnabled);
+        _alwaysProtected = new AlwaysProtectedObjects(options.AlwaysProtectedPrefabs,
+            options.PathOfValheimAltarProtectionEnabled || options.PathOfValheimBlightProtectionEnabled
+                ? _pathOfValheim.IsProtectedObject : null);
         _epicLoot = new EpicLootProtection(options.EpicLootProtectionEnabled, options.EpicLootBountyProtectionEnabled);
         _includeVegetation = includeVegetation;
         _log = log;
@@ -63,7 +66,7 @@ internal sealed class MaintenancePipeline
         {
             yield return WaitUntilUnpaused();
             BaseProtection.Configure(_options.PieceBlacklist, _options.ProtectedObjects);
-            yield return SaveWorld("before maintenance");
+            yield return MaintenanceSave.Run(_network, _zones, RequireWorld, _log, "before maintenance", _options.SaveTimeoutSeconds);
             yield return PlanLocations();
 
             RequireWorld();
@@ -73,8 +76,9 @@ internal sealed class MaintenancePipeline
             var protectedZones = ProtectedSnapshot(_options.ZoneSafeZones, generated);
             var epicLootZones = _epicLoot.Capture();
             var invasionZones = _invasions.Capture();
+            _pathOfValheim.CaptureControllers();
             var alwaysProtectedZones = _alwaysProtected.Capture();
-            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionZones} Jotun objective zones with 1x1 protection; {alwaysProtectedZones} zones protected by AlwaysProtectedPrefabs.");
+            _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionZones} Jotun objective zones with 1x1 protection; {alwaysProtectedZones} zones protected by AlwaysProtectedPrefabs or Path of Valheiman objectives.");
 
             // The default and manual path retain the existing live supplemental scope.
             if (_resetPercent < 100)
@@ -599,66 +603,6 @@ internal sealed class MaintenancePipeline
         requested.IntersectWith(registry);
         if (requested.Count == 0) _warn($"{kind} reset skipped: no configured IDs exist in this world's registry.");
         return requested;
-    }
-
-    private IEnumerator SaveWorld(string reason)
-    {
-        RequireWorld();
-        var waiting = Stopwatch.StartNew();
-        yield return WaitUntilUnpaused(waiting);
-        while (_network.IsSaving())
-        {
-            yield return WaitUntilUnpaused(waiting);
-            RequireWorld();
-            CheckSaveTimeout(waiting);
-            yield return null;
-        }
-        if (ZNet.m_loadError || _zones.SkipSaving() || DungeonDB.instance == null || DungeonDB.instance.SkipSaving())
-            throw new InvalidOperationException("World saving is disabled or the game reported a load error; maintenance cannot continue.");
-
-        string? saveError = null;
-        var observedStart = false;
-        Action started = () => observedStart = true;
-        Application.LogCallback logged = (message, trace, type) =>
-        {
-            if ((type == LogType.Error || type == LogType.Exception || type == LogType.Assert) &&
-                message.IndexOf("sav", StringComparison.OrdinalIgnoreCase) >= 0)
-                Interlocked.CompareExchange(ref saveError, message, null);
-        };
-        ZNet.WorldSaveStarted += started;
-        Application.logMessageReceivedThreaded += logged;
-        try
-        {
-            _log($"Requesting world save {reason}.");
-            var previousDoneTime = _network.SaveDoneTime;
-            _network.Save(false);
-            if (!observedStart && !_network.IsSaving() && _network.SaveDoneTime == previousDoneTime)
-                throw new InvalidOperationException("The world save request did not start.");
-            waiting.Restart();
-            do
-            {
-                yield return WaitUntilUnpaused(waiting);
-                RequireWorld();
-                var error = Volatile.Read(ref saveError);
-                if (error != null) throw new InvalidOperationException("World save reported an error: " + error);
-                CheckSaveTimeout(waiting);
-                yield return null;
-            } while (_network.IsSaving());
-            var finalError = Volatile.Read(ref saveError);
-            if (finalError != null) throw new InvalidOperationException("World save reported an error: " + finalError);
-            _log($"World save worker finished {reason} ({waiting.Elapsed.TotalSeconds:F1}s).");
-        }
-        finally
-        {
-            Application.logMessageReceivedThreaded -= logged;
-            ZNet.WorldSaveStarted -= started;
-        }
-    }
-
-    private void CheckSaveTimeout(Stopwatch waiting)
-    {
-        if (waiting.Elapsed.TotalSeconds > _options.SaveTimeoutSeconds)
-            throw new TimeoutException($"World save did not finish within {_options.SaveTimeoutSeconds}s.");
     }
 
     private IEnumerator WaitUntilUnpaused(Stopwatch? timer = null, Stopwatch? additionalTimer = null,

@@ -86,24 +86,25 @@ internal static class Program
     private static void Syntax()
     {
         var valid = new[] { "freshworld", "freshworld  ", "FRESHWORLD", "freshworld status", "FRESHWORLD STATUS", "freshworld   status",
-            "freshworld invasions", "FRESHWORLD  INVASIONS " };
+            "freshworld invasions", "FRESHWORLD  INVASIONS ", "freshworld pov", "FRESHWORLD POV" };
         foreach (var line in valid) Check(CommandSyntax.TryParse(line, out _), line);
         var invalid = new[] { "freshworld run", "freshworld help", "freshworld RUN", "freshworld HELP",
             " freshworld", "freshworld force", "freshworld Force=true", "freshworld;save",
             "freshworld status; save", "freshworld\nstatus", "freshworld\tstatus", "freshworld status\0", "freshworld *",
             "freshworld\u00a0status", "freshworld " + new string(' ', 65), "freshworld status status", "freshworldｓｔａｔｕｓ",
-            "freshworld invasions stop", "freshworld invasions;save", "freshworld\tinvasions", "freshworld invasions\n" };
+            "freshworld pov repair", "freshworld pov;save", "freshworld invasions stop", "freshworld invasions;save", "freshworld\tinvasions", "freshworld invasions\n" };
         foreach (var line in invalid) Check(!CommandSyntax.TryParse(line, out _), line);
         Check(!CommandSyntax.TryParse(null, out _));
         Check(CommandSyntax.TryParse("freshworld", out var action) && action == FreshWorldCommandAction.Run);
         Check(CommandSyntax.TryParse("freshworld status", out action) && action == FreshWorldCommandAction.Status);
         Check(CommandSyntax.TryParse("freshworld invasions", out action) && action == FreshWorldCommandAction.Invasions);
+        Check(CommandSyntax.TryParse("freshworld pov", out action) && action == FreshWorldCommandAction.Pov);
     }
 
     private static void Registration()
     {
         Check(Command.OnlyServer && Command.RemoteCommand && !Command.IsCheat && !Command.HideBehindDevCommands);
-        Check(Command.GetTabOptions()!.SequenceEqual(new[] { "status", "invasions" }));
+        Check(Command.GetTabOptions()!.SequenceEqual(new[] { "status", "invasions", "pov" }));
         Command.GetTabOptions()!.Add("force");
         Check(!Command.GetTabOptions()!.Contains("force"));
         Console.instance!.Cache.Add("freshworld"); Chat.instance!.Cache.Add("freshworld");
@@ -125,16 +126,19 @@ internal static class Program
 
     private static void InvasionAuthority()
     {
-        HostPlayer(); SendLocal("freshworld invasions");
-        Check(Received.Single().Action == FreshWorldCommandAction.Invasions);
-        Reset(); Net.Dedicated = true;
-        Check(!FreshWorldCommands.HandleInternalCommand(Net, null, "freshworld invasions"));
-        Check(Received.Single().Action == FreshWorldCommandAction.Invasions);
-        Reset(); Net.Dedicated = true;
-        Check(!SendRemote(Peer(), "freshworld invasions"));
-        Check(Received.Single().Action == FreshWorldCommandAction.Invasions);
-        Reset(); Net.Dedicated = true;
-        Check(!SendRemote(Peer(false), "freshworld invasions") && Received.Count == 0);
+        foreach (var (command, action) in new[] { ("freshworld invasions", FreshWorldCommandAction.Invasions), ("freshworld pov", FreshWorldCommandAction.Pov) })
+        {
+            Reset(); HostPlayer(); SendLocal(command);
+            Check(Received.Single().Action == action);
+            Reset(); Net.Dedicated = true;
+            Check(!FreshWorldCommands.HandleInternalCommand(Net, null, command));
+            Check(Received.Single().Action == action);
+            Reset(); Net.Dedicated = true;
+            Check(!SendRemote(Peer(), command));
+            Check(Received.Single().Action == action);
+            Reset(); Net.Dedicated = true;
+            Check(!SendRemote(Peer(false), command) && Received.Count == 0);
+        }
     }
 
     private static void ForeignRegistration()

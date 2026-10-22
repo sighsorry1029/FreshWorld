@@ -17,8 +17,11 @@ public class Terminal
 public class Console : Terminal { public static Console instance = new(); }
 public class ZRpc { }
 public static class HashExtensions { public static int GetStableHashCode(this string value) => StringComparer.Ordinal.GetHashCode(value); }
+public readonly record struct ZDOID(long Id);
 public class ZDO
 {
+    private static long _nextId;
+    public ZDOID m_uid = new(++_nextId);
     public string Prefab = "EL_SpawnController";
     public bool HasTreasure = true;
     public bool IsBounty;
@@ -27,8 +30,13 @@ public class ZDO
     public Vector2s Zone;
     public bool IsValid() => Valid;
     public int GetPrefab() => Prefab.GetStableHashCode();
-    public string GetString(int key) => key == "BountyID".GetStableHashCode() && IsBounty && Prefab != "EL_SpawnController" ? "bounty" : "";
-    public bool GetBool(int key) => key == "isBounty".GetStableHashCode() && IsBounty;
+    public readonly Dictionary<int, string> Strings = new();
+    public readonly Dictionary<int, int> Ints = new();
+    public readonly Dictionary<int, bool> Bools = new();
+    public int GetInt(int key) => Ints.GetValueOrDefault(key);
+    public string GetString(int key) => Strings.TryGetValue(key, out var value) ? value :
+        key == "BountyID".GetStableHashCode() && IsBounty && Prefab != "EL_SpawnController" ? "bounty" : "";
+    public bool GetBool(int key) => Bools.GetValueOrDefault(key) || key == "isBounty".GetStableHashCode() && IsBounty;
     public byte[]? GetByteArray(int key) =>
         (key == "treasure_spawn".GetStableHashCode() && HasTreasure) ||
         (key == "bount_spawn".GetStableHashCode() && IsBounty) ? TreasurePayload : null;
@@ -192,7 +200,7 @@ namespace UnityEngine
         public static void Destroy(GameObject obj) => Fake.DestroyedGhosts.Add(obj);
     }
     public class GameObject : Object { }
-    public static class Time { public static float timeScale = 1; }
+    public static class Time { public static float timeScale = 1; public static int frameCount; }
     public enum LogType { Error, Assert, Warning, Log, Exception }
     public static class Application
     {
@@ -253,6 +261,8 @@ namespace FreshWorld.Configuration
         public int LocationSafeZones { get; set; }
         public bool EpicLootProtectionEnabled { get; set; } = true;
         public bool EpicLootBountyProtectionEnabled { get; set; }
+        public bool PathOfValheimAltarProtectionEnabled { get; set; } = true;
+        public bool PathOfValheimBlightProtectionEnabled { get; set; } = true;
         public int MaxZonesPerFrame { get; set; } = 1;
         public double FrameBudgetMilliseconds { get; set; } = 8;
         public float SaveTimeoutSeconds { get; set; } = 180;
@@ -270,7 +280,8 @@ namespace FreshWorld.Engine
     }
     public static class GameWorld
     {
-        public static IEnumerable<ZDO> AllZDOs() => ZDOMan.instance.Objects.ToArray();
+        public static int AllSnapshotCount;
+        public static IEnumerable<ZDO> AllZDOs() { AllSnapshotCount++; return ZDOMan.instance.Objects.ToArray(); }
         public static List<ZDO> GetZDOs(Vector2s zone) => ZDOMan.instance.Objects.Where(zdo => zdo.Valid && zdo.Zone == zone).ToList();
         public static readonly HashSet<Vector2s> Pending = new();
         public static readonly HashSet<Vector2s> RootlessLoads = new();

@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
 
 namespace FreshWorld.Engine;
@@ -13,8 +14,7 @@ namespace FreshWorld.Engine;
 internal class ResetVegetation : ZoneOperation
 {
     private readonly HashSet<string> _ids;
-    private readonly HashSet<int> _hashes;
-    private List<ZoneSystem.ZoneVegetation> _vegetation = new();
+    private FieldInfo? _expandWorldPrefabs;
     private int _removed;
     private int _spawned;
     private bool _terrainTouched;
@@ -23,25 +23,25 @@ internal class ResetVegetation : ZoneOperation
         HashSet<Vector2s>? candidates = null) : base(log, args, candidates)
     {
         _ids = NativePlacement.RequireIds(ids);
-        _hashes = new HashSet<int>(_ids.Select(id => id.GetStableHashCode()));
-        foreach (var id in _ids)
-        {
-            var fraction = id + "_frac";
-            if (ZNetScene.instance.GetPrefab(fraction) != null) _hashes.Add(fraction.GetStableHashCode());
-        }
     }
 
     protected override void OnStart()
     {
         base.OnStart();
-        // Retain the whole ordered registry and alter cloned enable flags only. Native placement
-        // therefore receives the same generation definitions without mutating another mod's registry.
-        _vegetation = ZoneSystem.instance.m_vegetation.Select(vegetation =>
+        // Cache only the access contract for this operation. EWD can replace its dictionary on reload.
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+        var type = assemblies
+            .Select(assembly => assembly.GetType("ExpandWorldData.Vegetation.VegetationSpawning"))
+            .FirstOrDefault(candidate => candidate != null);
+        if (type == null)
         {
-            var clone = vegetation.Clone();
-            clone.m_enable = clone.m_prefab != null && _ids.Contains(clone.m_prefab.name);
-            return clone;
-        }).ToList();
+            if (assemblies.Any(assembly => assembly.GetName().Name == "ExpandWorldData"))
+                throw new InvalidOperationException("Cannot locate Expand World Data vegetation metadata; resource reset stopped before deletion.");
+            return;
+        }
+        _expandWorldPrefabs = type.GetField("Prefabs", BindingFlags.Public | BindingFlags.Static);
+        if (_expandWorldPrefabs?.FieldType != typeof(Dictionary<ZoneSystem.ZoneVegetation, List<GameObject>>))
+            throw new InvalidOperationException("Cannot verify Expand World Data vegetation variants; resource reset stopped before deletion.");
     }
 
     protected override bool ExecuteZone(Vector2s zone)
@@ -54,9 +54,27 @@ internal class ResetVegetation : ZoneOperation
         var heightmap = root.GetComponentInChildren<Heightmap>();
         if (heightmap == null) throw new InvalidOperationException("Loaded vegetation zone has no heightmap: " + zone);
 
+        PathOfValheimAzurite.EnsureVegetation(ZoneSystem.instance);
+
+        // Keep original identities: EWD stores data, scale and clearance against these objects.
+        // Native placement seeds by prefab, not registry index. Preserve relative order, and do
+        // not enable disabled definitions or delete objects that have no enabled replacement.
+        // Read again after loading retries so YAML reloads cannot leave stale metadata references.
+        var vegetation = ZoneSystem.instance.m_vegetation
+            .Where(entry => entry.m_enable && entry.m_prefab != null && _ids.Contains(entry.m_prefab.name)).ToList();
+        ValidateVariants(vegetation);
+        if (vegetation.Count == 0) return true;
+        var hashes = new HashSet<int>();
+        foreach (var entry in vegetation)
+        {
+            var id = entry.m_prefab.name;
+            hashes.Add(id.GetStableHashCode());
+            var fraction = id + "_frac";
+            if (ZNetScene.instance.GetPrefab(fraction) != null) hashes.Add(fraction.GetStableHashCode());
+        }
         foreach (var zdo in GameWorld.GetZDOs(zone))
         {
-            if (!_hashes.Contains(zdo.GetPrefab())) continue;
+            if (!hashes.Contains(zdo.GetPrefab())) continue;
             GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected, Args.CanDeleteObject);
             _removed++;
         }
@@ -68,7 +86,7 @@ internal class ResetVegetation : ZoneOperation
         var originalObjects = new HashSet<GameObject>(temporary);
         try
         {
-            zones.m_vegetation = _vegetation;
+            zones.m_vegetation = vegetation;
             TerrainResetter.Active = Args.TerrainReset > 0;
             NativePlacement.PlaceVegetation(zones, zone, root.transform, heightmap, GetClearAreas(zone), temporary);
             foreach (var spawned in temporary.Where(obj => !originalObjects.Contains(obj)).ToArray())
@@ -90,6 +108,17 @@ internal class ResetVegetation : ZoneOperation
         }
         // The tracking wrapper releases only zones loaded by this maintenance operation.
         return true;
+    }
+
+    private void ValidateVariants(IEnumerable<ZoneSystem.ZoneVegetation> vegetation)
+    {
+        if (_expandWorldPrefabs == null) return;
+        var variants = _expandWorldPrefabs.GetValue(null) as Dictionary<ZoneSystem.ZoneVegetation, List<GameObject>>
+            ?? throw new InvalidOperationException("Expand World Data vegetation variants are unavailable; resource reset stopped before deletion.");
+        foreach (var entry in vegetation)
+            if (variants.TryGetValue(entry, out var prefabs) &&
+                (prefabs == null || prefabs.Count == 0 || prefabs.Any(prefab => prefab == null || prefab.name != entry.m_prefab.name)))
+                throw new InvalidOperationException($"Resource reset cannot safely clear the Expand World Data multi-prefab entry '{entry.m_prefab.name}'. Use separate single-prefab vegetation entries. No objects in this zone were deleted.");
     }
 
     private static IList GetClearAreas(Vector2s zone)
