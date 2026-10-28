@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.10
+
+- Added server-synced `ResourceExcludedZones` under `[Protection]`. List zone coordinates as `12:-8,13:-8` to skip both resource reset groups during automatic and manual runs, even with `ResourceSafeZones=0`. Empty by default; the same coordinates apply to every world using the cfg.
+- Excluded resource-only targets before automatic percentage selection. Resource terrain edits and recursive object deletion from neighboring zones also respect the list. Zone resets, location resets, and native placement across zone borders remain independent.
+- Added coordinate validation and regression checks for cfg reload, administrator edits, immutable run settings, selection, and existing protection rules.
+
 ## 1.1.9
 
 - Added optional maintenance coordination with ServerManager so tracked Upgrade World cron jobs and FreshWorld resets do not run at the same time. No new configuration fields or extra saves are required; FreshWorld keeps its existing pre-reset save.

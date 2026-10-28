@@ -26,6 +26,7 @@ internal sealed class MaintenancePipeline
     private readonly ZoneSystem _zones;
     private readonly long _worldUid;
     private readonly HashSet<Vector2s> _playerZones = new();
+    private readonly HashSet<Vector2s> _resourceExcludedZones;
     private readonly EpicLootProtection _epicLoot;
     private readonly JotunInvasionProtection _invasions = new();
     private readonly PathOfValheimProtection _pathOfValheim;
@@ -46,6 +47,7 @@ internal sealed class MaintenancePipeline
         _resetPercent = resetPercent;
         _runId = runId;
         _options = options;
+        _resourceExcludedZones = new HashSet<Vector2s>(options.ResourceExcludedZones.Select(zone => new Vector2s(zone.X, zone.Z)));
         _pathOfValheim = new PathOfValheimProtection(options.PathOfValheimAltarProtectionEnabled, options.PathOfValheimBlightProtectionEnabled);
         _alwaysProtected = new AlwaysProtectedObjects(options.AlwaysProtectedPrefabs,
             options.PathOfValheimAltarProtectionEnabled || options.PathOfValheimBlightProtectionEnabled
@@ -174,11 +176,19 @@ internal sealed class MaintenancePipeline
         yield return WaitUntilUnpaused();
         RequireWorld();
         var candidates = SupplementCandidates(protectedZones);
+        candidates.ExceptWith(_resourceExcludedZones);
         var args = Parameters(_options.VegetationSafeZones);
+        // Keep this policy local to resources: zone and location resets remain independent.
+        // Compose the existing guards so reserved locations and absolute protections still apply.
+        var canResetTerrain = args.CanResetTerrain;
+        var canDeleteObject = args.CanDeleteObject;
+        args.CanResetTerrain = zone => !_resourceExcludedZones.Contains(zone) && (canResetTerrain == null || canResetTerrain(zone));
+        args.CanDeleteObject = zdo => !_resourceExcludedZones.Contains(ZoneSystem.GetZone(zdo.GetPosition())) &&
+            (canDeleteObject == null || canDeleteObject(zdo));
         // Zero also disables the engine's temporary unmodified-ground generation override.
         args.TerrainReset = terrainRadius;
         yield return Execute(name, new TrackedResetVegetation(_log, ids, args,
-            candidates, zone => CanResetZone(zone, _options.VegetationSafeZones),
+            candidates, CanResetResourceZone,
             maxZonesPerFrame: _options.MaxZonesPerFrame,
             frameBudgetMilliseconds: _options.FrameBudgetMilliseconds, warn: _warn));
     }
@@ -518,7 +528,7 @@ internal sealed class MaintenancePipeline
             // Depleted resources are candidates too: presence of a current resource ZDO is not required.
             if (_zones.m_vegetation.Any(vegetation => vegetation.m_prefab != null && resourceIds.Contains(vegetation.m_prefab.name)))
                 foreach (var zone in supplements)
-                    if (!_reservedLocationZones.Contains(zone) && CanResetZone(zone, _options.VegetationSafeZones)) eligible.Add(zone);
+                    if (!_reservedLocationZones.Contains(zone) && CanResetResourceZone(zone)) eligible.Add(zone);
         }
         if (_options.LocationsEnabled)
         {
@@ -549,6 +559,9 @@ internal sealed class MaintenancePipeline
         _log($"Automatic reset selection: {selected.Count}/{candidates.Length} candidates ({_resetPercent}%; each connected zone group counts once). Later protection skips are not replaced.");
         return selected;
     }
+
+    private bool CanResetResourceZone(Vector2s zone) =>
+        !_resourceExcludedZones.Contains(zone) && CanResetZone(zone, _options.VegetationSafeZones);
 
     private static HashSet<Vector2s> ProtectedSnapshot(int size, HashSet<Vector2s> generated)
     {

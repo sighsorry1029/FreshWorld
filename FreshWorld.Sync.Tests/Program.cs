@@ -114,7 +114,7 @@ public static class Program
         Require(((Array)Call(versionType, null, "GetFailedServer", new ZRpc(new TestSocket("Steam_222")))!).Length == 0,
             "The server requires an unmodded peer to complete FreshWorld's version handshake.");
         Require((bool)syncType.GetProperty("IsLocked")!.GetValue(sync)!, "Administrator-only policy is not fixed.");
-        Require(file.Count == 23, "Integration did not register the expected config keys.");
+        Require(file.Count == 24, "Integration did not register the expected config keys.");
         var broadcast = AccessTools.Method(syncType, "Broadcast", new[] { typeof(long), typeof(ConfigEntryBase[]) });
         // Capture server sends without invoking Unity coroutines; run the real client-send prefix separately.
         harmony.Patch(broadcast, prefix: new HarmonyMethod(typeof(Program), nameof(RecordBroadcast)) { priority = Priority.Last });
@@ -123,6 +123,8 @@ public static class Program
 
         var zone = file[new ConfigDefinition("Protection", "ZoneSafeZones")];
         var radius = file[new ConfigDefinition("Reset", "ResourceTerrainRadius")];
+        var resourceExcludedZones = file[new ConfigDefinition("Protection", "ResourceExcludedZones")];
+        Require(resourceExcludedZones.GetSerializedValue() == "", "Resource exclusions must be empty by default.");
         var percent = file[new ConfigDefinition("General", "AutomaticResetPercent")];
         Require(percent.GetSerializedValue() == "100", "Automatic percentage default changed.");
         var mode = file[new ConfigDefinition("General", "Mode")];
@@ -170,6 +172,9 @@ public static class Program
         Require(povVegetation.GetSerializedValue() == "false", "Remote vegetation validation changed live policy.");
         Reject(Edit(povVegetation, "invalid"));
         Reject(Edit(blacklist, "fire_pit,*")); Reject(Edit(blacklist, "fire_pit,fire_pit"));
+        Call(adapterType, adapter, "ValidateEdit", Edit(resourceExcludedZones, "12:-8,13:-8,12:-8"));
+        Require(resourceExcludedZones.GetSerializedValue() == "", "Remote validation mutated live resource exclusions.");
+        Reject(Edit(resourceExcludedZones, "12:-8,32768:0")); Reject(Edit(resourceExcludedZones, "12:-8,"));
         var full = Package(new[] { zone }, false); Reject(full);
         var trailing = new ZPackage(valid.GetArray()); trailing.SetPos(trailing.Size()); trailing.Write(42); Reject(trailing);
         var control = new ZPackage(); control.Write((byte)1); control.Write(1); control.Write("Internal"); control.Write("lockexempt"); control.Write(typeof(bool).AssemblyQualifiedName); control.Write(true); Reject(control);
@@ -215,6 +220,12 @@ public static class Program
         ReceiveClient(peer.m_uid, valid);
         Require(zone.GetSerializedValue() == "2" && File.ReadAllText(file.ConfigFilePath).Contains("ZoneSafeZones = 2"), "Valid edit was not saved on the server.");
         Require(broadcasts > 0 && changes > 0, "Accepted values were not redistributed or queued for application.");
+        ReceiveClient(peer.m_uid, Edit(resourceExcludedZones, "12:-8,13:-8"));
+        Require(resourceExcludedZones.GetSerializedValue() == "12:-8,13:-8" &&
+            File.ReadAllText(file.ConfigFilePath).Contains("ResourceExcludedZones = 12:-8,13:-8"),
+            "Administrator resource exclusions were not saved on the server.");
+        ReceiveClient(peer.m_uid, Edit(resourceExcludedZones, "12:-8,32768:0"));
+        Require(resourceExcludedZones.GetSerializedValue() == "12:-8,13:-8", "Invalid administrator resource exclusions replaced the valid list.");
         ReceiveClient(peer.m_uid, Edit(alwaysProtected, "Player_tombstone,custom_marker"));
         Require(alwaysProtected.GetSerializedValue() == "Player_tombstone,custom_marker" &&
             File.ReadAllText(file.ConfigFilePath).Contains("AlwaysProtectedPrefabs = Player_tombstone,custom_marker"), "Administrator always-protected edit was not saved.");

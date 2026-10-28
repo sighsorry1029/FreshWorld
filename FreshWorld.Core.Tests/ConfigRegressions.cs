@@ -19,15 +19,16 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact twenty-four bindings in four sections and game-day defaults", () =>
+        Check("exact twenty-four bindings in five sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius",
-                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.PieceBlacklist",
+                "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.ResourceExcludedZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.PieceBlacklist",
                 "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.AzuriteVegetation" };
             Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg does not match the expected keys");
             Assert(snapshot.Options.AutomaticResetPercent == 100, "default must preserve full reset scope");
+            Assert(snapshot.Options.ResourceExcludedZones.Length == 0, "default must not exclude resource zones");
             Assert(snapshot.AutomaticEnabled && snapshot.Schedule.AutomaticEnabled && snapshot.Schedule.Mode == ScheduleMode.GameDays &&
                 snapshot.Schedule.GameDayInterval == 24, "automatic 24 game-day mode");
             Assert(snapshot.Options.VegetationIds.Length == 0 && snapshot.Options.TerrainVegetationIds.SequenceEqual(new[] { "rock4_copper", "silvervein" }) &&
@@ -45,6 +46,31 @@ internal static class ConfigRegressions
             Assert(!snapshot.Options.EpicLootBountyProtectionEnabled, "EpicLoot bounty protection must default to disabled");
             Assert(snapshot.Options.VegetationTerrainRadius == 20 && !snapshot.Schedule.RunMissedOnWorldStart, "terrain and missed-run policy");
             Assert(file.SaveCount == 0, "Capture must not mutate/save config");
+        });
+        Check("resource zone coordinates accept signed pairs and deduplicate without changing snapshots or raw text", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var original = cfg.Capture();
+            const string raw = " 12 : -8,13:-8,12:-8,-32768:32767,+0:-0 ";
+            file.Set("Protection", "ResourceExcludedZones", raw);
+            var snapshot = cfg.Capture();
+            var expected = new[] { ((short)12, (short)-8), ((short)13, (short)-8), (short.MinValue, short.MaxValue), ((short)0, (short)0) };
+            Assert(snapshot.Options.ResourceExcludedZones.OrderBy(pair => pair.X).SequenceEqual(expected.OrderBy(pair => pair.Item1)), "coordinate parse or duplicate handling failed");
+            var exposed = snapshot.Options.ResourceExcludedZones; exposed[0] = (99, 99);
+            file.Set("Protection", "ResourceExcludedZones", "");
+            Assert(cfg.Capture().Options.ResourceExcludedZones.Length == 0 && original.Options.ResourceExcludedZones.Length == 0, "empty/default list not preserved");
+            Assert(snapshot.Options.ResourceExcludedZones.Length == 4 && !snapshot.Options.ResourceExcludedZones.Contains(((short)99, (short)99)), "snapshot is mutable");
+            file.Set("Protection", "ResourceExcludedZones", raw); _ = cfg.Capture();
+            Assert((string)file.Get("Protection", "ResourceExcludedZones").BoxedValue == raw && file.SaveCount == 0, "capture rewrote the config");
+        });
+        Check("resource exclusions reject malformed or overflowing pairs without partially applying the list", () =>
+        {
+            var file = new ConfigFile(); var cfg = new FreshWorldConfig(file);
+            foreach (var invalid in new[] { "1", "1:2:3", "1,2", "1:2,", ",1:2", "1:", ":2", "1.5:2", "1:2;3:4", "32768:0", "0:-32769", "NaN:0", "1:2,invalid", "1 2:3" })
+            {
+                file.Set("Protection", "ResourceExcludedZones", invalid);
+                Invalid(() => cfg.Capture());
+                Assert((string)file.Get("Protection", "ResourceExcludedZones").BoxedValue == invalid, "invalid text was silently replaced");
+            }
         });
         Check("automatic percentage is bounded, lossless and immutable", () =>
         {

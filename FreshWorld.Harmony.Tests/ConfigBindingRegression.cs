@@ -15,7 +15,7 @@ internal static class ConfigBindingRegression
         "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
         "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds",
         "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
-        "Protection.ResourceSafeZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
+        "Protection.ResourceSafeZones", "Protection.ResourceExcludedZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
         "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.AlwaysProtectedPrefabs",
         "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.AzuriteVegetation"
     };
@@ -27,7 +27,7 @@ internal static class ConfigBindingRegression
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 23 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all 24 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
@@ -53,6 +53,8 @@ internal static class ConfigBindingRegression
             ("Protection.ZoneSafeZones", "-1"),
             ("Protection.ResourceSafeZones", "3"),
             ("Protection.ResourceSafeZones", "-1"),
+            ("Protection.ResourceExcludedZones", "12:-8,32768:0"),
+            ("Protection.ResourceExcludedZones", "12:-8,"),
             ("Protection.LocationSafeZones", "3"),
             ("Protection.LocationSafeZones", "-1")
         };
@@ -80,6 +82,8 @@ internal static class ConfigBindingRegression
         Require(settings.Options.EpicLootBountyProtectionEnabled,
             "The disabled bounty default replaced an explicit true value during Bind.");
         Require(settings.Options.AutomaticResetPercent == 20, "The existing percentage was replaced during Bind.");
+        Require(settings.Options.ResourceExcludedZones.Length == 2 && settings.Options.ResourceExcludedZones.Contains(((short)12, (short)-8)),
+            "Existing resource exclusions were replaced or not deduplicated during Bind.");
         Require(settings.AutomaticEnabled && settings.Schedule.Mode == ScheduleMode.GameDays && settings.Schedule.GameDayInterval == 12.5,
             "The existing schedule was replaced by defaults during Bind.");
         Require(!settings.Options.ZonesEnabled && settings.Options.VegetationEnabled && settings.Options.LocationsEnabled,
@@ -114,6 +118,7 @@ internal static class ConfigBindingRegression
         values["Reset.ResourceTerrainRadius"] = "0";
         values["Protection.ZoneSafeZones"] = "2";
         values["Protection.ResourceSafeZones"] = "0";
+        values["Protection.ResourceExcludedZones"] = "-3:5";
         values["Protection.LocationSafeZones"] = "1";
         values["Protection.PieceBlacklist"] = "";
         values["Protection.AlwaysProtectedPrefabs"] = "";
@@ -124,6 +129,9 @@ internal static class ConfigBindingRegression
         fixture.Reload(values);
         AssertRawValues(fixture.File, values);
         var after = fixture.Settings.Capture();
+        Require(before.Options.ResourceExcludedZones.Length == 2 &&
+            after.Options.ResourceExcludedZones.SequenceEqual(new[] { ((short)-3, (short)5) }),
+            "Resource exclusion reload changed an old snapshot or failed to capture the new value.");
         Require(!before.PathOfValheimAzuriteVegetationEnabled && after.PathOfValheimAzuriteVegetationEnabled,
             "Vegetation cfg reload changed the old snapshot or ignored the edit.");
         Require(!before.Options.PathOfValheimAltarProtectionEnabled && before.Options.PathOfValheimBlightProtectionEnabled &&
@@ -330,6 +338,7 @@ internal static class ConfigBindingRegression
         ["Reset.ResourceTerrainRadius"] = "7.5",
         ["Protection.ZoneSafeZones"] = "1",
         ["Protection.ResourceSafeZones"] = "1",
+        ["Protection.ResourceExcludedZones"] = "12:-8,13:-8,12:-8",
         ["Protection.LocationSafeZones"] = "2",
         ["Protection.PieceBlacklist"] = "piece_beehive,piece_workbench",
         ["Protection.AlwaysProtectedPrefabs"] = "Player_tombstone,custom_marker",

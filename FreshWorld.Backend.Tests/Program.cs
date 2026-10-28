@@ -45,6 +45,10 @@ var tests = new (string Name, Action Body)[]
     ("changed location position or radius cannot expand the planned reset", MultiZoneChangedExtent),
     ("retained scope excludes newly skipped zones", RetainedScope),
     ("disabling zone reset supplements all generated zones", WithoutZoneReset),
+    ("resource exclusions skip both groups at SafeZones zero while locations stay independent", ResourceExclusions),
+    ("resource exclusions filter automatic candidates without suppressing other stages", ResourceExclusionPercent),
+    ("resource exclusion guards retain reserved and absolute terrain protection", ResourceExclusionGuards),
+    ("resource exclusions are captured once per run and apply in another world", ResourceExclusionSnapshot),
     ("partial resets select a fixed rounded count without duplicate targets", PercentageCounts),
     ("both resource groups and locations share one random selection", PercentageSharedSupplements),
     ("partial zone resets preserve retained supplement scope", PercentageRetainedScope),
@@ -748,6 +752,93 @@ static void WithoutZoneReset()
     True(!Fake.Calls.Contains("zones.create"));
     Sequence(["vegetation.change:0", "vegetation.change:1", "locations.change:0", "locations.change:1"],
         Fake.Calls.Where(IsSupplementChange));
+}
+
+static void ResourceExclusions()
+{
+    foreach (var zoneReset in new[] { false, true })
+    {
+        Fake.Reset();
+        for (var i = 0; i < 4; i++) Fake.AddZone(i, marker: zoneReset);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+        var options = new RunOptions { ZonesEnabled = zoneReset, VegetationIds = ["raspberry"],
+            ResourceExcludedZones = [(0, 0), (2, 0)] };
+        True(Run(options).Success);
+        Equal(2, Fake.VegetationPasses.Count);
+        foreach (var pass in Fake.VegetationPasses) Sequence([1, 3], pass.ChangedZones);
+        True(Changed("locations").SetEquals([0, 1, 2, 3]));
+        // No loading attempt is admitted for an excluded resource target.
+        True(Fake.Candidates["vegetation"].SetEquals([new(1, 0), new(3, 0)]));
+        True(Fake.Arguments["locations"].CanResetTerrain!(new(0, 0)));
+        if (zoneReset) True(Fake.Arguments["zones"].CanResetTerrain!(new(0, 0)));
+    }
+}
+
+static void ResourceExclusionPercent()
+{
+    foreach (var stage in new[] { "resources", "locations", "zones" })
+    {
+        Fake.Reset();
+        for (var i = 0; i < 10; i++) Fake.AddZone(i);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+        var logs = new List<string>();
+        var options = new RunOptions { ZonesEnabled = stage == "zones", LocationsEnabled = stage == "locations",
+            VegetationIds = ["raspberry"], ResourceExcludedZones = [(0, 0), (1, 0), (2, 0), (3, 0), (99, 0)] };
+        True(Run(options, resetPercent: 50, logs: logs).Success);
+        var selection = logs.Single(line => line.StartsWith("Automatic reset selection:"));
+        True(selection.Contains(stage == "resources" ? "3/6 candidates" : "5/10 candidates"));
+        var resourceChanges = Changed("vegetation");
+        True(resourceChanges.All(x => x >= 4));
+        Sequence(Fake.VegetationPasses[0].ChangedZones, Fake.VegetationPasses[1].ChangedZones);
+        if (stage == "resources") Equal(3, resourceChanges.Count);
+        else Equal(5, Changed(stage).Count);
+    }
+}
+
+static void ResourceExclusionGuards()
+{
+    Fake.AddZone(0, location: null); Fake.AddZone(1, location: null); Fake.AddZone(2, location: null);
+    Fake.AddZone(10, location: "fort");
+    ZoneSystem.instance.m_vegetation.Add(new("raspberry"));
+    ZDOMan.instance.Objects.Add(new() { Prefab = "custom_marker", Zone = new(2, 0) });
+    var options = new RunOptions { ZonesEnabled = false, LocationsEnabled = false, VegetationIds = ["raspberry"],
+        ResourceExcludedZones = [(0, 0)], AlwaysProtectedPrefabs = ["custom_marker"],
+        LocationResetRadii = new Dictionary<string, float> { ["fort"] = 40 } };
+    True(Run(options).Success);
+    foreach (var pass in Fake.VegetationPasses)
+    {
+        Sequence([1], pass.ChangedZones);
+        // A request originating outside an exclusion must still refuse the excluded terrain tile.
+        True(!pass.Arguments.CanResetTerrain!(new(0, 0)));
+        True(pass.Arguments.CanResetTerrain(new(1, 0)));
+        True(!pass.Arguments.CanResetTerrain(new(2, 0)));
+        True(!pass.Arguments.CanResetTerrain(new(10, 0)));
+        // The same predicate is forwarded through recursive Spawned deletion by GameWorld.
+        True(!pass.Arguments.CanDeleteObject!(new() { Zone = new(0, 0) }));
+        True(pass.Arguments.CanDeleteObject(new() { Zone = new(1, 0) }));
+        True(!pass.Arguments.CanDeleteObject(new() { Zone = new(10, 0) }));
+    }
+}
+
+static void ResourceExclusionSnapshot()
+{
+    Fake.AddZone(0); Fake.AddZone(1);
+    var coordinates = new (short X, short Z)[] { (0, 0) };
+    var options = new RunOptions { ZonesEnabled = false, LocationsEnabled = false, ResourceExcludedZones = coordinates };
+    using (var lease = MaintenanceGate.Acquire())
+    {
+        var completed = new List<bool>();
+        using var runner = NewRunner(options, completed, advancePastSave: false);
+        coordinates[0] = (1, 0);
+        Drain(runner); Sequence([true], completed);
+        Sequence([1], Changed("vegetation"));
+    }
+    Fake.Calls.Clear();
+    ZNet.World.m_uid++;
+    True(Run(options).Success);
+    Sequence([0], Changed("vegetation"));
 }
 
 static void PercentageCounts()

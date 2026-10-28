@@ -255,6 +255,7 @@ namespace FreshWorld.Configuration
         public string[] VegetationIds { get; set; } = [];
         public float VegetationTerrainRadius { get; set; } = 20;
         public int VegetationSafeZones { get; set; }
+        public (short X, short Z)[] ResourceExcludedZones { get; set; } = [];
         public bool LocationsEnabled { get; set; } = true;
         public string[] LocationIds { get; set; } = ["cave"];
         public IReadOnlyDictionary<string, float> LocationResetRadii { get; set; } = new Dictionary<string, float>();

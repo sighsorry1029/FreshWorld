@@ -156,6 +156,7 @@ This protection skips direct targets; it does not clip terrain edits to the prot
 [Protection]
 ZoneSafeZones = 1
 ResourceSafeZones = 0
+ResourceExcludedZones =
 LocationSafeZones = 0
 AlwaysProtectedPrefabs = Player_tombstone
 PieceBlacklist = fire_pit
@@ -174,6 +175,19 @@ ZoneSafeZones=0 is invalid, including in an existing cfg. Set it to 1 or 2 expli
 **The default LocationSafeZones=0 can remove player-built pieces inside a selected location.** It replaces the old Force behavior; there is no separate Force option. AlwaysProtectedPrefabs and the independent player, invasion, and enabled EpicLoot protections still apply.
 
 ResourceSafeZones=0 allows the selected resource supplements in retained base zones. The resource stage does not directly select arbitrary player-built pieces for deletion, but terrain restoration can change the ground supporting them.
+
+`ResourceExcludedZones` excludes specific zones from both `ResourceIds` and `TerrainResourceIds`. For example:
+
+~~~ini
+[Protection]
+ResourceExcludedZones = 12:-8,13:-8,-3:5
+~~~
+
+Use zone grid coordinates in `x:z` pairs, not metre positions. Each coordinate must be an integer from -32768 to 32767. Each entry excludes only that one zone; neighbors are not automatically included. Empty disables the list, duplicate pairs are ignored, and malformed entries prevent new maintenance until corrected. No world UID is used: the same coordinates apply to every world using this cfg.
+
+The list applies to automatic and manual runs even with `ResourceSafeZones=0`. Excluded resource-only candidates are removed before the automatic percentage draw; a zone still eligible for zone or location reset can remain in that draw. Both resource passes skip the excluded zones, including their terrain tiles and objects reached by recursive deletion from neighboring zones. ServerSync and cfg hot reload apply accepted changes to the next run; an active run keeps its original list.
+
+**This is resource-stage protection, not whole-zone preservation.** Zone and location resets can still alter vegetation and terrain there. Native vegetation or location placement from a neighboring zone can also cross the border. The list does not clip native placement or change other mods' behavior.
 
 If you choose ZoneSafeZones=1 and LocationSafeZones=1, zero single-zone location supplements can be normal: the zone stage already covers unprotected locations, and the remaining base zones are also protected from location restoration. FreshWorld does not automatically lower protection to increase the result count.
 

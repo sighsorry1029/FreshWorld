@@ -39,7 +39,7 @@ internal static class ConfigPresentationRegressions
         {
             ("General", new[] { "Enabled", "AutomaticResetPercent", "Mode", "GameDayInterval", "DailyTimes" }, 300),
             ("Reset", new[] { "Zones", "Resources", "TerrainResourceIds", "ResourceTerrainRadius", "ResourceIds", "Locations", "LocationIds", "LocationResetRadii" }, 200),
-            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "LocationSafeZones", "AlwaysProtectedPrefabs", "PieceBlacklist" }, 100),
+            ("Protection", new[] { "ZoneSafeZones", "ResourceSafeZones", "ResourceExcludedZones", "LocationSafeZones", "AlwaysProtectedPrefabs", "PieceBlacklist" }, 100),
             ("EpicLoot", new[] { "EpicLootProtection", "EpicLootBountyProtection" }, 75),
             ("Path of Valheiman", new[] { "AltarProtection", "BlightProtection", "AzuriteVegetation" }, 50)
         };
@@ -50,7 +50,7 @@ internal static class ConfigPresentationRegressions
             Require(entries.All(entry => Metadata(entry).CategoryOrder == categoryOrder && entry.Description.AcceptableValues == null), section + " metadata");
         }
         Require(Metadata(file.Get("General", "Enabled")).DispName == "Automatic Runs", "Display name must not rename the cfg key.");
-        Require(file.BoundKeys.Count() == 23, "Unexpected settings.");
+        Require(file.BoundKeys.Count() == 24, "Unexpected settings.");
     }
 
     private static void DrawWithoutEdits()

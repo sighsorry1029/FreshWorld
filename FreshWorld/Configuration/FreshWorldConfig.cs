@@ -43,6 +43,8 @@ namespace FreshWorld.Configuration
         public string[] TerrainVegetationIds => (string[])terrainVegetationIds.Clone();
         public float VegetationTerrainRadius { get; }
         public int VegetationSafeZones { get; }
+        private readonly (short X, short Z)[] resourceExcludedZones;
+        public (short X, short Z)[] ResourceExcludedZones => ((short X, short Z)[])resourceExcludedZones.Clone();
         public bool LocationsEnabled { get; }
         private readonly string[] locationIds;
         public string[] LocationIds => (string[])locationIds.Clone();
@@ -63,7 +65,8 @@ namespace FreshWorld.Configuration
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
             bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled, string[] alwaysProtectedPrefabs,
             int automaticResetPercent, IReadOnlyDictionary<string, float> locationResetRadii,
-            bool pathOfValheimAltarProtectionEnabled, bool pathOfValheimBlightProtectionEnabled)
+            bool pathOfValheimAltarProtectionEnabled, bool pathOfValheimBlightProtectionEnabled,
+            (short X, short Z)[] resourceExcludedZones)
         {
             AutomaticResetPercent = automaticResetPercent;
             this.locationResetRadii = locationResetRadii.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
@@ -74,6 +77,7 @@ namespace FreshWorld.Configuration
             VegetationEnabled = vegetationEnabled; this.vegetationIds = (string[])vegetationIds.Clone();
             this.terrainVegetationIds = (string[])terrainVegetationIds.Clone();
             VegetationTerrainRadius = vegetationTerrainRadius; VegetationSafeZones = vegetationSafeZones;
+            this.resourceExcludedZones = ((short X, short Z)[])resourceExcludedZones.Clone();
             LocationsEnabled = locationsEnabled; this.locationIds = (string[])locationIds.Clone();
             LocationSafeZones = locationSafeZones;
             EpicLootProtectionEnabled = epicLootProtectionEnabled;
@@ -95,7 +99,7 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<string> enabled, zonesEnabled, vegetationEnabled, locationsEnabled;
         private readonly ConfigEntry<string> dailyTimes, gameDayInterval, automaticResetPercent, vegetationIds, terrainVegetationIds, locationIds, locationResetRadii;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
-        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs;
+        private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs, resourceExcludedZones;
         private readonly ConfigEntry<string> pathOfValheimAltarProtection, pathOfValheimBlightProtection;
         private readonly ConfigEntry<string> pathOfValheimAzuriteVegetation;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
@@ -152,6 +156,9 @@ namespace FreshWorld.Configuration
             vegetationSafeZones = Bind("Protection", "ResourceSafeZones", new ConfigChoice<SafeZoneRange>("0"),
                 "Marker protection for both resource groups: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. A value of 0 permits resource and terrain restoration inside base zones. Player zones and their eight neighbors are always excluded from direct resets for the rest of the run; terrain restoration from outside this area can still affect it.",
                 300, choices: ConfigPresentation.SafeZoneChoices);
+            resourceExcludedZones = Bind("Protection", "ResourceExcludedZones", "",
+                "Zones excluded from both resource groups, even when ResourceSafeZones=0. Format: x:z,x:z, for example 12:-8,13:-8. Use integer zone coordinates, not world positions; each coordinate must be from -32768 to 32767. Each entry excludes one zone, not its neighbors. Resource deletion and resource-terrain edits from neighboring zones also respect this list. Automatic and manual runs use the same list. The same coordinates apply to every world using this config. Does not exclude zone or location resets, or block native placement crossing zone borders. Empty disables the list; duplicates are ignored. Server-synced; changes apply to the next run.",
+                250);
             locationSafeZones = Bind("Protection", "LocationSafeZones", new ConfigChoice<SafeZoneRange>("0"),
                 "Location restoration marker protection: 0 = No protection, 1 = Marker zone, 2 = 3x3 zones. Only 0, 1, or 2 is allowed. Every sector intersecting the location radius is checked; one protected sector skips the whole location. A value of 0 bypasses base protection and can delete player pieces inside locations, even when ZoneSafeZones blocked the earlier zone reset. Requires Locations=true and a matching LocationIds entry. Player zones and their eight neighbors, AlwaysProtectedPrefabs, Jotun objectives and enabled EpicLoot protections still apply.",
                 200, choices: ConfigPresentation.SafeZoneChoices);
@@ -228,10 +235,27 @@ namespace FreshWorld.Configuration
                 OptionalIds(Value(alwaysProtectedPrefabs), "Protection.AlwaysProtectedPrefabs"),
                 ReadPercentage(Value(automaticResetPercent)), ParseLocationRadii(Value(locationResetRadii)),
                 ReadBool(Value(pathOfValheimAltarProtection), "Path of Valheiman.AltarProtection"),
-                ReadBool(Value(pathOfValheimBlightProtection), "Path of Valheiman.BlightProtection"));
+                ReadBool(Value(pathOfValheimBlightProtection), "Path of Valheiman.BlightProtection"),
+                ParseResourceExcludedZones(Value(resourceExcludedZones)));
             return new RuntimeSettings(schedule, options,
                 ReadBool(Value(pathOfValheimAzuriteVegetation), "Path of Valheiman.AzuriteVegetation"));
         }
+        private static (short X, short Z)[] ParseResourceExcludedZones(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return Array.Empty<(short X, short Z)>();
+            var zones = new HashSet<(short X, short Z)>();
+            foreach (var entry in text.Split(','))
+            {
+                var parts = entry.Split(':');
+                if (parts.Length != 2 ||
+                    !short.TryParse(parts[0].Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var x) ||
+                    !short.TryParse(parts[1].Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var z))
+                    throw new ArgumentException("Protection.ResourceExcludedZones requires x:z pairs with integer zone coordinates from -32768 to 32767.");
+                zones.Add((x, z));
+            }
+            return zones.ToArray();
+        }
+
         private static bool ReadBool(string text, string key)
         {
             if (!bool.TryParse(text, out var value)) throw new ArgumentException(key + " must be true or false.");
