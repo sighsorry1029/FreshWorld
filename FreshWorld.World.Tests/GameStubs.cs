@@ -234,7 +234,9 @@ public class ZoneSystem
     private readonly HashSet<Vector2s> _loaded = new();
     public Dictionary<Vector2s, LocationInstance> m_locationInstances = new();
     public int Pokes;
-    public struct LocationInstance { public bool m_placed; public Vector3 m_position; }
+    public class ZoneLocation { public LocationPrefab m_prefab = new(); }
+    public class LocationPrefab { public string Name = "test-location"; }
+    public struct LocationInstance { public bool m_placed; public Vector3 m_position; public ZoneLocation? m_location; }
     public bool IsZoneLoaded(Vector2s zone) => m_zones.ContainsKey(zone) && _loaded.Contains(zone) &&
         !m_loadingObjectsInZones.ContainsKey(zone);
     public static Vector2s GetZone(Vector3 position) => new(
@@ -357,6 +359,7 @@ namespace UnityEngine
     }
     public class GameObject : Object
     {
+        public string name = "test-prefab";
         private readonly Dictionary<Type, object> components = new();
         public int ComponentQueries;
         public void AddComponent<T>(T component) where T : class => components[typeof(T)] = component;
@@ -399,6 +402,8 @@ namespace FreshWorld.Engine
 {
     internal sealed class OperationParameters
     {
+        public string RunId { get; set; } = "test";
+        public Action<string>? Warn { get; set; }
         public bool ProtectEpicLoot { get; set; } = true;
         public bool ProtectEpicLootBounties { get; set; }
         public Func<Vector2s, bool>? CanResetTerrain { get; set; }

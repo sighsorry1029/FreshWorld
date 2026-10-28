@@ -22,19 +22,32 @@ internal class ResetZones : ZoneOperation
         {
             // One synchronous mutation: no member can stream back between deletions.
             // Do not release any generation state until every sector's objects are cleared.
-            foreach (var sector in group) RecordBorders(sector);
-            bool InGroup(ZDO zdo) => group.Contains(ZoneSystem.GetZone(zdo.GetPosition()));
-            foreach (var sector in group) ClearObjects(sector, InGroup);
-            GameWorld.CompleteZoneDeletions(group, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
+            var plan = new GameWorld.ZoneDeletionPlan(group, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
+            try
+            {
+                plan.Capture();
+                plan.Validate(); // Immediately before the first ownership/deletion/border mutation.
+                OnMutationStarting();
+                foreach (var sector in group) RecordBorders(sector);
+                plan.Delete();
+            }
+            catch (Exception error)
+            {
+                plan.ReportFailure(Args.Warn ?? Log, Args.RunId, zone, error);
+                throw;
+            }
             foreach (var sector in group) ReleaseGeneration(sector);
             Log($"Location zone group at {zone}: {group.Count} sectors reset together.");
             return true;
         }
+        OnMutationStarting();
         RecordBorders(zone);
         ClearObjects(zone, Args.CanDeleteObject);
         ReleaseGeneration(zone);
         return true;
     }
+
+    protected virtual void OnMutationStarting() { }
 
     private void RecordBorders(Vector2s zone)
     {

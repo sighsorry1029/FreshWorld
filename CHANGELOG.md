@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.9
+
+- Added optional maintenance coordination with ServerManager so tracked Upgrade World cron jobs and FreshWorld resets do not run at the same time. No new configuration fields or extra saves are required; FreshWorld keeps its existing pre-reset save.
+- Shared the same execution lock with manual resets and Path of Valheiman restoration. World/session ownership and cleanup checks prevent premature release while work is still active. This prevents overlapping participating operations, not a dependency on a successful earlier reset; direct Upgrade World commands remain outside the integration.
+- Added bounded diagnostics for location-zone deletion failures, including the run, stage, prefab, ZDO ID, position, protection and deletion path. Group-local preflight checks stop changed or unplanned objects from being silently removed or allowing unsafe regeneration.
+- Added regression coverage for lock ownership, world changes, failure cleanup and residual objects. Existing reset protections and normal game saving remain in place.
+
 ## 1.1.8
 
 - Removed the overall 180-second location planning limit so large location registries can finish loading without stopping normal progress.

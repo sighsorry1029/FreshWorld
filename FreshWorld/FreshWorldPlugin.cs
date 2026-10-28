@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using BepInEx;
+using FreshWorld.API;
 using FreshWorld.Backend;
 using FreshWorld.Configuration;
 using FreshWorld.Commands;
@@ -20,7 +21,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.1.8";
+        public const string ModVersion = "1.1.9";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -68,6 +69,7 @@ namespace FreshWorld
         private void Awake()
         {
             Instance = this;
+            MaintenanceCoordination.Initialize(CoordinationReady, PrepareMaintenance, () => GameWorld.HasPendingZoneCleanup);
             try
             {
                 EmptyChunkSaveCompatibility.Reset();
@@ -168,7 +170,7 @@ namespace FreshWorld
 
         private void ApplyPendingSettings()
         {
-            if (runner != null) return;
+            if (runner != null || MaintenanceGate.IsActive) return;
             var reload = Interlocked.Exchange(ref reloadRequested, 0) != 0;
             var changed = Interlocked.Exchange(ref configValuesChanged, 0) != 0;
             if (reload || changed) ReloadSettings(reload);
@@ -293,6 +295,7 @@ namespace FreshWorld
                 Logger.LogWarning("Cancelled an earlier session's unstarted manual request: " + orphan.Id);
             }
             Logger.LogInfo("Scheduler attached to world " + host!.GetWorldName() + " (" + stateWorldId + ").");
+            MaintenanceCoordination.Attach(stateWorldId!);
         }
 
         private bool IsCurrentRequest(CommandRequestContext context) => context.IsAuthorizedNow &&
@@ -342,6 +345,8 @@ namespace FreshWorld
                 }
                 if (runner != null || activeRunId != null)
                 { context.Reply("Maintenance is already running: " + (activePovRepair ? "PoV altar repair" : activeRunId) + ". " + progress); return; }
+                if (MaintenanceCoordination.HasExternalLease)
+                { context.Reply("Another mod holds the maintenance lease. Try again after it finishes."); return; }
                 if (pendingManual != null)
                 {
                     if (!IsCurrentRequest(pendingManual.Context)) CancelPendingManual("The earlier request lost its authority or session.");
@@ -445,6 +450,8 @@ namespace FreshWorld
             if (EmptyChunkSaveCompatibility.DisabledReason != null) return DisabledStatus();
             if (sessionFaulted) return "Maintenance is faulted for this world session. " + progress;
             if (runner != null) return "Running " + (activePovRepair ? "PoV altar repair" : activeRunId) + ": " + progress;
+            if (MaintenanceCoordination.HasExternalLease)
+                return "Another mod holds the maintenance lease. Automatic resets and configuration application are waiting for its completion or verified cleanup.";
             if (pendingManual != null) return "Pending " + pendingManual.Run.Id + ": " + (pendingManual.LastWait ?? "waiting to start");
             if (settings == null) return "The host cfg is invalid; new maintenance is disabled.";
             var pending = scheduler?.PendingRun;
@@ -511,7 +518,7 @@ namespace FreshWorld
                 var pipeline = new MaintenancePipeline(options, run.IncludeVegetation,
                     message => { progress = message; Logger.LogInfo(message); requester?.Reply(message); },
                     message => { Logger.LogWarning(message); requester?.Reply(message); },
-                    run.IsManual ? 100 : options.AutomaticResetPercent);
+                    run.IsManual ? 100 : options.AutomaticResetPercent, run.Id);
                 if (run.IsManual)
                     requester?.Reply("Manual reset: processing all eligible zones. AutomaticResetPercent does not apply.");
                 bool CanContinue()
@@ -613,10 +620,21 @@ namespace FreshWorld
             try
             {
                 // Discard PoV's in-flight world snapshot before any save, plan or mutation.
-                povAzurite?.BeforeMaintenance();
+                PrepareMaintenance();
                 return lease;
             }
             catch { lease.Dispose(); throw; }
+        }
+
+        private bool CoordinationReady() => supported && settings != null && !sessionFaulted && scheduler != null &&
+            EmptyChunkSaveCompatibility.DisabledReason == null && ReferenceEquals(ZNet.instance, host) &&
+            IsHost(host) && host!.GetWorldUID() == worldUid && WorldReady();
+
+        private void PrepareMaintenance()
+        {
+            if (EmptyChunkSaveCompatibility.Check() == EmptyChunkSaveCompatibility.Strategy.Unsupported)
+                throw new InvalidOperationException(DisabledStatus());
+            povAzurite?.BeforeMaintenance();
         }
 
         internal void StopSession()
@@ -625,6 +643,7 @@ namespace FreshWorld
             runner = null;
             backendLease?.Dispose();
             backendLease = null;
+            MaintenanceCoordination.CloseSession();
             TryCleanup(() => povAzurite?.EndSession(), "Could not discard the PoV azurite scan at session end.");
             CloseScheduler("The hosting world session ended.");
             host = null;
@@ -650,6 +669,9 @@ namespace FreshWorld
             // Called from Update/admission, never reentrantly from the save postfix.
             // GuardedCoroutine cancels at the next yield boundary and runs every finally/cleanup.
             configSync?.Suspend();
+            // The consumer must stop/clean up its native work before releasing. Never tear down its
+            // vegetation/save boundaries merely because our compatibility check became unavailable.
+            if (MaintenanceCoordination.HasExternalLease) return;
             if (runner != null)
             {
                 var active = runner;
@@ -688,7 +710,7 @@ namespace FreshWorld
                 TryCleanup(() => harmony?.UnpatchSelf(), "Could not remove Harmony patches.");
                 TryCleanup(() => commandHarmony?.UnpatchSelf(), "Could not remove command authentication patches.");
             }
-            finally { Instance = null; }
+            finally { MaintenanceCoordination.Shutdown(); Instance = null; }
         }
 
         private void DisposeWatcher()

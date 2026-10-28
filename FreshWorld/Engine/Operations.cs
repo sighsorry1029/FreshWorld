@@ -7,6 +7,8 @@ namespace FreshWorld.Engine;
 
 internal sealed class OperationParameters
 {
+    public string RunId { get; set; } = "unknown";
+    public Action<string>? Warn { get; set; }
     public int SafeZones { get; set; }
     public float TerrainReset { get; set; }
     public bool ProtectEpicLoot { get; set; } = true;

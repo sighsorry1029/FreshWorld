@@ -199,6 +199,7 @@ namespace FreshWorld.Engine
     internal static class GameWorld
     {
         public static bool HasPendingMaintenanceCleanup;
+        public static bool HasPendingZoneCleanup;
         public static int ProcessDeferredReleases() => 0;
     }
 }
@@ -215,7 +216,7 @@ namespace FreshWorld.Backend
         public static bool MutateBeforeYield;
         public static Exception? Failure;
         public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warning,
-            int resetPercent = 100)
+            int resetPercent = 100, string runId = "unknown")
             => Created.Add(new Dispatch(options, includeVegetation, resetPercent));
         public IEnumerator Run()
         {

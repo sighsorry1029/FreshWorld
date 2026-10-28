@@ -49,6 +49,10 @@ var tests = new (string Name, Action Body)[]
     ("group deletion completes queued native removals before releasing any member", GroupDeletionOrder),
     ("group deletion callback failures leave generation state unchanged", GroupDeletionFailure),
     ("group deletion refuses protected pending objects and callback-created residue", GroupDeletionResidue),
+    ("group preflight stops before ownership changes and includes unindexed linked children", GroupPreflight),
+    ("group revalidation detects added moved replaced and relinked objects", GroupRevalidation),
+    ("group completion refuses callback-created queued objects and protects unindexed children", GroupQueuedResidue),
+    ("group diagnostics are bounded and cannot replace a deletion failure", GroupDiagnostics),
     ("native pending registrations are detected without a scene root", RootlessPendingLoad),
     ("terrain recalculation invalidates build data", TerrainRebuild),
     ("large destruction notifications are limited to ten thousand IDs", DestroyBatch),
@@ -607,6 +611,96 @@ static void GroupDeletionResidue()
         True(GameWorld.IsGenerated(anchor)); True(ZoneSystem.instance.m_locationInstances[anchor].m_placed);
         if (reason != "new") True(other.Valid);
     }
+}
+
+static void GroupPreflight()
+{
+    foreach (var protectedChild in new[] { false, true })
+    {
+        Reset(); var anchor = new Vector2s(0, 0);
+        ZoneSystem.instance.AddGenerated(anchor); ZDOMan.instance.DeferDeletion = true;
+        var parent = new ZDO(1, "stone", new());
+        var child = new ZDO(2, protectedChild ? "Player" : "wall", new());
+        parent.Spawned = child.m_uid;
+        ZDOMan.instance.Add(parent);
+        ZDOMan.instance.Add(child, new Vector2s(10, 10)); // Dictionary entry with a stale/missing local index.
+        var operation = new ProbeReset(new() { ZoneGroups = new Dictionary<Vector2s, HashSet<Vector2s>> { [anchor] = [anchor] } });
+        if (protectedChild)
+        {
+            Throws<InvalidOperationException>(() => operation.Run(anchor));
+            Equal(0L, parent.Owner); Equal(0L, child.Owner); Equal(0, ZDOMan.instance.Destroyed.Count);
+            True(GameWorld.IsGenerated(anchor) && parent.Valid && child.Valid);
+        }
+        else
+        {
+            True(operation.Run(anchor));
+            True(!parent.Valid && !child.Valid && !GameWorld.IsGenerated(anchor));
+        }
+    }
+}
+
+static void GroupRevalidation()
+{
+    foreach (var change in new[] { "new", "moved", "replaced", "spawned", "protected", "loading" })
+    {
+        Reset(); var anchor = new Vector2s(0, 0);
+        var obj = new ZDO(1, "wall", new()); ZDOMan.instance.Add(obj);
+        var plan = new GameWorld.ZoneDeletionPlan([anchor], true, false, null); plan.Capture();
+        switch (change)
+        {
+            case "new": ZDOMan.instance.Add(new ZDO(2, "wall", new())); break;
+            case "moved": obj.SetPosition(new(128, 0, 0)); break;
+            case "replaced": ZDOMan.instance.Add(new ZDO(1, "wall", new())); break;
+            case "spawned": obj.Spawned = new ZDOID(999); break;
+            case "protected": ZNet.instance.Players.Add(new() { m_characterID = obj.m_uid }); break;
+            case "loading": ZoneSystem.instance.SetLoadingInZone(obj); break;
+        }
+        Throws<InvalidOperationException>(plan.Validate);
+        Equal(0L, obj.Owner); Equal(0, ZDOMan.instance.Destroyed.Count);
+    }
+}
+
+static void GroupQueuedResidue()
+{
+    foreach (var kind in new[] { "new-pending", "unindexed-protected" })
+    {
+        Reset(); var anchor = new Vector2s(0, 0);
+        ZoneSystem.instance.AddGenerated(anchor); ZDOMan.instance.DeferDeletion = true;
+        var first = new ZDO(1, "stone", new()); var child = new ZDO(2, "wall", new());
+        first.Spawned = child.m_uid;
+        ZDOMan.instance.Add(first); ZDOMan.instance.Add(child, new Vector2s(10, 10));
+        ZDOMan.instance.AfterDestroy = zdo =>
+        {
+            if (zdo != first) return;
+            if (kind == "new-pending")
+            {
+                var added = new ZDO(3, "mod-added-wall", new()); ZDOMan.instance.Add(added); ZDOMan.instance.DestroyZDO(added);
+            }
+            else ZNet.instance.Players.Add(new() { m_characterID = child.m_uid });
+        };
+        var operation = new ProbeReset(new() { ZoneGroups = new Dictionary<Vector2s, HashSet<Vector2s>> { [anchor] = [anchor] } });
+        Throws<InvalidOperationException>(() => operation.Run(anchor));
+        True(GameWorld.IsGenerated(anchor));
+        if (kind == "unindexed-protected") True(child.Valid);
+    }
+}
+
+static void GroupDiagnostics()
+{
+    var anchor = new Vector2s(0, 0);
+    ZoneSystem.instance.AddGenerated(anchor);
+    for (var id = 1; id <= 20; ++id) ZDOMan.instance.Add(new ZDO(id, "Player", new()));
+    var messages = new List<string>();
+    var args = new OperationParameters { RunId = "diagnostic-run", Warn = messages.Add,
+        ZoneGroups = new Dictionary<Vector2s, HashSet<Vector2s>> { [anchor] = [anchor] } };
+    Throws<InvalidOperationException>(() => new ProbeReset(args).Run(anchor));
+    Equal(8, messages.Count(line => line.StartsWith("Location group object:")));
+    True(messages.Any(line => line.Contains("runId=diagnostic-run") && line.Contains("phase=Preflight")));
+    True(messages.Any(line => line.Contains("12 additional objects omitted")));
+    args.Warn = _ => throw new Exception("diagnostic sink failure");
+    try { new ProbeReset(args).Run(anchor); throw new Exception("expected preflight failure"); }
+    catch (InvalidOperationException error) { True(error.Message.Contains("before deletion")); }
+    True(GameWorld.IsGenerated(anchor)); Equal(0, ZDOMan.instance.Destroyed.Count);
 }
 
 static void PartialDeletionBorders()

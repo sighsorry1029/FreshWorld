@@ -142,6 +142,8 @@ For Fort4, keep LocationResetRadii = MWL_AshlandsFort4=40. With Zones=true, it u
 
 AutomaticResetPercent selects a connected zone group once, alongside ordinary zone candidates. A group qualifies if its zone reset or a selected location restoration is eligible. Its member sectors and locations share the same draw; a skipped zone group does not get another chance in the location stage. With Zones=false, each eligible managed location counts once at its generated anchor. Actual affected sector percentages can differ from the setting because one candidate can cover several sectors. The manual command still ignores this percentage. New multi-zone instances introduced after planning wait for a later run.
 
+Group deletion first captures the affected objects and linked children, then rechecks them before changing ownership or deleting anything. Unexpected protection, object changes, or pending loads stop the run. After deletion, unplanned or remaining objects still block regeneration; they are never force-deleted to make the check pass. Failures log the run, stage, location group and up to eight object details.
+
 Group deletion runs without yielding between members and finishes queued host-side deletions before allowing regeneration. Client deletion notifications retain their normal bounded sending. Large connected groups can take longer than the per-frame budget; logs report their sector counts. This is not a rollback: an exception after deletion starts leaves completed changes in place and stops later stages. A correct radius can cover old stacked pieces, but pieces outside the planned group or radius are not repaired automatically. Unselected locations without an explicit radius entry retain ordinary zone-reset behavior.
 
 ## Protection: players, base markers, and stage boundaries
@@ -280,6 +282,16 @@ Use `freshworld invasions` to inspect a ready host's current invasion state. It 
 
 The report matches ice by position, not event ownership. Overlapping event areas may count the same object. A missing core is a reason to investigate, not proof of which mod removed it; a core ZDO does not prove that the objective works. Ice outside active areas is counted without removing it. Inspection scans the host's ZDO registry once per request and does not load zones, save the world, change ownership, end events, or start restoration. An inspection error leaves maintenance state unchanged.
 
+
+## Coordinated server maintenance
+
+A compatible ServerManager automatically shares FreshWorld's maintenance lock for tracked Upgrade World cron jobs. FreshWorld keeps its own schedule; no additional cfg option or cron dependency field is needed. A ready host can participate even when automatic FreshWorld resets are disabled.
+
+This prevents participating maintenance from overlapping; it does not require a particular FreshWorld run to succeed first. A failed reset may be followed by an Upgrade World job after cleanup. While ServerManager holds the lock, automatic resets wait, cfg changes are deferred, and manual reset/PoV repair requests are refused. A timeout does not release work that is still running. Direct Upgrade World commands and other mods do not automatically participate.
+
+The lock adds no saves. FreshWorld still saves and waits before its own maintenance; later persistence uses the game's normal saves or an explicit `save` command. There is no forced post-maintenance save. A crash before the next successful save can lose recent world changes.
+
+Integration details: [maintenance coordination contract](docs/maintenance-coordination-contract.md). Existing failed or `needs_review` jobs require operator review; installing the patch does not clear them.
 
 ## Manual commands and permissions
 

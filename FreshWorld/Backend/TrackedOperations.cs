@@ -220,7 +220,6 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
             _tracker.Skip(zone);
             return true;
         }
-        _mutationAttempted = true;
         var success = base.ExecuteZone(zone);
         if (success)
         {
@@ -232,6 +231,8 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
     }
 
     protected override IEnumerator OnExecute() => _tracker.Execute(ZonesToUpgrade, ExecuteZone);
+
+    protected override void OnMutationStarting() => _mutationAttempted = true;
 
     protected override void OnEnd()
     {

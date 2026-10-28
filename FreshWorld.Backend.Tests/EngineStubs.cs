@@ -348,8 +348,10 @@ namespace FreshWorld.Engine
     }
     internal class ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) : FakeZoneOperation("zones", log, args, candidates)
     {
+        protected virtual void OnMutationStarting() { }
         protected override bool ExecuteZone(Vector2s zone)
         {
+            OnMutationStarting();
             if (Fake.ThrowOnZone == Kind) throw new InvalidOperationException("injected reset failure");
             Fake.Calls.Add($"zones.change:{zone.x}");
             var sectors = Args.ZoneGroups != null && Args.ZoneGroups.TryGetValue(zone, out var group) ? group : new HashSet<Vector2s> { zone };

@@ -232,6 +232,7 @@ namespace FreshWorld.Engine
     }
     internal class ResetZones(Action<string> log, OperationParameters args, HashSet<Vector2s>? candidates = null) : ZoneOperation(log, args, candidates)
     {
+        protected virtual void OnMutationStarting() { }
         protected override bool ExecuteZone(Vector2s zone) => true;
     }
 }

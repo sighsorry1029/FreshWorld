@@ -2,6 +2,7 @@ using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
 using FreshWorld;
+using FreshWorld.API;
 using FreshWorld.Backend;
 using FreshWorld.Commands;
 using FreshWorld.Core;
@@ -17,6 +18,16 @@ internal static class Program
         try
         {
             Test("startup submits only declared plugin patches before a world loads", StartupPatchSelection);
+            Test("coordination admits idle hosts without a preceding run and rejects wrong identity and thread", CoordinationIdentity);
+            Test("coordination lease validates ownership and duplicate release cannot unlock another lease", CoordinationOwnership);
+            Test("manual reset and PoV repair share the external maintenance gate", CoordinationInternalWork);
+            Test("external lease defers automatic execution and config application without consuming pending work", CoordinationWait);
+            Test("lease preparation failure releases the gate and permits a fresh retry", CoordinationPreparationFailure);
+            Test("old sessions cannot release new leases and persistence faults disable admission", CoordinationSessionAndPersistence);
+            Test("failed settled maintenance does not require a successful occurrence", CoordinationFailedRun);
+            Test("disabled automatic scheduling permits host coordination but clients cannot acquire", CoordinationHostModes);
+            Test("external coordination preserves hooks until release and refuses deferred cleanup", CoordinationCleanup);
+            Test("world teardown during lease preparation never publishes a stale token", CoordinationPreparationSessionChange);
             Test("unsupported startup retains authenticated diagnostics without operational patches", UnsupportedStartup);
             Test("unsupported late registration cancels queued manual maintenance", UnsupportedAdmission);
             Test("unsupported late registration blocks automatic maintenance", UnsupportedAutomatic);
@@ -1045,6 +1056,188 @@ internal static class Program
             "watcher disposal failure was not logged");
     }
 
+    private static Fixture DailyFixture() => new(config =>
+    {
+        config.Set("General", "Mode", "DailyTimes");
+        config.Set("General", "DailyTimes", "05:35,11:35");
+    });
+
+    private static DateTimeOffset NextDaily(Fixture f)
+    {
+        var schedule = f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings")!.Schedule;
+        var date = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, schedule.TimeZone).Date.AddDays(1);
+        var local = DateTime.SpecifyKind(date.AddHours(5).AddMinutes(35), DateTimeKind.Unspecified);
+        return new DateTimeOffset(local, schedule.TimeZone.GetUtcOffset(local)).ToUniversalTime();
+    }
+
+    private static void CoordinationIdentity()
+    {
+        using var f = DailyFixture();
+        var attempts = f.Scheduler!.Attempts.Count;
+        var world = f.Net.Uid.ToString();
+        Equal(2, MaintenanceCoordination.ContractVersion, "simplified contract version");
+        Equal("WrongWorld", MaintenanceCoordination.TryAcquire("other-world", "SM")["errorCode"], "exact world");
+        Equal("InvalidRequest", MaintenanceCoordination.TryAcquire(world, "")["errorCode"], "owner required");
+        Equal("InvalidRequest", MaintenanceCoordination.TryAcquire(world, new string('x', 257))["errorCode"], "bounded owner");
+        string? workerError = null;
+        var worker = new Thread(() => workerError = MaintenanceCoordination.TryAcquire(world, "SM")["errorCode"]);
+        worker.Start(); worker.Join(); Equal("WrongThread", workerError, "no Unity access on worker");
+        True(MaintenanceGate.IsAvailable, "rejected admissions leave gate free");
+        var acquired = MaintenanceCoordination.TryAcquire(world, "SM");
+        Equal("Acquired", acquired["status"], "idle host acquired without any completed reset");
+        Equal(attempts, f.Scheduler.Attempts.Count, "external work does not reserve or complete a reset");
+        Equal("Busy", MaintenanceCoordination.TryAcquire(world, "Other")["status"], "another external consumer cannot overlap");
+        Equal(0, MaintenancePipeline.Created.Count, "lease does not invoke a saving/reset pipeline");
+    }
+
+    private static void CoordinationOwnership()
+    {
+        using var f = DailyFixture();
+        var acquired = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+        var world = acquired["worldId"]; var session = acquired["sessionId"]; var token = acquired["leaseToken"];
+        True(MaintenanceCoordination.ValidateLease(world, session, "SM", token), "lease active");
+        True(!MaintenanceCoordination.ReleaseLease(world, session, "someone-else", token), "owner mismatch");
+        True(!MaintenanceCoordination.ReleaseLease(world, session, "SM", "wrong"), "token mismatch");
+        True(!MaintenanceCoordination.ReleaseLease(world, "old", "SM", token), "session mismatch");
+        bool? workerReleased = null;
+        var worker = new Thread(() => workerReleased = MaintenanceCoordination.ReleaseLease(world, session, "SM", token));
+        worker.Start(); worker.Join(); Equal(false, workerReleased, "worker cannot release main-thread lease");
+        Time.realtimeSinceStartup += 3600; f.Tick();
+        True(MaintenanceCoordination.ValidateLease(world, session, "SM", token), "elapsed time never expires active work");
+        True(MaintenanceCoordination.ReleaseLease(world, session, "SM", token), "owner release");
+        using var other = MaintenanceGate.Acquire();
+        True(!MaintenanceCoordination.ReleaseLease(world, session, "SM", token), "duplicate release harmless");
+        True(MaintenanceGate.IsActive, "another operation remains held");
+    }
+
+    private static void CoordinationInternalWork()
+    {
+        foreach (var action in new[] { FreshWorldCommandAction.Run, FreshWorldCommandAction.Pov })
+        {
+            using var f = DailyFixture();
+            MaintenancePipeline.HoldFrames = PathOfValheimRepair.HoldFrames = 2;
+            f.Plugin.HandleCommand(action, f.Request); f.Tick();
+            Equal("Busy", MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM")["status"], "internal " + action + " owns same gate");
+            f.Tick(); f.Tick(); f.Tick();
+            True(MaintenanceGate.IsAvailable, "internal operation finished");
+            Equal("Acquired", MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM")["status"], "settled internal operation allows external work");
+        }
+    }
+
+    private static void CoordinationWait()
+    {
+        using var f = DailyFixture();
+        var lease = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Status, f.Request);
+        HasReply(f.Request, "Another mod holds the maintenance lease");
+        var nextDue = NextDaily(f);
+        var pending = f.Scheduler!.GetDue(new ScheduleClock(nextDue.AddSeconds(1), 0))!;
+        f.SetField("nextPoll", 0f); f.Tick();
+        Equal(pending.Id, f.Scheduler.PendingRun!.Id, "busy preserved pending occurrence");
+        Equal(0, f.Scheduler.Attempts.Count, "busy did not begin or fail occurrence");
+        var reloads = f.Plugin.Config.ReloadCount;
+        f.Plugin.Config.Set("Reset", "Locations", "true"); f.SetField("reloadRequested", 1); f.Tick();
+        Equal(reloads, f.Plugin.Config.ReloadCount, "external lease deferred reload");
+        f.Run();
+        Equal(reloads, f.Plugin.Config.ReloadCount, "manual admission cannot bypass external reload deferral");
+        HasReply(f.Request, "Another mod holds");
+        MaintenanceCoordination.ReleaseLease(lease["worldId"], lease["sessionId"], "SM", lease["leaseToken"]);
+        f.SetField("nextPoll", 0f); f.Tick(); f.Tick();
+        Equal(reloads + 1, f.Plugin.Config.ReloadCount, "reload applied after release");
+        Equal(1, f.Scheduler.Attempts.Count, "one pending automatic run admitted");
+        Equal(RunStatus.Completed, f.Scheduler.Attempts.Last().Status, "pending run completed");
+    }
+
+    private static void CoordinationPreparationFailure()
+    {
+        using var f = DailyFixture();
+        PathOfValheimAzurite.FailCancel = true;
+        Equal("PreparationFailed", MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM")["errorCode"], "PoV preparation failure refused");
+        True(MaintenanceGate.IsAvailable, "no leaked lease");
+        PathOfValheimAzurite.FailCancel = false;
+        Equal("Acquired", MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM")["status"], "fresh retry allowed without historical proof");
+    }
+
+    private static void CoordinationCleanup()
+    {
+        using var f = DailyFixture();
+        GameWorld.HasPendingZoneCleanup = true;
+        var blocked = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+        Equal("Busy", blocked["status"], "deferred cleanup is a transient wait");
+        Equal("CleanupPending", blocked["errorCode"], "deferred load cleanup blocks admission");
+        True(MaintenanceGate.IsAvailable, "cleanup wait does not claim gate");
+        GameWorld.HasPendingZoneCleanup = false;
+        var acquired = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+        EmptyChunkSaveCompatibility.Reject = true; EmptyChunkSaveCompatibility.Check();
+        f.Tick();
+        True(!f.GetField<bool>("compatibilityDrained"), "compatibility teardown waits for external cleanup");
+        True(!MaintenanceCoordination.ValidateLease(acquired["worldId"], acquired["sessionId"], "SM", acquired["leaseToken"]), "unsafe new consumer phase refused");
+        True(MaintenanceCoordination.ReleaseLease(acquired["worldId"], acquired["sessionId"], "SM", acquired["leaseToken"]), "release remains possible after compatibility failure");
+        f.Tick(); True(f.GetField<bool>("compatibilityDrained"), "cleanup drains after release");
+    }
+
+    private static void CoordinationPreparationSessionChange()
+    {
+        using var f = DailyFixture();
+        PathOfValheimAzurite.OnCancel = () =>
+        {
+            PathOfValheimAzurite.OnCancel = null;
+            f.Plugin.StopSession();
+        };
+        var result = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+        Equal("PreparationFailed", result["errorCode"], "reentrant teardown refused");
+        True(!result.ContainsKey("leaseToken") && MaintenanceGate.IsAvailable, "no stale token or gate leak");
+    }
+
+    private static void CoordinationSessionAndPersistence()
+    {
+        using (var f = DailyFixture())
+        {
+            var acquired = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+            f.Plugin.StopSession(); f.Tick();
+            var after = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+            Equal("Acquired", after["status"], "fresh session can admit idle work");
+            True(after["sessionId"] != acquired["sessionId"], "fresh session identity");
+            True(!MaintenanceCoordination.ReleaseLease(acquired["worldId"], acquired["sessionId"], "SM", acquired["leaseToken"]), "stale release refused");
+            True(MaintenanceCoordination.ValidateLease(after["worldId"], after["sessionId"], "SM", after["leaseToken"]), "new lease still held");
+        }
+        using (var f = DailyFixture())
+        {
+            f.Scheduler!.GetDue(new ScheduleClock(NextDaily(f).AddSeconds(1), 0));
+            f.SetField("nextPoll", 0f); f.Tick(); // BeginRun journal persisted, pipeline has not completed.
+            var path = new JsonWorldStateStore(Path.Combine(Paths.ConfigPath, "FreshWorld", "state")).GetStatePath(f.Net.Uid.ToString());
+            var bytes = File.ReadAllBytes(path); File.Delete(path); Directory.CreateDirectory(path);
+            try
+            {
+                f.Tick();
+                var result = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+                Equal("ProviderNotReady", result["errorCode"], "faulted host rejects external work");
+                True(MaintenanceGate.IsAvailable, "result persistence failure released own lease");
+            }
+            finally { Directory.Delete(path); File.WriteAllBytes(path, bytes); }
+        }
+    }
+
+    private static void CoordinationFailedRun()
+    {
+        using var f = DailyFixture();
+        MaintenancePipeline.Failure = new InvalidOperationException("injected reset failure");
+        f.Scheduler!.GetDue(new ScheduleClock(NextDaily(f).AddSeconds(1), 0));
+        f.SetField("nextPoll", 0f); f.Tick(); f.Tick();
+        Equal(RunStatus.Failed, f.Scheduler.Attempts.Last().Status, "reset failure retained in journal");
+        Equal("Acquired", MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM")["status"], "failed but cleaned-up reset does not require success proof");
+    }
+
+    private static void CoordinationHostModes()
+    {
+        using var f = new Fixture(config => config.Set("General", "Enabled", "false"));
+        var lease = MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM");
+        Equal("Acquired", lease["status"], "ready host can coordinate with automatic reset disabled");
+        True(MaintenanceCoordination.ReleaseLease(lease["worldId"], lease["sessionId"], "SM", lease["leaseToken"]), "host release");
+        f.Net.Server = false;
+        Equal("ProviderNotReady", MaintenanceCoordination.TryAcquire(f.Net.Uid.ToString(), "SM")["errorCode"], "client cannot acquire");
+    }
+
     private static void HasReply(CommandRequestContext request, string text) =>
         True(request.Replies.Any(message => message.Contains(text, StringComparison.OrdinalIgnoreCase)),
             "missing reply containing '" + text + "': " + string.Join(" | ", request.Replies));
@@ -1082,6 +1275,7 @@ internal static class Program
             PathOfValheimAzurite.Cancellations = 0; PathOfValheimAzurite.FailCancel = false; PathOfValheimAzurite.OnCancel = null;
             EmptyChunkSaveCompatibility.Reject = false;
             GameWorld.HasPendingMaintenanceCleanup = false;
+            GameWorld.HasPendingZoneCleanup = false;
             FreshWorld.Configuration.ConfigSynchronization.PendingLogin = false;
             JotunInvasionDiagnostics.Calls = 0; JotunInvasionDiagnostics.Fail = false;
             Plugin = new FreshWorldPlugin();

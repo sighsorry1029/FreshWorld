@@ -18,6 +18,7 @@ internal sealed class MaintenancePipeline
     private readonly RunOptions _options;
     private readonly bool _includeVegetation;
     private readonly int _resetPercent;
+    private readonly string _runId;
     private HashSet<Vector2s>? _selectedZones;
     private readonly Action<string> _log;
     private readonly Action<string> _warn;
@@ -39,10 +40,11 @@ internal sealed class MaintenancePipeline
     private readonly HashSet<Vector2s> _completedZoneResets = new();
 
     public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn,
-        int resetPercent = 100)
+        int resetPercent = 100, string runId = "unknown")
     {
         if (resetPercent < 0 || resetPercent > 100) throw new ArgumentOutOfRangeException(nameof(resetPercent));
         _resetPercent = resetPercent;
+        _runId = runId;
         _options = options;
         _pathOfValheim = new PathOfValheimProtection(options.PathOfValheimAltarProtectionEnabled, options.PathOfValheimBlightProtectionEnabled);
         _alwaysProtected = new AlwaysProtectedObjects(options.AlwaysProtectedPrefabs,
@@ -582,6 +584,8 @@ internal sealed class MaintenancePipeline
     private OperationParameters Parameters(int safeZones) =>
         new()
         {
+            RunId = _runId,
+            Warn = _warn,
             SafeZones = safeZones,
             ProtectEpicLoot = _options.EpicLootProtectionEnabled,
             ProtectEpicLootBounties = _options.EpicLootBountyProtectionEnabled,

@@ -11,7 +11,8 @@ internal static class MaintenanceGate
     public static IDisposable Acquire()
     {
         if (!IsAvailable) throw new InvalidOperationException("FreshWorld maintenance is already running.");
-        return active = new Lease();
+        var lease = new Lease();
+        return active = lease;
     }
     private sealed class Lease : IDisposable
     {

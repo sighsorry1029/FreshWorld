@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../FreshWorld/FreshWorldPlugin.cs" Link="Production/FreshWorldPlugin.cs" />
+    <Compile Include="../FreshWorld/API/MaintenanceCoordination.cs" Link="Production/MaintenanceCoordination.cs" />
     <Compile Include="../FreshWorld/Configuration/FreshWorldConfig.cs" Link="Production/FreshWorldConfig.cs" />
     <Compile Include="../FreshWorld/Configuration/ConfigPresentation.cs" Link="Production/ConfigPresentation.cs" />
     <Compile Include="../FreshWorld/Configuration/ConfigChoice.cs" Link="Production/ConfigChoice.cs" />
