@@ -39,6 +39,14 @@ internal sealed class MaintenancePipeline
     private readonly Dictionary<Vector2s, HashSet<Vector2s>> _locationZoneGroups = new();
     private readonly Dictionary<Vector2s, Vector2s> _locationGroupAnchors = new();
     private readonly HashSet<Vector2s> _completedZoneResets = new();
+    private readonly Dictionary<ZoneSystem.ZoneLocation, LocationMetadataFallback> _metadataFallbacks = new();
+    private readonly HashSet<string> _skippedLocationPrefabs = new(StringComparer.Ordinal);
+    private readonly HashSet<Vector2s> _planningExcludedZones = new();
+    private readonly HashSet<Vector2s> _planningExcludedAnchors = new();
+    private int _skippedLocationInstances;
+
+    public string? PlanningExclusionSummary => _skippedLocationPrefabs.Count == 0 ? null :
+        $"{_skippedLocationPrefabs.Count} timed-out location prefab types, {_skippedLocationInstances} instances and {_planningExcludedZones.Count} sectors excluded for this run; eligible again on the next run.";
 
     public MaintenancePipeline(RunOptions options, bool includeVegetation, Action<string> log, Action<string> warn,
         int resetPercent = 100, string runId = "unknown")
@@ -143,7 +151,7 @@ internal sealed class MaintenancePipeline
                     var args = Parameters(safeZones);
                     args.LocationFootprints = _locationFootprints;
                     args.CanResetTerrain = CanResetTerrain;
-                    args.CanDeleteObject = null;
+                    args.CanDeleteObject = zdo => !_planningExcludedZones.Contains(ZoneSystem.GetZone(zdo.GetPosition()));
                     if (safeZones == 0)
                         _warn("LocationSafeZones=0: configured locations may remove player pieces inside their reset area.");
                     yield return Execute("Location reset", new TrackedRegenerateLocations(_log, ids, args,
@@ -195,6 +203,7 @@ internal sealed class MaintenancePipeline
 
     private IEnumerator Execute(string name, ITrackedOperation operation)
     {
+        ValidatePlanningExclusions(force: true);
         RequireWorld();
         // Refresh even when base protection filters out every target in a stage.
         GameWorld.CollectPlayerZones(_playerZones);
@@ -244,6 +253,7 @@ internal sealed class MaintenancePipeline
             current.IntersectWith(protectedZones);
         if (_selectedZones != null) current.IntersectWith(_selectedZones);
         current.ExceptWith(_reservedLocationZones);
+        current.ExceptWith(_planningExcludedZones);
         return current;
     }
 
@@ -254,6 +264,8 @@ internal sealed class MaintenancePipeline
         current.UnionWith(managed.Where(anchor => GameWorld.IsGenerated(anchor) &&
             (_selectedZones == null || _selectedZones.Contains(LocationSelectionKey(anchor)))));
         current.ExceptWith(_completedZoneResets);
+        current.ExceptWith(_planningExcludedAnchors);
+        current.ExceptWith(_planningExcludedZones);
         return current;
     }
 
@@ -297,6 +309,8 @@ internal sealed class MaintenancePipeline
                 var id = reference.Name;
                 var acquired = false;
                 var metadataResolved = false;
+                var skipped = false;
+                var registeredRadius = definition.m_exteriorRadius;
                 var waiting = Stopwatch.StartNew();
                 progress.BeginPrefab(id);
                 try
@@ -318,13 +332,27 @@ internal sealed class MaintenancePipeline
                         var ready = acquired ? reference.IsLoaded : NativePlacement.CanSpawnLocation(_zones, definition);
                         progress.LastReady = ready;
                         if (ready) break;
+                        var elapsed = waiting.Elapsed.TotalSeconds;
+                        if (acquired) progress.SampleLoading(definition, elapsed, force: elapsed >= 30);
                         // Each prefab has its own deadline; completed loads do not consume later prefabs' time.
-                        if (waiting.Elapsed.TotalSeconds >= 30)
-                            throw new TimeoutException("Location metadata did not load before planning: " + id);
+                        if (elapsed >= 30)
+                        {
+                            var reason = "named reference has no verified serialized bounds";
+                            LocationMetadataFallback? fallback = null;
+                            if (!acquired || !LocationMetadataFallback.TryCapture(_zones, definition, registeredRadius,
+                                    out fallback, out reason))
+                                throw new TimeoutException("Location metadata did not load before planning: " + id +
+                                    ". Cannot safely exclude its extent: " + reason);
+                            _metadataFallbacks.Add(definition, fallback!);
+                            _skippedLocationPrefabs.Add(id);
+                            skipped = true;
+                            _warn(FormattableString.Invariant($"Location planning timeout: prefab='{id}'; stage=WaitForPrefab; waited={waiting.Elapsed.TotalSeconds:F2}s; registeredRadius={registeredRadius:F2}m; {progress.LoadDiagnostics}. Its instances will be excluded with at least 3x3 protection; planning continues."));
+                            break;
+                        }
                         yield return null;
                     }
                     progress.Enter(PlanningStage.ResolveAsset);
-                    if (acquired) _ = reference.Asset; // Allow asset-resolution hooks to finalize metadata.
+                    if (acquired && !skipped) _ = reference.Asset; // Never force a timed-out asset to load synchronously.
                     resolved[definition] = id;
                     metadataResolved = true;
                 }
@@ -339,7 +367,7 @@ internal sealed class MaintenancePipeline
                         reference.Release();
                     }
                 }
-                progress.CompletePrefab();
+                progress.CompletePrefab(skipped);
             }
             progress.Enter(PlanningStage.ValidateDefinitions);
             progress.Prefab = null;
@@ -354,6 +382,8 @@ internal sealed class MaintenancePipeline
                     throw new InvalidOperationException("Location definitions changed during planning; retry maintenance: " + progress.Prefab);
             }
             ReserveLocationFootprints(managedIds, overrides, progress);
+            ValidatePlanningExclusions(force: true);
+            if (PlanningExclusionSummary != null) _warn("Location planning exclusions: " + PlanningExclusionSummary);
             completed = true;
             if (!_options.ZonesEnabled && _overlappingLocations.Count > 0)
             {
@@ -394,7 +424,20 @@ internal sealed class MaintenancePipeline
             if (overrides.ContainsKey(id) || (managedIds.Contains(id) && footprint.Zones.Count > 1))
                 _managedLocations.Add(pair.Key);
         }
-        if (_managedLocations.Count == 0) return;
+        // Every instance of a failed prefab is excluded, even if ungenerated or not selected.
+        // Seed at least 3x3, then expand through full footprints and shared-sector connections.
+        var excludedSeeds = new HashSet<Vector2s>();
+        foreach (var footprint in _locationFootprints.Values)
+        {
+            if (!_zones.m_locationInstances.TryGetValue(footprint.Anchor, out var instance) ||
+                !_skippedLocationPrefabs.Contains(instance.m_location.m_prefab.Name)) continue;
+            _skippedLocationInstances++;
+            excludedSeeds.UnionWith(footprint.Zones);
+            for (var x = Math.Max(short.MinValue, footprint.Anchor.x - 1); x <= Math.Min(short.MaxValue, footprint.Anchor.x + 1); x++)
+                for (var y = Math.Max(short.MinValue, footprint.Anchor.y - 1); y <= Math.Min(short.MaxValue, footprint.Anchor.y + 1); y++)
+                    excludedSeeds.Add(new Vector2s(x, y));
+        }
+        if (_managedLocations.Count == 0 && excludedSeeds.Count == 0) return;
         progress.Enter(PlanningStage.GroupFootprints);
         progress.Prefab = null;
         progress.Anchor = null;
@@ -408,6 +451,19 @@ internal sealed class MaintenancePipeline
                 entries.Add(footprint);
             }
         }
+        var excludedPending = new Queue<Vector2s>(excludedSeeds);
+        _planningExcludedZones.UnionWith(excludedSeeds);
+        while (excludedPending.Count > 0)
+        {
+            if (!bySector.TryGetValue(excludedPending.Dequeue(), out var touching)) continue;
+            foreach (var footprint in touching)
+            {
+                if (!_planningExcludedAnchors.Add(footprint.Anchor)) continue;
+                foreach (var sector in footprint.Zones)
+                    if (_planningExcludedZones.Add(sector)) excludedPending.Enqueue(sector);
+            }
+        }
+        _reservedLocationZones.UnionWith(_planningExcludedZones);
         var reservedAnchors = new HashSet<Vector2s>();
         foreach (var start in _managedLocations.OrderBy(zone => zone.x).ThenBy(zone => zone.y))
         {
@@ -481,11 +537,13 @@ internal sealed class MaintenancePipeline
     private bool CanResetLocation(Vector2s anchor)
     {
         RequireWorld();
+        if (_planningExcludedAnchors.Contains(anchor) || _planningExcludedZones.Contains(anchor)) return false;
         if (_completedZoneResets.Contains(anchor)) return false;
         if (_locationGroupAnchors.TryGetValue(anchor, out var representative) &&
             !HasUnchangedGroupLocations(_locationZoneGroups[representative])) return false;
         if (_overlappingLocations.Contains(anchor) ||
-            !_zones.m_locationInstances.TryGetValue(anchor, out var location) || !location.m_placed) return false;
+            !_zones.m_locationInstances.TryGetValue(anchor, out var location) || !location.m_placed || location.m_location == null ||
+            _skippedLocationPrefabs.Contains(location.m_location.m_prefab.Name)) return false;
         if (!_locationFootprints.TryGetValue(anchor, out var footprint))
         {
             // Full runs retain live single-zone supplements. A newly introduced multi-zone
@@ -592,7 +650,7 @@ internal sealed class MaintenancePipeline
 
     // Only these policies also protect terrain tiles. Keep ordinary base/player/EpicLoot rules separate.
     private bool CanResetTerrain(Vector2s zone) =>
-        _invasions.CanResetZone(zone) && _alwaysProtected.CanResetZone(zone);
+        !_planningExcludedZones.Contains(zone) && _invasions.CanResetZone(zone) && _alwaysProtected.CanResetZone(zone);
 
     private OperationParameters Parameters(int safeZones) =>
         new()
@@ -603,7 +661,8 @@ internal sealed class MaintenancePipeline
             ProtectEpicLoot = _options.EpicLootProtectionEnabled,
             ProtectEpicLootBounties = _options.EpicLootBountyProtectionEnabled,
             CanResetTerrain = zone => !_reservedLocationZones.Contains(zone) && CanResetTerrain(zone),
-            CanDeleteObject = zdo => !_reservedLocationZones.Contains(ZoneSystem.GetZone(zdo.GetPosition())),
+            CanDeleteObject = zdo => !_reservedLocationZones.Contains(ZoneSystem.GetZone(zdo.GetPosition())) &&
+                !_planningExcludedZones.Contains(ZoneSystem.GetZone(zdo.GetPosition())),
             AlwaysProtected = _alwaysProtected
         };
 
@@ -657,6 +716,30 @@ internal sealed class MaintenancePipeline
         private long _slowestTicks;
         private string? _slowestPrefab;
         private bool _reported;
+        private bool? _isLoading;
+        private float? _loadProgress;
+        private double _sampleAt = -1;
+        private long _sampleTicks;
+        private double _progressChangedAt;
+        private int _loadSamples;
+
+        public string LoadDiagnostics => FormattableString.Invariant(
+            $"isLoading={_isLoading?.ToString() ?? "unknown"}; loadProgress={(_loadProgress.HasValue ? _loadProgress.Value.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "unknown")}; loadSamples={_loadSamples}; loadSampleAge={(_loadSamples > 0 ? ((double)(Timer.ElapsedTicks - _sampleTicks) / Stopwatch.Frequency).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + "s" : "unknown")}; progressUnchangedFor={(_loadProgress.HasValue ? (_sampleAt - _progressChangedAt).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + "s" : "unknown")}");
+
+        public void SampleLoading(ZoneSystem.ZoneLocation definition, double elapsed, bool force = false)
+        {
+            if (_sampleAt >= 0 && (!force && elapsed - _sampleAt < 1 || elapsed == _sampleAt)) return;
+            bool? loading = null;
+            float? value = null;
+            try { LocationMetadataFallback.ReadLoadState(definition, out loading, out value); }
+            catch (Exception) { } // Also tolerate a failing optional integration accessor.
+            if (!value.HasValue || value != _loadProgress) _progressChangedAt = elapsed;
+            _isLoading = loading;
+            _loadProgress = value;
+            _sampleAt = elapsed;
+            _sampleTicks = Timer.ElapsedTicks;
+            _loadSamples++;
+        }
 
         public LocationPlanningProgress(int instances) => _instances = instances;
 
@@ -673,24 +756,33 @@ internal sealed class MaintenancePipeline
             Prefab = id;
             Readiness = null;
             LastReady = null;
+            _isLoading = null;
+            _loadProgress = null;
+            _sampleAt = -1;
+            _progressChangedAt = 0;
+            _loadSamples = 0;
             _prefabStart = Timer.ElapsedTicks;
             Enter(PlanningStage.LoadAsync);
         }
 
-        public void CompletePrefab()
+        public void CompletePrefab(bool skipped = false)
         {
             var elapsed = Timer.ElapsedTicks - _prefabStart;
-            if (_slowestPrefab == null || elapsed > _slowestTicks)
+            if (!skipped && (_slowestPrefab == null || elapsed > _slowestTicks))
             {
                 _slowestTicks = elapsed;
                 _slowestPrefab = Prefab;
             }
-            _completed++;
+            if (!skipped) _completed++;
             Enter(PlanningStage.BetweenPrefabs);
             Prefab = null;
             _prefabStart = -1;
             Readiness = null;
             LastReady = null;
+            _isLoading = null;
+            _loadProgress = null;
+            _sampleAt = -1;
+            _loadSamples = 0;
         }
 
         public void ReportStopped(Action<string> warn)
@@ -705,7 +797,7 @@ internal sealed class MaintenancePipeline
                     Seconds(_ticks[(int)stage] + (_stage == stage ? now - _stageStart : 0));
                 var prefabTime = _prefabStart >= 0 ? FormattableString.Invariant($"{Seconds(now - _prefabStart):F2}s") : "n/a";
                 var anchor = Anchor is { } zone ? $"{zone.x},{zone.y}" : "n/a";
-                warn(FormattableString.Invariant($"Location planning stopped: stage={_stage}; prefab='{Prefab ?? "<none>"}'; anchor={anchor}; definitions={_completed}/{Definitions}; instances={_instances}; elapsed={Seconds(now):F2}s; stageElapsed={Seconds(now - _stageStart):F2}s; prefabElapsed={prefabTime}; readiness={Readiness ?? "n/a"}; lastReady={LastReady?.ToString() ?? "unknown"}; collect={StageSeconds(PlanningStage.CollectDefinitions):F2}s, between={StageSeconds(PlanningStage.BetweenPrefabs):F2}s, load={StageSeconds(PlanningStage.LoadAsync):F2}s, wait={StageSeconds(PlanningStage.WaitForPrefab):F2}s, asset={StageSeconds(PlanningStage.ResolveAsset):F2}s, release={StageSeconds(PlanningStage.ReleasePrefab):F2}s, validate={StageSeconds(PlanningStage.ValidateDefinitions):F2}s, footprints={StageSeconds(PlanningStage.BuildFootprints):F2}s, groups={StageSeconds(PlanningStage.GroupFootprints):F2}s; slowestCompleted='{_slowestPrefab ?? "<none>"}' ({Seconds(_slowestTicks):F2}s). No reset stage started in this run."));
+                warn(FormattableString.Invariant($"Location planning stopped: stage={_stage}; prefab='{Prefab ?? "<none>"}'; anchor={anchor}; definitions={_completed}/{Definitions}; instances={_instances}; elapsed={Seconds(now):F2}s; stageElapsed={Seconds(now - _stageStart):F2}s; prefabElapsed={prefabTime}; readiness={Readiness ?? "n/a"}; lastReady={LastReady?.ToString() ?? "unknown"}; {LoadDiagnostics}; collect={StageSeconds(PlanningStage.CollectDefinitions):F2}s, between={StageSeconds(PlanningStage.BetweenPrefabs):F2}s, load={StageSeconds(PlanningStage.LoadAsync):F2}s, wait={StageSeconds(PlanningStage.WaitForPrefab):F2}s, asset={StageSeconds(PlanningStage.ResolveAsset):F2}s, release={StageSeconds(PlanningStage.ReleasePrefab):F2}s, validate={StageSeconds(PlanningStage.ValidateDefinitions):F2}s, footprints={StageSeconds(PlanningStage.BuildFootprints):F2}s, groups={StageSeconds(PlanningStage.GroupFootprints):F2}s; slowestCompleted='{_slowestPrefab ?? "<none>"}' ({Seconds(_slowestTicks):F2}s). No reset stage started in this run."));
             }
             catch (Exception)
             {
@@ -723,6 +815,29 @@ internal sealed class MaintenancePipeline
         if (!IsSameWorld() || !_network.IsServer() || _network.HaveStopped || ZNetScene.instance == null ||
             ZDOMan.instance == null || WorldGenerator.instance == null)
             throw new InvalidOperationException("The hosting world is no longer ready for maintenance.");
+        ValidatePlanningExclusions();
+    }
+
+    private void ValidatePlanningExclusions(bool force = false)
+    {
+        if (_planningExcludedZones.Count == 0) return;
+        if (_metadataFallbacks.Values.Any(bounds => force ? !bounds.Revalidate() : !bounds.IsCurrent()))
+            throw new InvalidOperationException("Location definitions changed after a planning timeout; maintenance stopped.");
+        // A same-count replacement outside the exclusion can introduce another failed prefab or
+        // a new overlapping footprint. Check the run snapshot even within one frame: a synchronous
+        // readiness callback can change it between the tracking wrapper's two safety checks.
+        // This scan is only needed for partial plans; loader/Harmony inspection stays at stage boundaries.
+        foreach (var pair in _zones.m_locationInstances)
+        {
+            var definition = pair.Value.m_location;
+            if (definition == null || !NativePlacement.IsValidLocationPrefab(definition)) continue;
+            // Native unique-location placement can prune unplaced entries. Their old exclusions
+            // remain conservative; only surviving/new entries need validation against the plan.
+            var zoneReset = _completedZoneResets.Contains(pair.Key) ||
+                _activeOperation is TrackedResetZones active && active.Result.ChangedZones.Contains(pair.Key);
+            if (!_locationFootprints.TryGetValue(pair.Key, out var footprint) || !footprint.Matches(pair.Value, zoneReset))
+                throw new InvalidOperationException("A location changed after a planning timeout; maintenance stopped: " + pair.Key);
+        }
     }
 
     private static void InvalidateCaches()

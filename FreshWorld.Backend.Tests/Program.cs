@@ -12,11 +12,19 @@ var tests = new (string Name, Action Body)[]
     ("metadata references are released when planning is cancelled or fails", LocationMetadataLifetime),
     ("progressing location metadata loads can take over 180 seconds in total", PlanningSlowProgress),
     ("an unready prefab still times out after 30 active seconds before any reset", PlanningPrefabTimeout),
+    ("verified planning timeouts protect all instances and 3x3 neighbors across reset stages", PlanningPartialStages),
+    ("planning exclusions expand through large and connected location footprints", PlanningPartialExtent),
+    ("planning exclusions are omitted from random draws and retried on the next run", PlanningPartialSelection),
+    ("a changed fallback definition or exclusion stops before further mutation", PlanningPartialChanges),
+    ("partial plans allow completed zone height refreshes and native unique pruning", PlanningNativeChanges),
     ("metadata ready on the deadline-crossing poll is accepted", PlanningReadyAtDeadline),
     ("paused time does not consume the location metadata timeout", PlanningPauseTimeout),
     ("planning diagnostics identify native and named metadata failures without replacing them", PlanningFailureDiagnostics),
     ("planning cancellation reports once without logging during loading waits", PlanningCancellationDiagnostics),
     ("planning diagnostics cannot block cleanup or hide the original stop", PlanningDiagnosticSinkFailure),
+    ("loading diagnostics are sampled sparsely and finish with current timeout state", PlanningLoadSamples),
+    ("loading diagnostic failures retain the timeout and named references are not sampled", PlanningLoadDiagnosticFailure),
+    ("each new prefab starts with independent loading diagnostics", PlanningLoadDiagnosticReset),
     ("planning reports definition changes and invalid bounds before reset", PlanningBoundsDiagnostics),
     ("successful planning adds no per-prefab log lines", PlanningSuccessDiagnostics),
     ("planning failures retain completed progress without carrying state into the next run", PlanningProgressDiagnostics),
@@ -177,6 +185,163 @@ static void PlanningPrefabTimeout()
     }
 }
 
+static void PlanningPartialStages()
+{
+    foreach (var zones in new[] { false, true })
+    {
+        Fake.Reset();
+        foreach (var center in new[] { 0, 10 })
+        {
+            Fake.AddZone(center, location: "broken");
+            ZoneSystem.instance.m_locationInstances[new(center, 0)].m_location.m_exteriorRadius = 10;
+            for (var x = center - 1; x <= center + 1; x++)
+                for (var y = -1; y <= 1; y++) ZoneSystem.instance.m_generatedZones.Add(new(x, y));
+        }
+        ZoneSystem.instance.m_generatedZones.Remove(new(10, 0));
+        var ungenerated = ZoneSystem.instance.m_locationInstances[new(10, 0)];
+        ungenerated.m_placed = false;
+        ZoneSystem.instance.m_locationInstances[new(10, 0)] = ungenerated;
+        Fake.AddZone(3); Fake.AddZone(20);
+        Fake.TrustedMetadata.Add("broken");
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        Fake.OnResolve = definition =>
+        {
+            if (definition.m_prefab.Name == "broken") throw new Exception("A timed-out asset must not be resolved synchronously.");
+        };
+        using var time = Stopwatch.UseManualTime();
+        Fake.OnMetadataReady = () =>
+        {
+            Fake.MetadataReady = Fake.LoadingMetadata != "broken";
+            if (!Fake.MetadataReady) time.Advance(TimeSpan.FromSeconds(31));
+        };
+        var options = new RunOptions { ZonesEnabled = zones, LocationSafeZones = 0, VegetationSafeZones = 0, LocationIds = ["cave", "broken"] };
+        var run = Run(options);
+        True(run.Success, string.Join(";", run.Errors)); Equal(0, Fake.MetadataReferences);
+        True(run.Warnings.Any(message => message.Contains("1 timed-out location prefab types, 2 instances and 18 sectors")));
+        True(!run.Warnings.Any(message => message.Contains("planning stopped")));
+        Sequence([3, 20], Changed(zones ? "zones" : "locations"));
+        if (!zones) Sequence([3, 20], Changed("vegetation"));
+        foreach (var args in Fake.Arguments.Values)
+        {
+            foreach (var center in new[] { 0, 10 })
+                for (var x = center - 1; x <= center + 1; x++)
+                    for (var y = -1; y <= 1; y++)
+                    {
+                        True(!args.CanResetTerrain!(new(x, y)));
+                        True(!args.CanDeleteObject!(new ZDO { Zone = new(x, y) }));
+                    }
+            True(args.CanResetTerrain!(new(20, 0)));
+        }
+    }
+}
+
+static void PlanningPartialExtent()
+{
+    Fake.AddZone(0, location: "broken");
+    ZoneSystem.instance.m_locationInstances[new(0, 0)].m_location.m_exteriorRadius = 150;
+    Fake.AddZone(4, location: "wide");
+    ZoneSystem.instance.m_locationInstances[new(4, 0)].m_location.m_exteriorRadius = 100;
+    Fake.AddZone(7, location: "wide2");
+    ZoneSystem.instance.m_locationInstances[new(7, 0)].m_location.m_exteriorRadius = 100;
+    Fake.AddZone(30);
+    for (var i = -2; i <= 9; i++) ZoneSystem.instance.m_generatedZones.Add(new(i, 0));
+    Fake.TrustedMetadata.Add("broken");
+    using var time = Stopwatch.UseManualTime();
+    Fake.OnMetadataReady = () =>
+    {
+        Fake.MetadataReady = Fake.LoadingMetadata != "broken";
+        if (!Fake.MetadataReady) time.Advance(TimeSpan.FromSeconds(31));
+    };
+    var result = Run(new RunOptions { LocationIds = ["cave", "broken", "wide", "wide2"] });
+    True(result.Success, string.Join(";", result.Errors));
+    Sequence([30], Changed("zones"));
+    True(!Fake.Arguments["zones"].CanResetTerrain!(new(9, 0)));
+    Equal(0, Changed("locations").Count);
+}
+
+static void PlanningPartialSelection()
+{
+    Fake.AddZone(0, location: "broken"); Fake.AddZone(1); Fake.AddZone(10); Fake.AddZone(20);
+    ZoneSystem.instance.m_locationInstances[new(0, 0)].m_location.m_exteriorRadius = 10;
+    Fake.TrustedMetadata.Add("broken");
+    using var time = Stopwatch.UseManualTime();
+    Fake.OnMetadataReady = () =>
+    {
+        Fake.MetadataReady = Fake.LoadingMetadata != "broken";
+        if (!Fake.MetadataReady) time.Advance(TimeSpan.FromSeconds(31));
+    };
+    var options = new RunOptions { ZonesEnabled = false, VegetationEnabled = false, LocationIds = ["cave", "broken"] };
+    var logs = new List<string>();
+    var first = Run(options, resetPercent: 50, logs: logs);
+    True(first.Success); Equal(1, Changed("locations").Count);
+    True(logs.Any(message => message.StartsWith("Automatic reset selection: 1/2 candidates")));
+    Fake.Calls.Clear(); Fake.MetadataReady = true; Fake.OnMetadataReady = null;
+    var next = Run(options); True(next.Success); True(!next.Warnings.Any(message => message.Contains("planning")));
+    Sequence([0, 1, 10, 20], Changed("locations"));
+}
+
+static void PlanningPartialChanges()
+{
+    foreach (var change in new[] { "radius", "position", "height", "registry", "replacement" })
+    {
+        Fake.Reset(); Fake.AddZone(0, location: "broken"); Fake.AddZone(10);
+        ZoneSystem.instance.m_locationInstances[new(0, 0)].m_location.m_exteriorRadius = 10;
+        Fake.TrustedMetadata.Add("broken");
+        using var time = Stopwatch.UseManualTime();
+        Fake.OnMetadataReady = () =>
+        {
+            Fake.MetadataReady = Fake.LoadingMetadata != "broken";
+            if (!Fake.MetadataReady) time.Advance(TimeSpan.FromSeconds(31));
+        };
+        Fake.OnStart = _ =>
+        {
+            var instance = ZoneSystem.instance.m_locationInstances[new(0, 0)];
+            if (change == "radius") instance.m_location.m_exteriorRadius = 150;
+            else if (change == "position")
+            {
+                instance.m_position = new(800, 0, 0);
+                ZoneSystem.instance.m_locationInstances[new(0, 0)] = instance;
+            }
+            else if (change == "replacement") Fake.AddZone(10, location: "broken");
+            else if (change == "height")
+            {
+                instance.m_position = new(0, 20, 0);
+                ZoneSystem.instance.m_locationInstances[new(0, 0)] = instance;
+            }
+            else Fake.AddZone(11, location: "broken");
+        };
+        var run = Run(new RunOptions { LocationIds = ["cave", "broken"] });
+        True(!run.Success); True(!Fake.Calls.Any(call => call.Contains(".change:"))); Equal(0, Fake.MetadataReferences);
+    }
+}
+
+static void PlanningNativeChanges()
+{
+    foreach (var zones in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0, location: "broken"); Fake.AddZone(10); Fake.AddZone(20); Fake.AddZone(40);
+        ZoneSystem.instance.m_locationInstances[new(0, 0)].m_location.m_exteriorRadius = 10;
+        Fake.TrustedMetadata.Add("broken");
+        using var time = Stopwatch.UseManualTime();
+        Fake.OnMetadataReady = () =>
+        {
+            Fake.MetadataReady = Fake.LoadingMetadata != "broken";
+            if (!Fake.MetadataReady) time.Advance(TimeSpan.FromSeconds(31));
+        };
+        Fake.ResetGroundHeight = 25;
+        if (!zones)
+        {
+            var unplaced = ZoneSystem.instance.m_locationInstances[new(40, 0)];
+            unplaced.m_placed = false; ZoneSystem.instance.m_locationInstances[new(40, 0)] = unplaced;
+            Fake.OnLocationPlaced = _ => ZoneSystem.instance.m_locationInstances.Remove(new(40, 0));
+        }
+        var result = Run(new RunOptions { ZonesEnabled = zones, VegetationEnabled = false, LocationIds = ["cave", "broken"] });
+        True(result.Success, string.Join(";", result.Errors));
+        if (zones) Sequence([10, 20, 40], Changed("zones"));
+        else Sequence([10, 20], Changed("locations"));
+    }
+}
+
 static void PlanningReadyAtDeadline()
 {
     foreach (var named in new[] { false, true })
@@ -311,6 +476,61 @@ static void PlanningDiagnosticSinkFailure()
     True(!run.Success); Equal(0, Fake.MetadataReferences);
     True(run.Warnings.Single().Contains("stage=ResolveAsset")); // Cleanup must not replace the recorded stage.
     True(run.Errors.Single().Message.Contains("cleanup failure")); // Preserve existing exception behavior.
+}
+
+static void PlanningLoadSamples()
+{
+    Fake.AddZone(0); Fake.MetadataReady = false; Fake.MetadataLoading = true; Fake.MetadataProgress = 0.25f;
+    var warnings = new List<string>(); var errors = new List<Exception>(); var completed = new List<bool>();
+    using var time = Stopwatch.UseManualTime();
+    using var lease = MaintenanceGate.Acquire();
+    using var runner = new GuardedCoroutine(new MaintenancePipeline(MultiZoneOptions(), true, _ => { }, warnings.Add).Run(),
+        () => true, errors.Add, completed.Add);
+    True(runner.MoveNext()); True(runner.MoveNext()); Equal(1, Fake.MetadataDiagnosticSamples);
+    for (var i = 0; i < 20; i++) { time.Advance(TimeSpan.FromMilliseconds(10)); True(runner.MoveNext()); }
+    Equal(1, Fake.MetadataDiagnosticSamples); Equal(0, warnings.Count);
+    time.Advance(TimeSpan.FromSeconds(9.8)); Fake.MetadataProgress = 0.5f; True(runner.MoveNext());
+    Equal(2, Fake.MetadataDiagnosticSamples);
+    time.Advance(TimeSpan.FromSeconds(19.5)); True(runner.MoveNext());
+    time.Advance(TimeSpan.FromSeconds(0.54)); True(!runner.MoveNext());
+    Equal(4, Fake.MetadataDiagnosticSamples); Equal(0, Fake.MetadataReferences);
+    True(errors.Single() is TimeoutException);
+    var message = warnings.Single();
+    True(message.Contains("isLoading=True; loadProgress=0.500; loadSamples=4"));
+    True(message.Contains("loadSampleAge=0.00s; progressUnchangedFor=20.04s"));
+}
+
+static void PlanningLoadDiagnosticFailure()
+{
+    foreach (var named in new[] { false, true })
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.NamedMetadata = named; Fake.MetadataReady = false;
+        Fake.OnMetadataDiagnostics = () => throw new InvalidOperationException("diagnostic accessor unavailable");
+        using var time = Stopwatch.UseManualTime();
+        Fake.OnMetadataReady = () => time.Advance(TimeSpan.FromSeconds(31));
+        var run = Run(MultiZoneOptions());
+        True(!run.Success); True(run.Errors.Single() is TimeoutException); Equal(0, Fake.MetadataReferences);
+        Equal(named ? 0 : 1, Fake.MetadataDiagnosticSamples);
+        True(run.Warnings.Single().Contains("isLoading=unknown; loadProgress=unknown"));
+    }
+}
+
+static void PlanningLoadDiagnosticReset()
+{
+    Fake.AddZone(0); Fake.AddZone(5, location: "other");
+    Fake.MetadataLoading = true; Fake.MetadataProgress = 0.8f;
+    using var time = Stopwatch.UseManualTime();
+    var polls = 0;
+    Fake.OnMetadataReady = () =>
+    {
+        if (Fake.LoadingMetadata == "cave") { Fake.MetadataReady = ++polls > 1; return; }
+        Fake.MetadataReady = false; time.Advance(TimeSpan.FromSeconds(31));
+        Fake.MetadataLoading = false; Fake.MetadataProgress = 0;
+    };
+    var run = Run(MultiZoneOptions()); True(!run.Success);
+    True(run.Warnings.Single().Contains("prefab='other'"));
+    True(run.Warnings.Single().Contains("isLoading=False; loadProgress=0.000; loadSamples=1"));
+    Equal(2, Fake.MetadataDiagnosticSamples); Equal(0, Fake.MetadataReferences);
 }
 
 static void PlanningBoundsDiagnostics()

@@ -26,10 +26,12 @@ internal sealed class LocationFootprint
         Zones.Add(anchor);
     }
 
-    public bool Matches(ZoneSystem.LocationInstance location) =>
+    public bool Matches(ZoneSystem.LocationInstance location, bool allowGroundHeightChange = false) =>
         ReferenceEquals(_definition, location.m_location) &&
         string.Equals(_id, location.m_location.m_prefab.Name, StringComparison.Ordinal) &&
-        Center.x == location.m_position.x && Center.y == location.m_position.y && Center.z == location.m_position.z &&
+        Center.x == location.m_position.x && Center.z == location.m_position.z &&
+        (Center.y == location.m_position.y || allowGroundHeightChange &&
+            !float.IsNaN(location.m_position.y) && !float.IsInfinity(location.m_position.y)) &&
         location.m_location.m_exteriorRadius >= 0 && location.m_location.m_exteriorRadius <= Radius;
 
     public bool Overlaps(LocationFootprint other)

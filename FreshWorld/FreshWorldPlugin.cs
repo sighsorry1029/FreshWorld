@@ -21,7 +21,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.1.10";
+        public const string ModVersion = "1.2.0";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -546,9 +546,13 @@ namespace FreshWorld
                             if (success)
                             {
                                 activeScheduler.CompleteRun(run.Id, ReadClock());
-                                Logger.LogInfo("Maintenance completed: " + run.Id);
-                                progress = "Completed.";
-                                requester?.Reply("Completed " + run.Id + ". World changes use the game's normal saves; no extra save was requested.");
+                                var exclusions = pipeline.PlanningExclusionSummary;
+                                var result = exclusions == null ? "Completed" : "Partially completed";
+                                if (exclusions == null) Logger.LogInfo("Maintenance completed: " + run.Id);
+                                else Logger.LogWarning("Maintenance partially completed: " + run.Id + "; " + exclusions);
+                                progress = result + ".";
+                                requester?.Reply(result + " " + run.Id + ". " + (exclusions == null ? "" : exclusions + " ") +
+                                    "World changes use the game's normal saves; no extra save was requested.");
                             }
                             else
                             {

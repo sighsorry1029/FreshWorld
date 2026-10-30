@@ -18,6 +18,7 @@ internal static class Program
         try
         {
             Test("startup submits only declared plugin patches before a world loads", StartupPatchSelection);
+            Test("partial planning completion is reported without retrying the same occurrence", PlanningPartialCompletion);
             Test("coordination admits idle hosts without a preceding run and rejects wrong identity and thread", CoordinationIdentity);
             Test("coordination lease validates ownership and duplicate release cannot unlock another lease", CoordinationOwnership);
             Test("manual reset and PoV repair share the external maintenance gate", CoordinationInternalWork);
@@ -481,6 +482,19 @@ internal static class Program
         f.Net.Saving = false;
         f.Tick();
         Equal(1, MaintenancePipeline.Created.Count, "unpause and save completion release pending command");
+    }
+
+    private static void PlanningPartialCompletion()
+    {
+        using var f = new Fixture();
+        MaintenancePipeline.Exclusions = "1 timed-out location prefab types, 2 instances and 18 sectors excluded for this run; eligible again on the next run.";
+        f.Run(); f.Tick(); f.Tick();
+        HasReply(f.Request, "Partially completed");
+        True(f.Plugin.Logger.Messages.Any(message => message.StartsWith("WARN: Maintenance partially completed:")), "partial run warning");
+        True(!f.Plugin.Logger.Messages.Any(message => message.StartsWith("INFO: Maintenance completed:")), "must not report a full completion");
+        Equal(RunStatus.Completed, f.Scheduler!.Attempts.Last().Status, "occurrence is consumed without an automatic retry");
+        var count = MaintenancePipeline.Created.Count;
+        f.Tick(); Equal(count, MaintenancePipeline.Created.Count, "partial run is not replayed immediately");
     }
 
     private static void BackendLeaseWaits()

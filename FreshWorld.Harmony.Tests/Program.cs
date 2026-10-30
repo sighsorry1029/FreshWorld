@@ -6,6 +6,16 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 4 && args[0] == "--location-guard")
+            {
+                LocationFallbackRegression.Run(args[1], args[2], args[3], guardOnly: true);
+                return 0;
+            }
+            if (args.Length == 4 && args[0] == "--location-fallback")
+            {
+                LocationFallbackRegression.Run(args[1], args[2], args[3]);
+                return 0;
+            }
             if (args.Length == 4 && args[0] == "--pov-vegetation")
             {
                 NativeSavePatchRegression.RunPov(args[1], args[2], args[3]);

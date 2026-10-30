@@ -208,6 +208,8 @@ namespace FreshWorld.Backend
 {
     internal sealed class MaintenancePipeline
     {
+        public static string? Exclusions;
+        public string? PlanningExclusionSummary => Exclusions;
         internal sealed record Dispatch(RunOptions Options, bool IncludeVegetation, int ResetPercent);
         public static readonly List<Dispatch> Created = new();
         public static int Mutations;
@@ -231,7 +233,7 @@ namespace FreshWorld.Backend
         }
         public static void Reset()
         {
-            Created.Clear(); Mutations = 0; Disposals = 0; HoldFrames = 0; MutateBeforeYield = false; Failure = null;
+            Created.Clear(); Mutations = 0; Disposals = 0; HoldFrames = 0; MutateBeforeYield = false; Failure = null; Exclusions = null;
         }
     }
 }

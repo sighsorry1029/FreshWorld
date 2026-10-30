@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+- Allowed maintenance to continue in safe areas after a location prefab reaches its 30-second planning timeout. Every instance of that prefab is excluded with at least 3x3 zones of protection, expanded to cover larger known bounds and connected locations.
+- Verified original location and AltBiome definitions before allowing a partial run. Unknown bounds or unverified asset-loading hooks still stop maintenance before resets begin.
+- Applied planning exclusions to zone, resource, terrain and location resets, including SafeZones=0, and removed excluded targets from automatic percentage selection. Partial completion is reported clearly; exclusions last for one run and the next run tries loading the prefab again.
+- Added low-frequency IsLoading and loading-progress diagnostics to failure and timeout warnings, including sample age and observed time without progress. Normal logs and the per-prefab timeout remain unchanged.
+- Kept partial runs compatible with the game's normal ground-height updates and removal of unused unique-location instances. Added regression coverage for exclusions, metadata changes, AltBiome sources and diagnostic failures.
+- Updated the BepInExPack dependency to 5.4.2360.
+
 ## 1.1.10
 
 - Added server-synced `ResourceExcludedZones` under `[Protection]`. List zone coordinates as `12:-8,13:-8` to skip both resource reset groups during automatic and manual runs, even with `ResourceSafeZones=0`. Empty by default; the same coordinates apply to every world using the cfg.

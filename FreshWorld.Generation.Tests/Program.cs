@@ -23,6 +23,7 @@ var tests = new (string Name, Action Test)[]
     ("location footprint follows circle-sector intersections and rejects invalid extents", FootprintGeometry),
     ("location clearing crosses ungenerated sectors without deleting adjacent elevated dungeons", LocationCrossSector),
     ("resource clearing forwards reserved-object deletion policy", ResourceReservedObject),
+    ("location clearing forwards planning exclusion policy as well as its own footprint", LocationReservedObject),
     ("terrain paint cannot reach an unapproved neighboring sector", LocationTerrainBoundary),
     ("native asset callbacks cannot bypass the final location guard", LocationFinalGuard),
     ("planned location identity and position cannot change before deletion", LocationPlanIdentity),
@@ -406,6 +407,18 @@ static void ResourceReservedObject()
     var errors = new List<Exception>(); var finishes = new List<bool>();
     using var runner = Start(new TrackedResetVegetation(_ => { }, new() { "rock4_copper" }, args), errors, finishes);
     Drain(runner); Success(errors, finishes); Equal(0, GameWorld.Removed.Count);
+}
+
+static void LocationReservedObject()
+{
+    var keep = new ZDO("piece", new(1, 0, 1));
+    var remove = new ZDO("piece", new(2, 0, 2));
+    GameWorld.Objects[Zone()] = new() { keep, remove };
+    var args = new OperationParameters { CanDeleteObject = zdo => !ReferenceEquals(zdo, keep) };
+    var errors = new List<Exception>(); var finishes = new List<bool>();
+    using var runner = Start(new TrackedRegenerateLocations(_ => { }, new() { "Hildir_cave" }, args), errors, finishes);
+    Drain(runner); Success(errors, finishes);
+    Equal(false, GameWorld.Removed.Contains(keep)); Equal(true, GameWorld.Removed.Contains(remove));
 }
 static void LocationTerrainBoundary()
 {

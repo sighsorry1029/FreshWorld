@@ -59,7 +59,7 @@ internal class RegenerateLocations : ZoneOperation
             ? planned : new LocationFootprint(zone, location);
         if (!footprint.Matches(location)) throw new InvalidOperationException("Location extent changed after planning: " + zone);
         var radius = footprint.Radius;
-        ClearLocationObjects(footprint, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
+        ClearLocationObjects(footprint, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected, Args.CanDeleteObject);
         var terrainRadius = Args.TerrainReset > 0 ? Args.TerrainReset : radius;
         if (terrainRadius > 0)
         {
@@ -89,13 +89,14 @@ internal class RegenerateLocations : ZoneOperation
     }
 
     private static void ClearLocationObjects(LocationFootprint footprint, bool protectEpicLoot, bool protectEpicLootBounties,
-        AlwaysProtectedObjects? alwaysProtected)
+        AlwaysProtectedObjects? alwaysProtected, Func<ZDO, bool>? canDelete)
     {
         if (footprint.Radius <= 0) return;
         bool WithinScope(ZDO zdo)
         {
             var prefab = zdo.GetPrefab();
-            return prefab != ZoneControlHash && prefab != TerrainCompilerHash && footprint.Contains(zdo);
+            return prefab != ZoneControlHash && prefab != TerrainCompilerHash && footprint.Contains(zdo) &&
+                (canDelete == null || canDelete(zdo));
         }
         // Neighbor sectors need not be generated: native location placement can put ZDOs there.
         // The predicate also constrains recursively connected Spawned objects.

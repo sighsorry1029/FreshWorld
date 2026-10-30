@@ -83,7 +83,7 @@ public readonly record struct LocationPrefab(string Name)
 {
     public bool IsValid => !Fake.NamedMetadata;
     public bool IsLoaded { get { Fake.OnMetadataReady?.Invoke(); return Fake.MetadataReady; } }
-    public void LoadAsync() { Fake.MetadataReferences++; Fake.OnMetadataLoad?.Invoke(); }
+    public void LoadAsync() { Fake.LoadingMetadata = Name; Fake.MetadataReferences++; Fake.OnMetadataLoad?.Invoke(); }
     public void Release() { Fake.MetadataReferences--; Fake.OnMetadataRelease?.Invoke(); }
     public UnityEngine.GameObject Asset
     {
@@ -138,6 +138,14 @@ internal static class Fake
     public static bool NamedMetadata;
     public static bool MetadataReady = true;
     public static int MetadataReferences;
+    public static string LoadingMetadata = "";
+    public static readonly HashSet<string> TrustedMetadata = new();
+    public static Action? OnMetadataDiagnostics;
+    public static int MetadataDiagnosticSamples;
+    public static bool? MetadataLoading;
+    public static float? MetadataProgress;
+    public static float? ResetGroundHeight;
+    public static Action<Vector2s>? OnLocationPlaced;
     public static string? ThrowOnZone;
     public static string? ThrowOnStart;
     public static bool LoadOnPoke = true;
@@ -155,6 +163,9 @@ internal static class Fake
         Calls = new(); Arguments = new(); Candidates = new(); MarkerZones = new(); PlayerZones = new(); VegetationPasses = new();
         OnStart = null; OnResolve = null; MetadataReady = true; MetadataReferences = 0; OnMetadataLoad = null; ThrowOnZone = null; ThrowOnStart = null;
         OnMetadataReady = null; OnMetadataRelease = null; NamedMetadata = false;
+        TrustedMetadata.Clear();
+        OnMetadataDiagnostics = null; MetadataDiagnosticSamples = 0; MetadataLoading = null; MetadataProgress = null;
+        ResetGroundHeight = null; OnLocationPlaced = null;
         LoadOnPoke = true; HoldSave = false; IgnoreSave = false; SaveError = null;
         BorderRepairs = 0; LoadReleases = 0;
         ReleaseFailures = new();
@@ -273,6 +284,30 @@ namespace FreshWorld.Configuration
 // Simulated low-level game operations. The production orchestration and operation lifecycle are source-linked.
 namespace FreshWorld.Engine
 {
+    internal sealed class LocationMetadataFallback
+    {
+        private readonly ZoneSystem.ZoneLocation definition;
+        private readonly string id;
+        private readonly float radius;
+        private LocationMetadataFallback(ZoneSystem.ZoneLocation value) { definition = value; id = value.m_prefab.Name; radius = value.m_exteriorRadius; }
+        internal bool IsCurrent() => definition.m_prefab.Name == id && definition.m_exteriorRadius == radius;
+        internal bool Revalidate() => IsCurrent();
+        internal static void ReadLoadState(ZoneSystem.ZoneLocation definition, out bool? isLoading, out float? progress)
+        {
+            Fake.MetadataDiagnosticSamples++;
+            Fake.OnMetadataDiagnostics?.Invoke();
+            isLoading = Fake.MetadataLoading;
+            progress = Fake.MetadataProgress;
+        }
+        internal static bool TryCapture(ZoneSystem zones, ZoneSystem.ZoneLocation value, float beforeLoad,
+            out LocationMetadataFallback? bounds, out string reason)
+        {
+            reason = "unverified fixture metadata";
+            bounds = Fake.TrustedMetadata.Contains(value.m_prefab.Name) && beforeLoad > 0 &&
+                value.m_exteriorRadius == beforeLoad ? new(value) : null;
+            return bounds != null;
+        }
+    }
     public static class NativePlacement
     {
         public static bool CanSpawnLocation(ZoneSystem zones, ZoneSystem.ZoneLocation location) { Fake.OnMetadataReady?.Invoke(); Fake.OnResolve?.Invoke(location); return Fake.MetadataReady; }
@@ -361,6 +396,7 @@ namespace FreshWorld.Engine
                 ZoneSystem.instance.m_generatedZones.Remove(sector);
                 if (!ZoneSystem.instance.m_locationInstances.TryGetValue(sector, out var location)) continue;
                 location.m_placed = false;
+                if (Fake.ResetGroundHeight is { } height) location.m_position = new(location.m_position.x, height, location.m_position.z);
                 ZoneSystem.instance.m_locationInstances[sector] = location;
             }
             return true;
@@ -415,6 +451,7 @@ namespace FreshWorld.Engine
                 throw new InvalidOperationException("injected location failure");
             }
             Fake.Calls.Add($"locations.change:{zone.x}");
+            Fake.OnLocationPlaced?.Invoke(zone);
             return true;
         }
     }
