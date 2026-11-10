@@ -7,6 +7,8 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../FreshWorld/Engine/OdinsHollowDungeons.cs" Link="Production/OdinsHollowDungeons.cs" />
+    <Compile Include="../FreshWorld/Engine/DungeonResetPlan.cs" Link="Production/DungeonResetPlan.cs" />
     <Compile Include="../FreshWorld/Backend/MaintenanceGate.cs" Link="Production/MaintenanceGate.cs" />
     <Compile Include="../FreshWorld/Runtime/GuardedCoroutine.cs" Link="Production/GuardedCoroutine.cs" />
     <Compile Include="../FreshWorld/Backend/MaintenanceSave.cs" Link="Production/MaintenanceSave.cs" />
@@ -17,6 +19,7 @@
     <Compile Include="../FreshWorld/Engine/JotunInvasionDiagnostics.cs" Link="Production/JotunInvasionDiagnostics.cs" />
     <Compile Include="../FreshWorld/Engine/AlwaysProtectedObjects.cs" Link="Production/AlwaysProtectedObjects.cs" />
     <Compile Include="../FreshWorld/Engine/PathOfValheimProtection.cs" Link="Production/PathOfValheimProtection.cs" />
+    <Compile Include="../FreshWorld/Engine/PathOfValheimDungeons.cs" Link="Production/PathOfValheimDungeons.cs" />
     <Compile Include="../FreshWorld/Engine/PathOfValheimRepair.cs" Link="Production/PathOfValheimRepair.cs" />
     <Compile Include="../FreshWorld/Engine/ResetZones.cs" Link="Production/ResetZones.cs" />
     <Compile Include="../FreshWorld/Engine/BaseProtection.cs" Link="Production/BaseProtection.cs" />

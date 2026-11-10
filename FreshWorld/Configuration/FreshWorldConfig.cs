@@ -55,6 +55,9 @@ namespace FreshWorld.Configuration
         public bool EpicLootBountyProtectionEnabled { get; }
         public bool PathOfValheimAltarProtectionEnabled { get; }
         public bool PathOfValheimBlightProtectionEnabled { get; }
+        public bool PathOfValheimDungeonProtectionEnabled { get; }
+        public bool PathOfValheimMerchantProtectionEnabled { get; }
+        public bool PathOfValheimTreasureProtectionEnabled { get; }
         public int MaxZonesPerFrame => 64;
         public double FrameBudgetMilliseconds => 8;
         public float SaveTimeoutSeconds => 180;
@@ -65,8 +68,9 @@ namespace FreshWorld.Configuration
             int vegetationSafeZones, bool locationsEnabled, string[] locationIds, int locationSafeZones,
             bool epicLootProtectionEnabled, bool epicLootBountyProtectionEnabled, string[] alwaysProtectedPrefabs,
             int automaticResetPercent, IReadOnlyDictionary<string, float> locationResetRadii,
-            bool pathOfValheimAltarProtectionEnabled, bool pathOfValheimBlightProtectionEnabled,
-            (short X, short Z)[] resourceExcludedZones)
+            bool pathOfValheimAltarProtectionEnabled, bool pathOfValheimBlightProtectionEnabled, bool pathOfValheimDungeonProtectionEnabled,
+            (short X, short Z)[] resourceExcludedZones,
+            bool pathOfValheimMerchantProtectionEnabled = true, bool pathOfValheimTreasureProtectionEnabled = true)
         {
             AutomaticResetPercent = automaticResetPercent;
             this.locationResetRadii = locationResetRadii.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
@@ -84,6 +88,9 @@ namespace FreshWorld.Configuration
             EpicLootBountyProtectionEnabled = epicLootBountyProtectionEnabled;
             PathOfValheimAltarProtectionEnabled = pathOfValheimAltarProtectionEnabled;
             PathOfValheimBlightProtectionEnabled = pathOfValheimBlightProtectionEnabled;
+            PathOfValheimDungeonProtectionEnabled = pathOfValheimDungeonProtectionEnabled;
+            PathOfValheimMerchantProtectionEnabled = pathOfValheimMerchantProtectionEnabled;
+            PathOfValheimTreasureProtectionEnabled = pathOfValheimTreasureProtectionEnabled;
         }
     }
 
@@ -100,8 +107,9 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<string> dailyTimes, gameDayInterval, automaticResetPercent, vegetationIds, terrainVegetationIds, locationIds, locationResetRadii;
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
         private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs, resourceExcludedZones;
-        private readonly ConfigEntry<string> pathOfValheimAltarProtection, pathOfValheimBlightProtection;
+        private readonly ConfigEntry<string> pathOfValheimAltarProtection, pathOfValheimBlightProtection, pathOfValheimDungeonProtection;
         private readonly ConfigEntry<string> pathOfValheimAzuriteVegetation;
+        private readonly ConfigEntry<string> pathOfValheimMerchantProtection, pathOfValheimTreasureProtection;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
 
         public FreshWorldConfig(ConfigFile config)
@@ -176,12 +184,21 @@ namespace FreshWorld.Configuration
                 "Protect pending EpicLoot bounty controllers, targets, and their adds. Each object's current zone is excluded from direct resets, even when SafeZones=0, and FreshWorld cannot delete the object. Neighboring terrain edits can still reach it. Abandoned bounty objects remain protected while their tags exist. Changes apply to the next run. EpicLoot is optional.",
                 140, ConfigPresentation.DrawToggle);
 
+            pathOfValheimMerchantProtection = Bind("Path of Valheiman", "MerchantProtection", "true",
+                "Protect PoV_Ragn, PoV_Sigrid and PoV_Wanderer and their current zones from FreshWorld resets, terrain restoration, and direct or recursive deletion, even when SafeZones=0. Only each merchant's own zone is protected. PoV still controls visits, movement and departure. Does not recreate missing merchants or their stock. Other protection rules still apply when disabled. Server-synced; changes apply to the next run.",
+                94, ConfigPresentation.DrawToggle);
+            pathOfValheimTreasureProtection = Bind("Path of Valheiman", "TreasureProtection", "true",
+                "Protect PoV treasure caches with a map ID while closed or dispensing loot, including saved caches in unloaded zones. Each cache's own zone and the cache itself are protected from FreshWorld resets, terrain restoration, and direct or recursive deletion, even when SafeZones=0. Observed protection lasts until the run ends; empty caches gain no protection on a later run. PoV still controls rewards and cleanup. Does not recreate missing caches. Server-synced; changes apply to the next run.",
+                93, ConfigPresentation.DrawToggle);
             pathOfValheimAltarProtection = Bind("Path of Valheiman", "AltarProtection", "true",
                 "Protect PT_WardenAltar and PT_PowerAltar and their own zones from FreshWorld resets, terrain restoration, and direct or recursive deletion, even when SafeZones=0. Does not recreate missing altars. Other protection rules still apply when disabled. Changes apply to the next run. Path of Valheiman is optional.",
                 200, ConfigPresentation.DrawToggle);
             pathOfValheimBlightProtection = Bind("Path of Valheiman", "BlightProtection", "true",
                 "Protect active Blight controllers, linked altars, monoliths, and wardens in their own zones, even when SafeZones=0. Ordinary mobs and azurite veins are not protected by this rule; PoV replenishes them. Observed protection lasts until the run ends. Closed events and orphan objects gain no protection on a later run. PoV still controls event completion and cleanup. Other protection rules still apply when disabled. Changes apply to the next run. Path of Valheiman is optional.",
                 100, ConfigPresentation.DrawToggle);
+            pathOfValheimDungeonProtection = Bind("Path of Valheiman", "DungeonProtection", "true",
+                "Protect PoV Halls entrance and session zones. Preserve saved dungeon controllers, linked objects, and sky interiors during all reset stages, even with SafeZones=0. Ground below sky interiors can reset; normal player, base, and tombstone protection still applies. PoV owns rewards, completion, and cleanup, including completed runs. Does not repair lost sessions or items. Changes apply to the next run. Path of Valheiman is optional.",
+                95, ConfigPresentation.DrawToggle);
             pathOfValheimAzuriteVegetation = Bind("Path of Valheiman", "AzuriteVegetation", "false",
                 "Use vegetation placement for natural PT_AzuriteVein on the host instead of PoV's initial world-wide placement and timed regeneration. Uses existing vegetation definitions, including disabled EWD entries, or adds defaults. Zones create new plain veins when generated again; for selected resource resets add PT_AzuriteVein to ResourceIds. Existing veins in or within 6m of a zone suppress its azurite placement. PoV promotion and Blight generation remain active. Existing veins are not moved or removed by enabling this option. PoV's original coordinates, respawn delay and 12m building avoidance are not reproduced. False restores PoV policy; on a world without its placement-complete key this can start native world-wide placement. Changes apply after current maintenance. Path of Valheiman is optional; EWD is not required.",
                 90, ConfigPresentation.DrawToggle);
@@ -236,7 +253,10 @@ namespace FreshWorld.Configuration
                 ReadPercentage(Value(automaticResetPercent)), ParseLocationRadii(Value(locationResetRadii)),
                 ReadBool(Value(pathOfValheimAltarProtection), "Path of Valheiman.AltarProtection"),
                 ReadBool(Value(pathOfValheimBlightProtection), "Path of Valheiman.BlightProtection"),
-                ParseResourceExcludedZones(Value(resourceExcludedZones)));
+                ReadBool(Value(pathOfValheimDungeonProtection), "Path of Valheiman.DungeonProtection"),
+                ParseResourceExcludedZones(Value(resourceExcludedZones)),
+                ReadBool(Value(pathOfValheimMerchantProtection), "Path of Valheiman.MerchantProtection"),
+                ReadBool(Value(pathOfValheimTreasureProtection), "Path of Valheiman.TreasureProtection"));
             return new RuntimeSettings(schedule, options,
                 ReadBool(Value(pathOfValheimAzuriteVegetation), "Path of Valheiman.AzuriteVegetation"));
         }

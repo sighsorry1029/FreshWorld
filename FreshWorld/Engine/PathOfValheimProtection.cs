@@ -9,6 +9,12 @@ internal sealed class PathOfValheimProtection
 {
     private static readonly int WardenAltar = "PT_WardenAltar".GetStableHashCode();
     private static readonly int PowerAltar = "PT_PowerAltar".GetStableHashCode();
+    private static readonly int Ragn = "PoV_Ragn".GetStableHashCode();
+    private static readonly int Sigrid = "PoV_Sigrid".GetStableHashCode();
+    private static readonly int Wanderer = "PoV_Wanderer".GetStableHashCode();
+    private static readonly int TreasureCache = "PoV_TreasureCache".GetStableHashCode();
+    private static readonly int TreasureId = "pt.tmap.cache".GetStableHashCode();
+    private static readonly int TreasureState = "pt.enc.state".GetStableHashCode();
     private static readonly int Controller = "PT_CorruptionZone".GetStableHashCode();
     private static readonly int BlightAltar = "PT_BlightAltar".GetStableHashCode();
     private static readonly int Monolith = "PT_RuneMonolith".GetStableHashCode();
@@ -21,27 +27,54 @@ internal sealed class PathOfValheimProtection
     private readonly HashSet<ZDOID> _protectedObjects = new();
     private readonly bool _protectAltars;
     private readonly bool _protectBlight;
+    private readonly bool _protectMerchants;
+    private readonly bool _protectTreasure;
+    private readonly PathOfValheimDungeons? _dungeons;
     private int _lastScanFrame = -1;
 
-    public PathOfValheimProtection(bool protectAltars = true, bool protectBlight = true)
-    { _protectAltars = protectAltars; _protectBlight = protectBlight; }
+    public PathOfValheimProtection(bool protectAltars = true, bool protectBlight = true, bool protectDungeons = true,
+        bool protectMerchants = true, bool protectTreasure = true)
+    {
+        _protectAltars = protectAltars; _protectBlight = protectBlight;
+        _protectMerchants = protectMerchants; _protectTreasure = protectTreasure;
+        if (protectDungeons) _dungeons = new PathOfValheimDungeons();
+    }
+
+    public bool IsRetainedDungeonObject(ZDO zdo) => _dungeons?.IsRetainedObject(zdo) == true;
+    public bool HasDungeons => _dungeons?.IsAvailable == true;
 
     // Index before classifying objectives: their ZDO enumeration order is unrelated to the controller.
     public void CaptureControllers()
     {
-        if (!_protectBlight) return;
+        if (!_protectBlight && _dungeons == null) return;
         _lastScanFrame = Time.frameCount;
         _controllers.Clear();
-        foreach (var zdo in GameWorld.AllZDOs()) RememberController(zdo);
+        var objects = GameWorld.AllZDOs();
+        _dungeons?.Capture(objects);
+        if (_protectBlight)
+            foreach (var zdo in objects) RememberController(zdo);
     }
 
-    public bool IsProtectedObject(ZDO zdo)
+    public bool IsProtectedObject(ZDO zdo) => IsProtectedObject(zdo, true);
+
+    public bool IsProtectedSnapshotObject(ZDO zdo) => IsProtectedObject(zdo, false);
+
+    private bool IsProtectedObject(ZDO zdo, bool refresh)
     {
         if (!zdo.IsValid()) return false;
+        if (_dungeons?.IsProtectedObject(zdo, refresh) == true) return true;
         var prefab = zdo.GetPrefab();
         if (_protectAltars && (prefab == WardenAltar || prefab == PowerAltar)) return true;
-        if (!_protectBlight) return false;
+        if (_protectMerchants && (prefab == Ragn || prefab == Sigrid || prefab == Wanderer)) return true;
         if (_protectedObjects.Contains(zdo.m_uid)) return true;
+        if (_protectTreasure && prefab == TreasureCache && !string.IsNullOrEmpty(zdo.GetString(TreasureId)))
+        {
+            // 2 means loot is still being dispensed, not finished. 3 is empty. Keep an observed
+            // cache until this run ends even if PoV finishes dispensing or clears its map ID.
+            var state = zdo.GetInt(TreasureState);
+            if (state == 0 || state == 2) return Retain(zdo, true);
+        }
+        if (!_protectBlight) return false;
         if (prefab == Controller)
         {
             RememberController(zdo);

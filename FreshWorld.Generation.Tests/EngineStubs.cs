@@ -212,7 +212,24 @@ namespace FreshWorld.Engine
         public static void PokeZone(Vector2s zone) => Pokes++;
         public static string DescribeZoneLoad(Vector2s zone) =>
             $"root={ZoneSystem.instance.Roots.ContainsKey(zone)}, loaded={ZoneSystem.instance.IsZoneLoaded(zone)}, loadingObjects=0";
-        public static void ReleaseZone(Vector2s zone) => Releases++;
+        public static void ReleaseZone(Vector2s zone, Func<ZDO, bool>? retainObject = null) => Releases++;
+        internal sealed class ZoneDeletionPlan
+        {
+            private readonly HashSet<Vector2s> zones;
+            private readonly Func<ZDO,bool>? retain, select;
+            private readonly ZDO[] extra;
+            private readonly AlwaysProtectedObjects? absolute;
+            public ZoneDeletionPlan(HashSet<Vector2s> zones, bool epic, bool bounty, AlwaysProtectedObjects? absolute,
+                Func<ZDO,bool>? retain = null, IEnumerable<ZDO>? extra = null, Func<ZDO,bool>? select = null)
+            { this.zones = zones; this.retain = retain; this.select = select; this.extra = (extra ?? []).ToArray(); this.absolute = absolute; }
+            public void Capture() { }
+            public void Validate() { }
+            public void Delete()
+            {
+                foreach(var zdo in zones.SelectMany(GetZDOs).Concat(extra).Distinct())
+                    if(retain?.Invoke(zdo) != true && (extra.Contains(zdo) || select?.Invoke(zdo) != false)) RemoveZDO(zdo,false,false,absolute);
+            }
+        }
         public static void RecalculateTerrain() => Recalculations++;
     }
     internal static class BaseProtection

@@ -18,18 +18,23 @@ internal class ResetZones : ZoneOperation
 
     protected override bool ExecuteZone(Vector2s zone)
     {
+        var surface = Args.ZoneGroups != null && Args.ZoneGroups.TryGetValue(zone, out var members) ? members : new HashSet<Vector2s> { zone };
+        var dungeon = Args.PrepareDungeonReset?.Invoke(surface);
         if (Args.ZoneGroups != null && Args.ZoneGroups.TryGetValue(zone, out var group))
         {
             // One synchronous mutation: no member can stream back between deletions.
             // Do not release any generation state until every sector's objects are cleared.
-            var plan = new GameWorld.ZoneDeletionPlan(group, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected);
+            var plan = new GameWorld.ZoneDeletionPlan(group, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected,
+                dungeon?.RetainObject ?? Args.RetainObject, dungeon?.AdditionalObjects);
             try
             {
                 plan.Capture();
+                dungeon?.Validate();
                 plan.Validate(); // Immediately before the first ownership/deletion/border mutation.
                 OnMutationStarting();
                 foreach (var sector in group) RecordBorders(sector);
                 plan.Delete();
+                dungeon?.Complete();
             }
             catch (Exception error)
             {
@@ -38,6 +43,23 @@ internal class ResetZones : ZoneOperation
             }
             foreach (var sector in group) ReleaseGeneration(sector);
             Log($"Location zone group at {zone}: {group.Count} sectors reset together.");
+            return true;
+        }
+        if (dungeon != null || Args.RetainObject != null)
+        {
+            var retain = dungeon?.RetainObject ?? Args.RetainObject;
+            if (Args.CanDeleteObject != null && GameWorld.GetZDOs(zone).Any(zdo => !Args.CanDeleteObject(zdo) && retain?.Invoke(zdo) != true))
+                throw new DungeonResetBlockedException($"Zone {zone} contains excluded objects; regeneration was skipped.");
+            var plan = new GameWorld.ZoneDeletionPlan(surface, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected,
+                retain, dungeon?.AdditionalObjects);
+            plan.Capture();
+            dungeon?.Validate();
+            plan.Validate();
+            OnMutationStarting();
+            RecordBorders(zone);
+            plan.Delete();
+            dungeon?.Complete();
+            ReleaseGeneration(zone);
             return true;
         }
         OnMutationStarting();

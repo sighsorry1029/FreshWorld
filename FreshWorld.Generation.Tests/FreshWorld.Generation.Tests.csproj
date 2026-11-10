@@ -7,6 +7,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../FreshWorld/Engine/DungeonResetPlan.cs" Link="Production/DungeonResetPlan.cs" />
     <Compile Include="../FreshWorld/Engine/ResetVegetation.cs" Link="ResetVegetation.cs" />
     <Compile Include="../FreshWorld/Engine/NativePlacement.cs" Link="NativePlacement.cs" />
     <Compile Include="../FreshWorld/Engine/RegenerateLocations.cs" Link="RegenerateLocations.cs" />

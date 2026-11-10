@@ -59,7 +59,9 @@ internal class RegenerateLocations : ZoneOperation
             ? planned : new LocationFootprint(zone, location);
         if (!footprint.Matches(location)) throw new InvalidOperationException("Location extent changed after planning: " + zone);
         var radius = footprint.Radius;
-        ClearLocationObjects(footprint, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected, Args.CanDeleteObject);
+        var dungeon = Args.PrepareDungeonReset?.Invoke(new HashSet<Vector2s> { zone });
+        ClearLocationObjects(footprint, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected, Args.CanDeleteObject,
+            dungeon, Args.RetainObject);
         var terrainRadius = Args.TerrainReset > 0 ? Args.TerrainReset : radius;
         if (terrainRadius > 0)
         {
@@ -89,7 +91,7 @@ internal class RegenerateLocations : ZoneOperation
     }
 
     private static void ClearLocationObjects(LocationFootprint footprint, bool protectEpicLoot, bool protectEpicLootBounties,
-        AlwaysProtectedObjects? alwaysProtected, Func<ZDO, bool>? canDelete)
+        AlwaysProtectedObjects? alwaysProtected, Func<ZDO, bool>? canDelete, DungeonResetPlan? dungeon, Func<ZDO, bool>? retain)
     {
         if (footprint.Radius <= 0) return;
         bool WithinScope(ZDO zdo)
@@ -97,6 +99,17 @@ internal class RegenerateLocations : ZoneOperation
             var prefab = zdo.GetPrefab();
             return prefab != ZoneControlHash && prefab != TerrainCompilerHash && footprint.Contains(zdo) &&
                 (canDelete == null || canDelete(zdo));
+        }
+        if (dungeon != null || retain != null)
+        {
+            var plan = new GameWorld.ZoneDeletionPlan(footprint.Zones, protectEpicLoot, protectEpicLootBounties, alwaysProtected,
+                dungeon?.RetainObject ?? retain, dungeon?.AdditionalObjects, WithinScope);
+            plan.Capture();
+            dungeon?.Validate();
+            plan.Validate();
+            plan.Delete();
+            dungeon?.Complete();
+            return;
         }
         // Neighbor sectors need not be generated: native location placement can put ZDOs there.
         // The predicate also constrains recursively connected Spawned objects.

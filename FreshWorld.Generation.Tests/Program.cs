@@ -6,6 +6,10 @@ using UnityEngine;
 
 var tests = new (string Name, Action Test)[]
 {
+    ("location plans finish extra sky deletion before native placement and retain foreign layers", LocationDungeonPlan),
+    ("incomplete dungeon cleanup prevents terrain and location regeneration", LocationDungeonFailure),
+    ("protected dungeon preflight is skipped without changing locations", LocationDungeonBlocked),
+    ("resource reset preserves retained dungeon objects with the same prefab", ResourceDungeonRetention),
     ("vegetation waits for loaded zone even when its root already exists", VegetationWaitsForLoad),
     ("locations wait for loaded zone even when its root already exists", LocationWaitsForLoad),
     ("location asset readiness is checked before object removal", LocationWaitsForAsset),
@@ -367,6 +371,60 @@ static void LocationClearScope()
     using var runner = Start(Locations(), errors, finishes); Drain(runner);
     Sequence(new[] { "nearby", "dungeon" }, GameWorld.Removed.Select(zdo => zdo.Name));
     Success(errors, finishes);
+}
+
+static void LocationDungeonPlan()
+{
+    var own = new ZDO("vanilla_dungeon", new(0,5000,0));
+    var pov = new ZDO("pov_content", new(0,4400,0));
+    var extra = new ZDO("oh_chest", new(128,2025,0));
+    var ground = new ZDO("player_chest", new(128,0,0));
+    GameWorld.Objects[Zone()] = new() { own, pov };
+    GameWorld.Objects[new(2,0)] = new() { extra, ground };
+    var completed = false;
+    var args = new OperationParameters
+    {
+        RetainObject = zdo => zdo == pov,
+        PrepareDungeonReset = _ => new(zdo => zdo == pov, new[] { extra }, () => {}, () =>
+        {
+            Equal(true,GameWorld.Removed.Contains(extra)); Equal(0,ZoneSystem.instance.LocationCalls);
+            Equal(0,TerrainResetter.Restored.Count); completed = true;
+        })
+    };
+    ZoneSystem.instance.LocationPlacement = (_,_) => Equal(true,completed);
+    var errors=new List<Exception>(); var finishes=new List<bool>();
+    using var runner=Start(new TrackedRegenerateLocations(_=>{},new(){"Hildir_cave"},args),errors,finishes);
+    Drain(runner); Success(errors,finishes);
+    Equal(true,GameWorld.Removed.Contains(own)); Equal(false,GameWorld.Removed.Contains(pov)); Equal(false,GameWorld.Removed.Contains(ground));
+    Equal(1,ZoneSystem.instance.LocationCalls);
+}
+static void LocationDungeonFailure()
+{
+    var args=new OperationParameters { PrepareDungeonReset=_=>new(_=>false,Array.Empty<ZDO>(),()=>{},()=>throw new InvalidOperationException("late interior residue")) };
+    var errors=new List<Exception>(); var finishes=new List<bool>();
+    using var runner=Start(new TrackedRegenerateLocations(_=>{},new(){"Hildir_cave"},args),errors,finishes);
+    Drain(runner);
+    Equal(1,errors.Count); Equal(0,ZoneSystem.instance.LocationCalls); Equal(0,TerrainResetter.Restored.Count);
+    Equal(true,ZoneSystem.instance.m_locationInstances[Zone()].m_placed);
+}
+static void LocationDungeonBlocked()
+{
+    var args=new OperationParameters { PrepareDungeonReset=_=>throw new DungeonResetBlockedException("protected interior") };
+    var errors=new List<Exception>(); var finishes=new List<bool>();
+    var operation=new TrackedRegenerateLocations(_=>{},new(){"Hildir_cave"},args);
+    using var runner=Start(operation,errors,finishes); Drain(runner); Success(errors,finishes);
+    Equal(1,operation.Result.SkippedZones.Count); Equal(0,operation.Result.ChangedZones.Count);
+    Equal(0,ZoneSystem.instance.LocationCalls); Equal(0,TerrainResetter.Restored.Count);
+}
+static void ResourceDungeonRetention()
+{
+    var sky=new ZDO("rock4_copper",new(0,4400,0)); var ground=new ZDO("rock4_copper",new());
+    GameWorld.Objects[Zone()]=new(){sky,ground};
+    var args=new OperationParameters { RetainObject=zdo=>zdo==sky };
+    var errors=new List<Exception>(); var finishes=new List<bool>();
+    using var runner=Start(new TrackedResetVegetation(_=>{},new(){"rock4_copper"},args),errors,finishes);
+    Drain(runner); Success(errors,finishes);
+    Equal(false,GameWorld.Removed.Contains(sky)); Equal(true,GameWorld.Removed.Contains(ground));
 }
 static void FootprintGeometry()
 {

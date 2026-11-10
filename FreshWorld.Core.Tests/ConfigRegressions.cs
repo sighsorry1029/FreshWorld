@@ -19,13 +19,13 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact twenty-four bindings in five sections and game-day defaults", () =>
+        Check("exact twenty-five bindings in five sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius",
                 "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.ResourceExcludedZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.PieceBlacklist",
-                "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.AzuriteVegetation" };
+                "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.DungeonProtection", "Path of Valheiman.MerchantProtection", "Path of Valheiman.TreasureProtection", "Path of Valheiman.AzuriteVegetation" };
             Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg does not match the expected keys");
             Assert(snapshot.Options.AutomaticResetPercent == 100, "default must preserve full reset scope");
             Assert(snapshot.Options.ResourceExcludedZones.Length == 0, "default must not exclude resource zones");
@@ -112,19 +112,27 @@ internal static class ConfigRegressions
                 "PoV objectives must be protected by default");
             foreach (var altar in new[] { true, false })
             foreach (var blight in new[] { true, false })
+            foreach (var dungeon in new[] { true, false })
+            foreach (var merchant in new[] { true, false })
+            foreach (var treasure in new[] { true, false })
             {
                 file.Set("Path of Valheiman", "AltarProtection", altar.ToString());
                 file.Set("Path of Valheiman", "BlightProtection", blight.ToString());
+                file.Set("Path of Valheiman", "DungeonProtection", dungeon.ToString());
+                file.Set("Path of Valheiman", "MerchantProtection", merchant.ToString());
+                file.Set("Path of Valheiman", "TreasureProtection", treasure.ToString());
                 var options = cfg.Capture().Options;
-                Assert(options.PathOfValheimAltarProtectionEnabled == altar && options.PathOfValheimBlightProtectionEnabled == blight,
+                Assert(options.PathOfValheimAltarProtectionEnabled == altar && options.PathOfValheimBlightProtectionEnabled == blight && options.PathOfValheimDungeonProtectionEnabled == dungeon &&
+                    options.PathOfValheimMerchantProtectionEnabled == merchant && options.PathOfValheimTreasureProtectionEnabled == treasure,
                     "PoV switches are coupled");
             }
-            foreach (var key in new[] { "AltarProtection", "BlightProtection" })
+            foreach (var key in new[] { "AltarProtection", "BlightProtection", "DungeonProtection", "MerchantProtection", "TreasureProtection" })
             {
                 file.Set("Path of Valheiman", key, "invalid"); Invalid(() => cfg.Capture());
                 file.Set("Path of Valheiman", key, "false");
             }
-            Assert(original.Options.PathOfValheimAltarProtectionEnabled && original.Options.PathOfValheimBlightProtectionEnabled && file.SaveCount == 0,
+            Assert(original.Options.PathOfValheimAltarProtectionEnabled && original.Options.PathOfValheimBlightProtectionEnabled && original.Options.PathOfValheimDungeonProtectionEnabled &&
+                original.Options.PathOfValheimMerchantProtectionEnabled && original.Options.PathOfValheimTreasureProtectionEnabled && file.SaveCount == 0,
                 "edits mutated the existing run or Capture wrote the cfg");
         });
         Check("PoV vegetation is opt-in and independent of reset switches", () =>

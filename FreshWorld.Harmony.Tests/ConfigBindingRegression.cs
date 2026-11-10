@@ -17,7 +17,7 @@ internal static class ConfigBindingRegression
         "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
         "Protection.ResourceSafeZones", "Protection.ResourceExcludedZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
         "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.AlwaysProtectedPrefabs",
-        "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.AzuriteVegetation"
+        "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.DungeonProtection", "Path of Valheiman.MerchantProtection", "Path of Valheiman.TreasureProtection", "Path of Valheiman.AzuriteVegetation"
     };
 
     internal static int Run()
@@ -27,7 +27,7 @@ internal static class ConfigBindingRegression
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 24 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all 25 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
@@ -37,6 +37,9 @@ internal static class ConfigBindingRegression
             ("EpicLoot.EpicLootBountyProtection", "maybe"),
             ("Path of Valheiman.AltarProtection", "maybe"),
             ("Path of Valheiman.BlightProtection", "maybe"),
+            ("Path of Valheiman.DungeonProtection", "maybe"),
+            ("Path of Valheiman.MerchantProtection", "maybe"),
+            ("Path of Valheiman.TreasureProtection", "maybe"),
             ("Path of Valheiman.AzuriteVegetation", "maybe"),
             ("General.Mode", "ManualOnly"),
             ("General.Mode", "1"),
@@ -126,9 +129,14 @@ internal static class ConfigBindingRegression
         values["EpicLoot.EpicLootBountyProtection"] = "true";
         values["Path of Valheiman.AltarProtection"] = "true";
         values["Path of Valheiman.BlightProtection"] = "false";
+        values["Path of Valheiman.MerchantProtection"] = "false";
+        values["Path of Valheiman.TreasureProtection"] = "false";
         fixture.Reload(values);
         AssertRawValues(fixture.File, values);
         var after = fixture.Settings.Capture();
+        Require(before.Options.PathOfValheimMerchantProtectionEnabled && before.Options.PathOfValheimTreasureProtectionEnabled &&
+            !after.Options.PathOfValheimMerchantProtectionEnabled && !after.Options.PathOfValheimTreasureProtectionEnabled,
+            "Merchant/treasure reload ignored changes or mutated the previous snapshot.");
         Require(before.Options.ResourceExcludedZones.Length == 2 &&
             after.Options.ResourceExcludedZones.SequenceEqual(new[] { ((short)-3, (short)5) }),
             "Resource exclusion reload changed an old snapshot or failed to capture the new value.");
@@ -178,7 +186,7 @@ internal static class ConfigBindingRegression
             var expectsDrawer = key == "General.Enabled" || key == "General.GameDayInterval" || key == "General.AutomaticResetPercent" ||
                 key == "Reset.Zones" || key == "Reset.Resources" || key == "Reset.Locations" ||
                 key == "Reset.ResourceTerrainRadius" || key == "EpicLoot.EpicLootProtection" ||
-                key == "EpicLoot.EpicLootBountyProtection" || key == "Path of Valheiman.AltarProtection" || key == "Path of Valheiman.BlightProtection" || key == "Path of Valheiman.AzuriteVegetation";
+                key == "EpicLoot.EpicLootBountyProtection" || key == "Path of Valheiman.AltarProtection" || key == "Path of Valheiman.BlightProtection" || key == "Path of Valheiman.DungeonProtection" || key == "Path of Valheiman.MerchantProtection" || key == "Path of Valheiman.TreasureProtection" || key == "Path of Valheiman.AzuriteVegetation";
             Require(expectsDrawer ? drawer is Action<ConfigEntryBase> : drawer == null,
                 key + " has an unexpected custom drawer contract.");
             if (IsChoiceKey(key)) AssertChoices(entry, choices, key);
@@ -346,6 +354,9 @@ internal static class ConfigBindingRegression
         ["EpicLoot.EpicLootBountyProtection"] = "false",
         ["Path of Valheiman.AltarProtection"] = "false",
         ["Path of Valheiman.BlightProtection"] = "true",
+        ["Path of Valheiman.DungeonProtection"] = "true",
+        ["Path of Valheiman.MerchantProtection"] = "true",
+        ["Path of Valheiman.TreasureProtection"] = "true",
         ["Path of Valheiman.AzuriteVegetation"] = "false",
     };
 

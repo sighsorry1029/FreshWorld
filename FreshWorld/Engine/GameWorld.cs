@@ -105,7 +105,7 @@ internal static class GameWorld
             throw new InvalidOperationException("A protected object remains in a location zone group; regeneration was not enabled.");
         if (plan != null && objects.Any(zdo => !plan.Matches(zdo)))
             throw new InvalidOperationException("An unplanned or changed object remains in a location zone group; regeneration was not enabled.");
-        var remaining = objects.Select(zdo => zdo.m_uid).Distinct().ToArray();
+        var remaining = objects.Where(zdo => plan?.IsRetained(zdo) != true).Select(zdo => zdo.m_uid).Distinct().ToArray();
         // Validate the complete snapshot before native callbacks can run or pool ZDO objects.
         if (remaining.Any(id => !pending.Contains(id) || (plan != null && !plan.Contains(id))))
             throw new InvalidOperationException("A location zone group still contains objects that were not scheduled for deletion; regeneration was not enabled.");
@@ -113,14 +113,17 @@ internal static class GameWorld
         {
             // A prior native callback may move or protect a later object in this snapshot.
             if (ObjectsById(manager).TryGetValue(id, out var current) && current.IsValid() &&
-                (!zones.Contains(ZoneSystem.GetZone(current.GetPosition())) ||
+                (!(plan?.InScope(current) ?? zones.Contains(ZoneSystem.GetZone(current.GetPosition()))) ||
                  (plan != null && !plan.Matches(current)) ||
+                  plan?.MustRetain(current) == true ||
                  IsDeletionProtected(current, protectEpicLoot, protectEpicLootBounties, alwaysProtected)))
                 throw new InvalidOperationException("An object changed during location zone group deletion; regeneration was not enabled.");
             HandleDestroyed(manager, id);
         }
-        if (zones.Any(zone => GetZDOs(zone).Count != 0 || HasPendingZoneLoad(zone)) || plan?.Remaining().Any() == true)
+        if (zones.Any(zone => GetZDOs(zone).Any(zdo => plan?.IsRetained(zdo) != true || !plan.Matches(zdo)) || HasPendingZoneLoad(zone)) ||
+            plan?.Remaining().Any(zdo => !plan.IsRetained(zdo) || !plan.Matches(zdo)) == true)
             throw new InvalidOperationException("Objects or pending loads appeared during location zone group deletion; regeneration was not enabled.");
+        plan?.ValidateRetained();
     }
 
     // Group-local snapshot only. No persistent cache, global scan, forced deletion or generation release.
@@ -133,12 +136,13 @@ internal static class GameWorld
             internal readonly int Prefab;
             internal readonly Vector3 Position;
             internal readonly bool PendingBefore;
+            internal readonly bool Retained;
             internal string DeletePath = "not-attempted";
-            internal Entry(ZDO zdo, HashSet<ZDOID> pending)
+            internal Entry(ZDO zdo, HashSet<ZDOID> pending, bool retained)
             {
                 Object = zdo; Id = zdo.m_uid; Prefab = zdo.GetPrefab(); Position = zdo.GetPosition();
                 Spawned = zdo.GetConnectionZDOID(ZDOExtraData.ConnectionType.Spawned);
-                PendingBefore = pending.Contains(Id);
+                PendingBefore = pending.Contains(Id); Retained = retained;
             }
             internal bool Matches(ZDO zdo) => ReferenceEquals(Object, zdo) && zdo.m_uid == Id &&
                 zdo.GetPrefab() == Prefab && zdo.GetPosition().Equals(Position) &&
@@ -149,31 +153,51 @@ internal static class GameWorld
         private readonly bool epicLoot, bounties;
         private readonly AlwaysProtectedObjects? absolute;
         private readonly Dictionary<ZDOID, Entry> entries = new();
+        private readonly Func<ZDO, bool>? retain;
+        private readonly HashSet<ZDO> additional;
+        private readonly Func<ZDO, bool>? selection;
         private readonly DateTime plannedUtc = DateTime.UtcNow;
         private DateTime executionUtc;
         internal string Stage { get; private set; } = "Plan";
-        internal ZoneDeletionPlan(HashSet<Vector2s> group, bool protectEpicLoot, bool protectBounties, AlwaysProtectedObjects? alwaysProtected)
-        { zones = new(group); epicLoot = protectEpicLoot; bounties = protectBounties; absolute = alwaysProtected; }
+        internal ZoneDeletionPlan(HashSet<Vector2s> group, bool protectEpicLoot, bool protectBounties, AlwaysProtectedObjects? alwaysProtected,
+            Func<ZDO, bool>? retainObject = null, IEnumerable<ZDO>? additionalObjects = null, Func<ZDO, bool>? selectObject = null)
+        { zones = new(group); epicLoot = protectEpicLoot; bounties = protectBounties; absolute = alwaysProtected;
+            retain = retainObject; additional = new(additionalObjects ?? Enumerable.Empty<ZDO>()); selection = selectObject; }
+
+        internal bool InScope(ZDO zdo) => additional.Contains(zdo) ||
+            (zones.Contains(ZoneSystem.GetZone(zdo.GetPosition())) && (selection == null || selection(zdo)));
 
         internal void Capture()
         {
             var pending = new HashSet<ZDOID>(PendingDestruction(ZDOMan.instance));
             foreach (var zone in zones)
                 foreach (var zdo in GetZDOs(zone)) Capture(zdo, pending);
+            foreach (var zdo in additional) Capture(zdo, pending);
             Validate();
         }
 
         private void Capture(ZDO zdo, HashSet<ZDOID> pending)
         {
-            if (!zdo.IsValid() || !zones.Contains(ZoneSystem.GetZone(zdo.GetPosition())) || entries.ContainsKey(zdo.m_uid)) return;
-            var entry = new Entry(zdo, pending);
+            if (!zdo.IsValid() || entries.ContainsKey(zdo.m_uid)) return;
+            // For a radius reset, ordinary objects outside the circle remain by definition.
+            var retained = !InScope(zdo) || retain?.Invoke(zdo) == true;
+            var entry = new Entry(zdo, pending, retained);
             entries.Add(entry.Id, entry);
             // Include linked objects even if a mod has omitted them from the sector index; cycles terminate by ID.
-            if (entry.Spawned != ZDOID.None && ObjectsById(ZDOMan.instance).TryGetValue(entry.Spawned, out var child)) Capture(child, pending);
+            if (entry.Spawned != ZDOID.None && ObjectsById(ZDOMan.instance).TryGetValue(entry.Spawned, out var child) && InScope(child)) Capture(child, pending);
         }
 
         internal bool Contains(ZDOID id) => entries.ContainsKey(id);
         internal bool Matches(ZDO zdo) => entries.TryGetValue(zdo.m_uid, out var entry) && entry.Matches(zdo);
+        internal bool MustRetain(ZDO zdo) => retain?.Invoke(zdo) == true;
+        internal bool IsRetained(ZDO zdo) => entries.TryGetValue(zdo.m_uid, out var entry) && entry.Retained && entry.Matches(zdo) &&
+            (!InScope(zdo) || retain?.Invoke(zdo) == true);
+        internal void ValidateRetained()
+        {
+            foreach (var entry in entries.Values)
+                if (entry.Retained && (!ObjectsById(ZDOMan.instance).TryGetValue(entry.Id, out var zdo) || !zdo.IsValid() || !IsRetained(zdo)))
+                    throw new InvalidOperationException("A retained dungeon object changed during reset; regeneration was not enabled.");
+        }
         internal IEnumerable<ZDO> Remaining()
         {
             foreach (var id in entries.Keys)
@@ -187,7 +211,7 @@ internal static class GameWorld
             var manager = ObjectsById(ZDOMan.instance);
             foreach (var entry in entries.Values)
                 if (!manager.TryGetValue(entry.Id, out var current) || !current.IsValid() || !entry.Matches(current) ||
-                    Protection(current) != "none")
+                    Protection(current) != "none" || (entry.Retained ? !IsRetained(current) : MustRetain(current)))
                     throw new InvalidOperationException("A location zone group object changed or is protected before deletion.");
             foreach (var zone in zones)
                 foreach (var zdo in GetZDOs(zone))
@@ -198,7 +222,7 @@ internal static class GameWorld
         {
             Stage = "Delete";
             executionUtc = DateTime.UtcNow;
-            bool WithinPlan(ZDO zdo) => zones.Contains(ZoneSystem.GetZone(zdo.GetPosition())) && Matches(zdo);
+            bool WithinPlan(ZDO zdo) => InScope(zdo) && Matches(zdo) && !IsRetained(zdo) && retain?.Invoke(zdo) != true;
             void Deleting(ZDO zdo, string path)
             {
                 if (!WithinPlan(zdo) || Protection(zdo) != "none")
@@ -207,8 +231,10 @@ internal static class GameWorld
             }
             foreach (var entry in entries.Values)
             {
+                if (entry.Retained) continue;
                 if (!ObjectsById(ZDOMan.instance).TryGetValue(entry.Id, out var current) || !current.IsValid()) continue;
                 if (!entry.Matches(current)) throw new InvalidOperationException("A planned object was replaced during location zone group deletion.");
+                if (retain?.Invoke(current) == true) throw new InvalidOperationException("A planned object became retained during reset; regeneration was not enabled.");
                 RemoveZDO(current, null, epicLoot, bounties, absolute, WithinPlan, Deleting);
             }
             Stage = "PostDelete";
@@ -400,12 +426,20 @@ internal static class GameWorld
         }
     }
 
-    public static void ReleaseZone(Vector2s zone)
+    public static void ReleaseZone(Vector2s zone, Func<ZDO, bool>? retainObject = null)
     {
         EnsureLoadWorld();
         if (!OwnedLoads.TryGetValue(zone, out var ownedRoot)) return;
         // Native streaming can replace a root before a deferred release is polled.
         if (!TryGetRoot(zone, out var root) || !ReferenceEquals(root, ownedRoot))
+        {
+            OwnedLoads.Remove(zone);
+            DeferredReleases.Remove(zone);
+            return;
+        }
+        // Give retained dungeon controllers back to native streaming, including pending roots.
+        // Do this before scheduling deferred cleanup, so no run-local predicate outlives its owner.
+        if (retainObject != null && (!ZoneSystem.instance.IsZoneLoaded(zone) || GetZDOs(zone).Any(retainObject)))
         {
             OwnedLoads.Remove(zone);
             DeferredReleases.Remove(zone);

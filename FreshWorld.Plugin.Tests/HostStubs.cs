@@ -167,7 +167,7 @@ namespace FreshWorld.Engine
         public static bool MutateBeforeYield, Fail;
         private readonly Action requireAuthority;
         public PathOfValheimRepair(Action requireAuthority, Action<string> log) { Created++; this.requireAuthority = requireAuthority; }
-        public string Summary => "PoV altar repair: restored=" + Mutations + ".";
+        public string Summary => "PoV repair: restored=" + Mutations + ".";
         public IEnumerator Run()
         {
             try

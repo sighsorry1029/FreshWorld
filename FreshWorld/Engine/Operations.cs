@@ -15,6 +15,8 @@ internal sealed class OperationParameters
     public bool ProtectEpicLootBounties { get; set; }
     public Func<Vector2s, bool>? CanResetTerrain { get; set; }
     public Func<ZDO, bool>? CanDeleteObject { get; set; }
+    public Func<ZDO, bool>? RetainObject { get; set; }
+    public Func<HashSet<Vector2s>, DungeonResetPlan>? PrepareDungeonReset { get; set; }
     public AlwaysProtectedObjects? AlwaysProtected { get; set; }
     public IReadOnlyDictionary<Vector2s, LocationFootprint>? LocationFootprints { get; set; }
     public IReadOnlyDictionary<Vector2s, HashSet<Vector2s>>? ZoneGroups { get; set; }

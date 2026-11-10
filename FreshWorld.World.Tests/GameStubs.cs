@@ -25,7 +25,10 @@ namespace PassiveTree
 public readonly record struct Vector2s(short x, short y) { public Vector2s(int x, int y) : this((short)x, (short)y) { } }
 public readonly record struct ZDOID(long Id)
 {
+    public ZDOID(long user, uint id) : this(id) { }
     public static ZDOID None => new(0);
+    public long UserID => 1;
+    public uint ID => (uint)Id;
 }
 public static class HashExtensions
 {
@@ -51,8 +54,10 @@ public class ZDO(long id, string prefab, Vector3 position)
     public enum ObjectType { Default, Prioritized }
     private int prefabHash = prefab.GetStableHashCode();
     public bool Persistent, Distant;
+    public uint DataRevision;
     public ObjectType Type;
-    public Quaternion Rotation;
+    public Quaternion Rotation = Quaternion.identity;
+    public Quaternion GetRotation() => Rotation;
     public void SetPrefab(int value) { prefabHash = value; Valid = true; }
     public void SetRotation(Quaternion value) { ZDOMan.instance.OnRotate?.Invoke(this); Rotation = value; }
     public ZDOID m_uid = new(id);
@@ -62,7 +67,11 @@ public class ZDO(long id, string prefab, Vector3 position)
     public ZDOID Spawned;
     public readonly Dictionary<int, string> Strings = new();
     public readonly Dictionary<int, int> Ints = new();
-    public int GetInt(int key) => Ints.GetValueOrDefault(key);
+    public int GetInt(int key, int fallback = 0) => Ints.GetValueOrDefault(key, fallback);
+    public void Set(int key, int value) { ZDOMan.instance.OnSet?.Invoke(this, key); Ints[key] = value; }
+    public void Set(int key, string value) { ZDOMan.instance.OnSet?.Invoke(this, key); Strings[key] = value; }
+    public readonly Dictionary<int, Vector3> Vectors = new();
+    public Vector3 GetVec3(int key, Vector3 fallback) => Vectors.GetValueOrDefault(key, fallback);
     public readonly Dictionary<int, bool> Bools = new();
     public readonly Dictionary<int, byte[]> Bytes = new();
     public string GetString(int key) => Strings.GetValueOrDefault(key, "");
@@ -79,6 +88,7 @@ public class ZDO(long id, string prefab, Vector3 position)
 public readonly record struct SimulationDistance(int NearSimulationDistance, int DistantSimulationDistance);
 public class ZDOMan
 {
+    public Action<ZDO, int>? OnSet;
     public static ZDOMan instance = new();
     private readonly Dictionary<ZDOID, ZDO> m_objectsByID = new();
     private readonly Dictionary<int, List<ZDO>> sectors = new();
@@ -97,10 +107,12 @@ public class ZDOMan
     public void SetDirtySector(ZDO zdo) => Dirtied.Add(zdo);
     public Action<ZDO>? AfterDestroy;
     public bool DeferDeletion;
+    public int SectorReads;
     private static int SectorToIndex(Vector2s zone) =>
         zone.x < -256 || zone.x >= 256 || zone.y < -256 || zone.y >= 256 ? 0 : (zone.y + 256) * 512 + zone.x + 256;
     public void FindSectorObjects(Vector2s zone, SimulationDistance distance, List<ZDO> objects)
     {
+        SectorReads++;
         if (distance != new SimulationDistance(0, 0)) throw new InvalidOperationException("Unexpected neighbor query.");
         var index = SectorToIndex(zone);
         if (sectors.TryGetValue(index, out var regular)) objects.AddRange(regular);
@@ -233,9 +245,18 @@ public class ZoneSystem
     private Dictionary<Vector2s, List<ZDO>> m_loadingObjectsInZones = new();
     private readonly HashSet<Vector2s> _loaded = new();
     public Dictionary<Vector2s, LocationInstance> m_locationInstances = new();
+    public List<ZoneLocation> m_locations = new();
+    public GameObject m_locationProxyPrefab = new() { name = "LocationProxy" };
     public int Pokes;
     public class ZoneLocation { public LocationPrefab m_prefab = new(); }
-    public class LocationPrefab { public string Name = "test-location"; }
+    public class LocationPrefab
+    {
+        public string Name = "test-location";
+        public bool IsValid = true, IsLoaded = true;
+        public GameObject Asset = new();
+        public void LoadAsync() { }
+        public void Release() { }
+    }
     public struct LocationInstance { public bool m_placed; public Vector3 m_position; public ZoneLocation? m_location; }
     public bool IsZoneLoaded(Vector2s zone) => m_zones.ContainsKey(zone) && _loaded.Contains(zone) &&
         !m_loadingObjectsInZones.ContainsKey(zone);
@@ -325,7 +346,17 @@ public class ZRoutedRpc
 namespace UnityEngine
 {
     public static class Time { public static int frameCount; public static float timeScale = 1; }
-    public readonly record struct Quaternion(float Yaw) { public static Quaternion Euler(float x, float y, float z) => new(y); }
+    public readonly record struct Quaternion(float x, float y, float z, float w)
+    {
+        public static Quaternion identity => new(0, 0, 0, 1);
+        private System.Numerics.Quaternion Native => new(x, y, z, w);
+        private static Quaternion From(System.Numerics.Quaternion q) => new(q.X, q.Y, q.Z, q.W);
+        public static Quaternion Euler(float x, float y, float z) => From(System.Numerics.Quaternion.CreateFromYawPitchRoll(y * MathF.PI / 180, x * MathF.PI / 180, z * MathF.PI / 180));
+        public static Quaternion Inverse(Quaternion q) => From(System.Numerics.Quaternion.Inverse(q.Native));
+        public static Quaternion operator *(Quaternion a, Quaternion b) => From(a.Native * b.Native);
+        public static Vector3 operator *(Quaternion q, Vector3 v)
+        { var p = System.Numerics.Vector3.Transform(new(v.x, v.y, v.z), q.Native); return new(p.X, p.Y, p.Z); }
+    }
     public enum LogType { Error, Assert, Warning, Log, Exception }
     public static class Application
     {
@@ -339,6 +370,18 @@ namespace UnityEngine
     {
         public float x, y, z;
         public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
+        public static Vector3 zero => new();
+        public float magnitude => MathF.Sqrt(x*x+y*y+z*z);
+        public static Vector3 operator +(Vector3 a, Vector3 b) => new(a.x+b.x,a.y+b.y,a.z+b.z);
+        public static Vector3 operator -(Vector3 a, Vector3 b) => new(a.x-b.x,a.y-b.y,a.z-b.z);
+    }
+    public struct Bounds
+    {
+        public Vector3 min, max;
+        public Bounds(Vector3 center, Vector3 size)
+        { min = center - new Vector3(size.x/2,size.y/2,size.z/2); max = center + new Vector3(size.x/2,size.y/2,size.z/2); }
+        public void Encapsulate(Vector3 p)
+        { min = new(Math.Min(min.x,p.x),Math.Min(min.y,p.y),Math.Min(min.z,p.z)); max = new(Math.Max(max.x,p.x),Math.Max(max.y,p.y),Math.Max(max.z,p.z)); }
     }
     public class Object
     {
@@ -363,6 +406,7 @@ namespace UnityEngine
         private readonly Dictionary<Type, object> components = new();
         public int ComponentQueries;
         public void AddComponent<T>(T component) where T : class => components[typeof(T)] = component;
+        public object? GetComponent(Type type) => components.GetValueOrDefault(type);
         public T? GetComponent<T>() where T : class
         {
             ComponentQueries++;
@@ -408,6 +452,8 @@ namespace FreshWorld.Engine
         public bool ProtectEpicLootBounties { get; set; }
         public Func<Vector2s, bool>? CanResetTerrain { get; set; }
         public Func<ZDO, bool>? CanDeleteObject { get; set; }
+        public Func<ZDO, bool>? RetainObject { get; set; }
+        public Func<HashSet<Vector2s>, DungeonResetPlan>? PrepareDungeonReset { get; set; }
         public IReadOnlyDictionary<Vector2s, HashSet<Vector2s>>? ZoneGroups { get; set; }
         public AlwaysProtectedObjects? AlwaysProtected { get; set; }
     }

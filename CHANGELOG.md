@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1
+
+- Added server-synced `DungeonProtection`, `MerchantProtection`, and `TreasureProtection` under `[Path of Valheiman]`, all enabled by default. Settings support host cfg hot reload and apply to the next run.
+- Preserved PoV Halls entrances, personal sessions, dungeon interiors, and pending rewards during resets. Ground below sky interiors can still reset when other protection rules allow it. PoV continues to control completion, rewards, and cleanup.
+- Protected Ragn, Sigrid, Wanderer, and closed or dispensing PoV treasure caches in their own zones, including saved objects in unloaded zones. Empty caches no longer reserve their zones on later runs.
+- Extended `freshworld pov` to restore missing Halls entrances with valid placement records while preserving their original identity, theme, variant, and level. Existing entrances and ambiguous records are skipped; personal sessions and rewards are never recreated.
+- Added Odin's Hollow support to clear saved multi-zone sky interiors when their registered entrance resets, without resetting the ground below neighboring sectors. Interiors remain protected when their entrance is retained. Unfinished deletion or uncertain dungeon data prevents unsafe regeneration.
+- Added regression checks for dungeon separation, object retention, repair races, configuration sync, and native cleanup. Updated the compatibility guide with repair limits and gameplay checks.
+
 ## 1.2.0
 
 - Allowed maintenance to continue in safe areas after a location prefab reaches its 30-second planning timeout. Every instance of that prefab is excluded with at least 3x3 zones of protection, expanded to cover larger known bounds and connected locations.

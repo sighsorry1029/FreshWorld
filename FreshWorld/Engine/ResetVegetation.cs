@@ -75,7 +75,9 @@ internal class ResetVegetation : ZoneOperation
         foreach (var zdo in GameWorld.GetZDOs(zone))
         {
             if (!hashes.Contains(zdo.GetPrefab())) continue;
-            GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected, Args.CanDeleteObject);
+            bool WithinScope(ZDO item) => Args.RetainObject?.Invoke(item) != true && (Args.CanDeleteObject == null || Args.CanDeleteObject(item));
+            if (!WithinScope(zdo)) continue;
+            GameWorld.RemoveZDO(zdo, Args.ProtectEpicLoot, Args.ProtectEpicLootBounties, Args.AlwaysProtected, WithinScope);
             _removed++;
         }
 

@@ -114,7 +114,7 @@ public static class Program
         Require(((Array)Call(versionType, null, "GetFailedServer", new ZRpc(new TestSocket("Steam_222")))!).Length == 0,
             "The server requires an unmodded peer to complete FreshWorld's version handshake.");
         Require((bool)syncType.GetProperty("IsLocked")!.GetValue(sync)!, "Administrator-only policy is not fixed.");
-        Require(file.Count == 24, "Integration did not register the expected config keys.");
+        Require(file.Count == 27, "Integration did not register the expected config keys.");
         var broadcast = AccessTools.Method(syncType, "Broadcast", new[] { typeof(long), typeof(ConfigEntryBase[]) });
         // Capture server sends without invoking Unity coroutines; run the real client-send prefix separately.
         harmony.Patch(broadcast, prefix: new HarmonyMethod(typeof(Program), nameof(RecordBroadcast)) { priority = Priority.Last });
@@ -135,6 +135,9 @@ public static class Program
         var bounty = file[new ConfigDefinition("EpicLoot", "EpicLootBountyProtection")];
         var povAltar = file[new ConfigDefinition("Path of Valheiman", "AltarProtection")];
         var povBlight = file[new ConfigDefinition("Path of Valheiman", "BlightProtection")];
+        var povDungeon = file[new ConfigDefinition("Path of Valheiman", "DungeonProtection")];
+        var povMerchant = file[new ConfigDefinition("Path of Valheiman", "MerchantProtection")];
+        var povTreasure = file[new ConfigDefinition("Path of Valheiman", "TreasureProtection")];
         var povVegetation = file[new ConfigDefinition("Path of Valheiman", "AzuriteVegetation")];
         Require(povVegetation.GetSerializedValue() == "false", "PoV vegetation must be opt-in.");
         Require(povAltar.GetSerializedValue() == "true" && povBlight.GetSerializedValue() == "true", "PoV defaults changed.");
@@ -246,12 +249,27 @@ public static class Program
             File.ReadAllText(file.ConfigFilePath).Contains("AltarProtection = false"), "Admin PoV edit was not saved independently.");
         ReceiveClient(peer.m_uid, Edit(povBlight, "false"));
         Require(povBlight.GetSerializedValue() == "false" && File.ReadAllText(file.ConfigFilePath).Contains("BlightProtection = false"), "Admin Blight edit was not saved.");
+        Require(povDungeon.GetSerializedValue() == "true", "Other PoV edits changed dungeon protection.");
+        ReceiveClient(peer.m_uid, Edit(povDungeon, "false"));
+        Require(povDungeon.GetSerializedValue() == "false" && File.ReadAllText(file.ConfigFilePath).Contains("DungeonProtection = false"), "Admin dungeon edit was not saved.");
+        ReceiveClient(peer.m_uid, Edit(povDungeon, "invalid"));
+        Require(povDungeon.GetSerializedValue() == "false", "Invalid dungeon protection edit was accepted.");
+        foreach (var option in new[] { povMerchant, povTreasure })
+        {
+            Require(option.GetSerializedValue() == "true", "Merchant/treasure defaults changed or another option edited them.");
+            ReceiveClient(peer.m_uid, Edit(option, "false"));
+            Require(option.GetSerializedValue() == "false" && File.ReadAllText(file.ConfigFilePath).Contains(option.Definition.Key + " = false"), "Admin protection edit was not saved.");
+            ReceiveClient(peer.m_uid, Edit(option, "invalid"));
+            Require(option.GetSerializedValue() == "false", "Invalid protection edit was accepted.");
+        }
         var disk = File.ReadAllText(file.ConfigFilePath).Replace("ZoneSafeZones = 2", "ZoneSafeZones = 1")
             .Replace("AlwaysProtectedPrefabs = Player_tombstone,custom_marker", "AlwaysProtectedPrefabs = ")
             .Replace("PieceBlacklist = fire_pit,woodwall", "PieceBlacklist = ")
             .Replace("EpicLootProtection = false", "EpicLootProtection = true")
             .Replace("EpicLootBountyProtection = true", "EpicLootBountyProtection = false")
-            .Replace("AltarProtection = false", "AltarProtection = true").Replace("BlightProtection = false", "BlightProtection = true");
+            .Replace("AltarProtection = false", "AltarProtection = true").Replace("BlightProtection = false", "BlightProtection = true")
+            .Replace("DungeonProtection = false", "DungeonProtection = true")
+            .Replace("MerchantProtection = false", "MerchantProtection = true").Replace("TreasureProtection = false", "TreasureProtection = true");
         File.WriteAllText(file.ConfigFilePath, disk);
         var oldBroadcasts = broadcasts;
         Call(adapterType, adapter, "ReloadFile");
@@ -261,6 +279,8 @@ public static class Program
         Require(epicLoot.GetSerializedValue() == "true", "Reload did not apply EpicLoot protection.");
         Require(bounty.GetSerializedValue() == "false", "Reload did not apply bounty protection.");
         Require(povAltar.GetSerializedValue() == "true" && povBlight.GetSerializedValue() == "true", "PoV file reload failed.");
+        Require(povDungeon.GetSerializedValue() == "true", "Dungeon protection file reload failed.");
+        Require(povMerchant.GetSerializedValue() == "true" && povTreasure.GetSerializedValue() == "true", "Merchant/treasure file reload failed.");
         Call(adapterType, adapter, "Publish", 0L);
         Require(broadcasts == oldBroadcasts + 1, "Validated file reload did not publish.");
 

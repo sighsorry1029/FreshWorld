@@ -17,7 +17,7 @@ public class Terminal
 public class Console : Terminal { public static Console instance = new(); }
 public class ZRpc { }
 public static class HashExtensions { public static int GetStableHashCode(this string value) => StringComparer.Ordinal.GetHashCode(value); }
-public readonly record struct ZDOID(long Id);
+public readonly record struct ZDOID(long Id) { public long UserID => 1; public uint ID => (uint)Id; }
 public class ZDO
 {
     private static long _nextId;
@@ -27,13 +27,16 @@ public class ZDO
     public bool IsBounty;
     private static readonly byte[] TreasurePayload = [1];
     public bool Valid = true;
+    public uint DataRevision;
     public Vector2s Zone;
     public bool IsValid() => Valid;
     public int GetPrefab() => Prefab.GetStableHashCode();
     public readonly Dictionary<int, string> Strings = new();
     public readonly Dictionary<int, int> Ints = new();
     public readonly Dictionary<int, bool> Bools = new();
-    public int GetInt(int key) => Ints.GetValueOrDefault(key);
+    public int GetInt(int key, int fallback = 0) => Ints.GetValueOrDefault(key, fallback);
+    public readonly Dictionary<int, UnityEngine.Vector3> Vectors = new();
+    public UnityEngine.Vector3 GetVec3(int key, UnityEngine.Vector3 fallback) => Vectors.GetValueOrDefault(key, fallback);
     public string GetString(int key) => Strings.TryGetValue(key, out var value) ? value :
         key == "BountyID".GetStableHashCode() && IsBounty && Prefab != "EL_SpawnController" ? "bounty" : "";
     public bool GetBool(int key) => Bools.GetValueOrDefault(key) || key == "isBounty".GetStableHashCode() && IsBounty;
@@ -275,6 +278,9 @@ namespace FreshWorld.Configuration
         public bool EpicLootBountyProtectionEnabled { get; set; }
         public bool PathOfValheimAltarProtectionEnabled { get; set; } = true;
         public bool PathOfValheimBlightProtectionEnabled { get; set; } = true;
+        public bool PathOfValheimDungeonProtectionEnabled { get; set; } = true;
+        public bool PathOfValheimMerchantProtectionEnabled { get; set; } = true;
+        public bool PathOfValheimTreasureProtectionEnabled { get; set; } = true;
         public int MaxZonesPerFrame { get; set; } = 1;
         public double FrameBudgetMilliseconds { get; set; } = 8;
         public float SaveTimeoutSeconds { get; set; } = 180;
@@ -337,7 +343,7 @@ namespace FreshWorld.Engine
             Pending.Add(zone);
             if (Fake.LoadOnPoke) ZoneSystem.instance.Loaded.Add(zone);
         }
-        public static void ReleaseZone(Vector2s zone)
+        public static void ReleaseZone(Vector2s zone, Func<ZDO, bool>? retainObject = null)
         {
             if (!Pending.Remove(zone)) return;
             ZoneSystem.instance.Loaded.Remove(zone);
@@ -454,5 +460,17 @@ namespace FreshWorld.Engine
             Fake.OnLocationPlaced?.Invoke(zone);
             return true;
         }
+    }
+}
+
+namespace FreshWorld.Engine
+{
+    internal sealed class OdinsHollowDungeons
+    {
+        public bool IsAvailable => false;
+        public System.Collections.IEnumerator Initialize(Action require) { yield break; }
+        public void Capture() { }
+        public bool IsRetainedObject(ZDO zdo) => false;
+        public DungeonResetPlan Prepare(HashSet<Vector2s> anchors, Func<Vector2s, bool> allow, Func<ZDO, bool> retain) => new(retain, Array.Empty<ZDO>(), () => {});
     }
 }

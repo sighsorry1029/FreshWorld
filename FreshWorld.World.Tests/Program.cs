@@ -8,8 +8,32 @@ using UnityEngine;
 
 var tests = new (string Name, Action Body)[]
 {
+    ("single-zone retention plans preserve existing deletion exclusions", DungeonScopeRegressions.SingleExclusion),
+    ("OH resets full sky contents without releasing neighboring ground", DungeonScopeRegressions.OhReset),
+    ("OH foreign interiors and outlying pack members survive ground resets", DungeonScopeRegressions.OhRetain),
+    ("OH rotated room corners do not own unrelated elevated objects", DungeonScopeRegressions.OhRotation),
+    ("OH protection and invalid metadata reject before mutations", DungeonScopeRegressions.OhBlocked),
+    ("OH new extra-sector residue prevents regeneration", DungeonScopeRegressions.OhResidue),
+    ("retention becoming active during destruction prevents later deletions", DungeonScopeRegressions.LateRetention),
+    ("retained dungeon objects cannot bypass player or absolute protection", DungeonScopeRegressions.StrongProtection),
+    ("retained scenes and pending loads return to normal streaming", DungeonScopeRegressions.Release),
+    ("PoV custom vertical layouts are rejected before world mutation", DungeonScopeRegressions.PovLayout),
+    ("PoV dungeon entrances and personal sessions survive without marker settings", PovDungeonRegressions.Entries),
+    ("PoV sky objects survive same-sector ground and vanilla sky deletion", PovDungeonRegressions.Footprints),
+    ("PoV map and legacy states preserve active progress and open rewards", PovDungeonRegressions.States),
+    ("PoV linked objects and completed controllers remain owned by PoV", PovDungeonRegressions.LinksAndLifetime),
+    ("PoV graves and same-frame relaunch retain objects without freezing ground", PovDungeonRegressions.RecoveryAndRelaunch),
+    ("PoV live registries see new and replaced same-frame controllers with bounded getter calls", PovDungeonRegressions.LateLiveRuns),
+    ("PoV unknown dungeon data stops before world mutation", PovDungeonRegressions.InvalidData),
+    ("PoV initial object classification reuses its snapshot without repeated terminal sector scans", PovDungeonRegressions.SnapshotCost),
     ("PoV altars are absolute objectives without Piece creator or configured entries", PovAltars),
     ("PoV protection switches are independent and explicit absolute entries still win", PovSwitches),
+    ("PoV merchants protect only their current sectors and native departure remains available", PovMerchants),
+    ("PoV treasure protection tracks dispensing and retains observations only for this run", PovTreasure),
+    ("PoV Halls repair preserves entrance identity metadata and existing sessions", PovGateRepair),
+    ("PoV Halls repair refuses incomplete duplicate conflicting or unplaced records", PovGateInvalid),
+    ("PoV Halls repair rechecks identity and metadata after saving and placement hooks", PovGateRaces),
+    ("PoV Halls metadata failure removes only the newly created entrance", PovGateFailure),
     ("PoV repair restores only missing records without loading zones and is repeatable", PovRepair),
     ("PoV repair skips rounded existing positions nearby altars overlapping and invalid records", PovRepairAmbiguity),
     ("PoV repair rejects missing contracts data or prefab before mutation", PovRepairUnavailable),
@@ -116,6 +140,8 @@ static void Reset()
     WorldGenerator.instance = new(); DungeonDB.instance = new();
     ZNet.m_loadError = false; ZNet.WorldSaveStarted = null; Application.Reset(); Time.timeScale = 1;
     BepInEx.Bootstrap.Chainloader.PluginInfos.Clear(); PassiveTree.WorldKeys.Records.Clear(); PassiveTree.WorldKeys.Synced = true;
+    PassiveTree.Encounters.HallMaps.HallMapRun.Runs.Clear(); PassiveTree.Encounters.HallMaps.HallMapRun.Reads = 0;
+    PassiveTree.Encounters.Halls.HallsRun.Runs.Clear();
     UnityEngine.Object.ResetDestroyCallbacks();
     BaseProtection.Configure([], []);
 }
@@ -1129,11 +1155,53 @@ static void PovSwitches()
     }
 }
 
+static void PovMerchants()
+{
+    var policy = new PathOfValheimProtection(false, false, false, true, false);
+    var absolute = new AlwaysProtectedObjects([], policy.IsProtectedObject);
+    var id = 1;
+    foreach (var name in new[] { "PoV_Ragn", "PoV_Sigrid", "PoV_Wanderer" })
+    {
+        var merchant = PovObject(id, name, id * 2);
+        True(!absolute.CanResetZone(new(id * 2, 0))); True(absolute.CanResetZone(new(id * 2 + 1, 0)));
+        GameWorld.RemoveZDO(merchant, false, false, absolute); True(merchant.Valid && merchant.Owner == 0);
+        True(!new PathOfValheimProtection(false, false, false, false, false).IsProtectedObject(merchant));
+        ZDOMan.instance.DestroyZDO(merchant); True(!merchant.Valid); id++;
+    }
+}
+
+static void PovTreasure()
+{
+    var id = 1;
+    foreach (var state in new[] { -1, 0, 2, 3, 4 })
+    foreach (var hasId in new[] { false, true })
+    foreach (var prefab in new[] { "PoV_TreasureCache", "ordinary_chest" })
+    {
+        var cache = PovObject(id++, prefab, id, hasId ? "map-id" : "", "pt.tmap.cache");
+        cache.Ints["pt.enc.state".GetStableHashCode()] = state;
+        var policy = new PathOfValheimProtection(false, false, false, false, true);
+        Equal(prefab == "PoV_TreasureCache" && hasId && (state == 0 || state == 2), policy.IsProtectedObject(cache));
+    }
+    var pending = PovObject(100, "PoV_TreasureCache", 100, "map", "pt.tmap.cache"); // Missing state = closed.
+    var current = new PathOfValheimProtection(false, false, false, false, true);
+    var absolute = new AlwaysProtectedObjects([], current.IsProtectedObject);
+    True(!absolute.CanResetZone(new(100, 0))); True(absolute.CanResetZone(new(101, 0)));
+    pending.Ints["pt.enc.state".GetStableHashCode()] = 2;
+    True(current.IsProtectedObject(pending));
+    pending.Ints["pt.enc.state".GetStableHashCode()] = 3;
+    pending.Strings.Clear();
+    var parent = PovObject(101, "parent", 101); parent.Spawned = pending.m_uid;
+    GameWorld.RemoveZDO(parent, false, false, absolute);
+    True(pending.Valid && !parent.Valid && pending.Owner == 0); True(!absolute.CanResetZone(new(100, 0)));
+    True(!new PathOfValheimProtection(false, false, false, false, true).IsProtectedObject(pending));
+    ZDOMan.instance.DestroyZDO(pending); True(!pending.Valid);
+}
+
 static void PreparePov(params string[] records)
 {
     BepInEx.Bootstrap.Chainloader.PluginInfos["treextr.pathofvalheiman"] = new();
     PassiveTree.WorldKeys.Records.AddRange(records);
-    foreach (var name in new[] { "PT_WardenAltar", "PT_PowerAltar" })
+    foreach (var name in new[] { "PT_WardenAltar", "PT_PowerAltar", "PoV_HallsGate" })
     {
         var prefab = new GameObject(); prefab.AddComponent(new ZNetView(new ZDO(0, name, new())));
         ZNetScene.instance.RegisterPrefab(name, prefab);
@@ -1177,6 +1245,82 @@ static void PovRepair()
     True(repair!.Summary.Contains("restored=2")); True(before.SequenceEqual(PassiveTree.WorldKeys.Records));
     (repair, error) = RepairPov(); True(error == null); True(repair!.Summary.Contains("existing=2"));
     Equal(2, ZDOMan.instance.Created.Count); Equal(1, ZNet.instance.SaveCalls); // No-op does not save.
+}
+
+static void PovGateRepair()
+{
+    PreparePov("pov_hallssites -10_3_8_2.20_0_512_1.30_0_32_0", "pov_hallsgate_m10_3 -520_210_75",
+        "pov_hallsgate_20_0 1280_0_90", "pov_hallsgate_30_0 1920_0_110");
+    var session = PovObject(1, "PoV_HallMapSession", 10); session.Strings[123] = "personal-progress-and-rewards";
+    var moved = PovObject(2, "PoV_HallsGate", 300); moved.Strings["h.gsite".GetStableHashCode()] = "20_0";
+    var worldKeys = PassiveTree.WorldKeys.Records.ToArray();
+    var (repair, error) = RepairPov(); if (error != null) throw error;
+    Equal(2, ZDOMan.instance.Created.Count); Equal(1, ZNet.instance.SaveCalls); Equal(0, ZoneSystem.instance.Pokes);
+    var gate = ZDOMan.instance.Created.Single(z => z.GetString("h.gsite".GetStableHashCode()) == "-10_3");
+    Equal(-520f, gate.GetPosition().x); Equal(210f, gate.GetPosition().z); Equal(77f, gate.GetPosition().y);
+    Equal(1, gate.GetInt("h.gtheme".GetStableHashCode())); Equal(1, gate.GetInt("h.gvar".GetStableHashCode()));
+    Equal(75, gate.GetInt("pt.enc.lvl".GetStableHashCode()));
+    True(gate.Persistent && !gate.Distant); True(session.Valid && session.Owner == 0);
+    Equal("personal-progress-and-rewards", session.Strings[123]); True(worldKeys.SequenceEqual(PassiveTree.WorldKeys.Records));
+    True(repair!.Summary.Contains("restored=2, existing=1"));
+    (repair, error) = RepairPov(); if (error != null) throw error;
+    True(repair!.Summary.Contains("restored=0, existing=3")); Equal(1, ZNet.instance.SaveCalls);
+}
+
+static void PovGateInvalid()
+{
+    var cases = new[] {
+        new[] { "pov_hallssites 10_0_8_0" }, // No placement: never use the site center.
+        new[] { "pov_hallsgate_10_0 640_0_10" }, // No site/theme.
+        new[] { "pov_hallssites 10_0_999_0", "pov_hallsgate_10_0 640_0_10" },
+        new[] { "pov_hallssites 10_0_8_3", "pov_hallsgate_10_0 640_0_10" },
+        new[] { "pov_hallssites 10_0_8_0.10_0_2_1", "pov_hallsgate_10_0 640_0_10" },
+        new[] { "pov_hallssites 10_0_8_0.10_0_8_99", "pov_hallsgate_10_0 640_0_10" },
+        new[] { "pov_hallssites 10_0_8_0.10_0_8_0_extra", "pov_hallsgate_10_0 640_0_10" },
+        new[] { "pov_hallssites -10_0_8_0", "pov_hallsgate_-10_0 -640_0_10" },
+        new[] { "pov_hallssites 10_0_8_0", "pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 640_0_10" },
+        new[] { "pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 640_0_10", "pov_hallsgate_10_0 640_0_20" },
+        new[] { "pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 NaN_0_10" },
+        new[] { "pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 640_0_0" },
+        new[] { "pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 2147483647_0_10" },
+        new[] { "pov_hallssites 10_0_8_0", "pov_hallsgate_t10_0_123 640_0_10" },
+        new[] { "pov_hallsgate_10_0 640_0_10_extra" }
+    };
+    foreach (var records in cases)
+    {
+        Reset(); PreparePov(records); True(RepairPov().Error == null);
+        Equal(0, ZNet.instance.SaveCalls); Equal(0, ZDOMan.instance.Created.Count);
+    }
+    Reset(); PreparePov("pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 640_0_10");
+    PovObject(1, "PoV_HallsGate", 10); // Unknown identity at exact position is ambiguous, never adopted.
+    True(RepairPov().Repair!.Summary.Contains("skipped=1")); Equal(0, ZDOMan.instance.Created.Count);
+}
+
+static void PovGateRaces()
+{
+    foreach (var heightHook in new[] { false, true })
+    for (var change = 0; change < 4; change++)
+    {
+        Reset(); PreparePov("pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 640_0_10");
+        Action mutate = () => {
+            if (change == 0) PassiveTree.WorldKeys.Records.Clear();
+            else if (change == 1) PassiveTree.WorldKeys.Records[1] = "pov_hallsgate_10_0 640_0_20";
+            else if (change == 2) PassiveTree.WorldKeys.Records[0] = "pov_hallssites 10_0_2_0";
+            else PovObject(1, "PoV_HallsGate", 300).Strings["h.gsite".GetStableHashCode()] = "10_0";
+        };
+        if (heightHook) WorldGenerator.instance.OnHeight = mutate; else ZNet.instance.OnSave = mutate;
+        True(RepairPov().Error == null); Equal(0, ZDOMan.instance.Created.Count);
+    }
+}
+
+static void PovGateFailure()
+{
+    PreparePov("pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 640_0_10");
+    var session = PovObject(1, "PoV_HallMapSession", 10);
+    ZDOMan.instance.OnSet = (_, key) => { if (key == "h.gtheme".GetStableHashCode()) throw new Exception("injected gate metadata failure"); };
+    True(RepairPov().Error != null); Equal(1, ZDOMan.instance.Created.Count);
+    True(ZDOMan.instance.Destroyed.SequenceEqual(ZDOMan.instance.Created)); True(session.Valid && session.Owner == 0);
+    Equal(0, ZDOMan.instance.Dirtied.Count);
 }
 
 static void PovRepairAmbiguity()

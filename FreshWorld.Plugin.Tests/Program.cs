@@ -930,7 +930,7 @@ internal static class Program
         Equal(0, MaintenancePipeline.Created.Count, "repair started a reset");
         True(ReferenceEquals(scheduler, f.Scheduler) && scheduler!.Attempts.Count == 0 && scheduler.PendingRun == null, "repair consumed history");
         True(MaintenanceGate.IsAvailable && !f.GetField<bool>("activePovRepair"), "repair retained lease");
-        HasReply(f.Request, "Completed. PoV altar repair");
+        HasReply(f.Request, "Completed. PoV repair");
         f.Net.Seconds = 24 * EnvMan.instance.m_dayLengthSec; Time.realtimeSinceStartup = 1; f.Tick();
         Equal(1, MaintenancePipeline.Created.Count, "repair moved original reset deadline");
     }
@@ -982,7 +982,7 @@ internal static class Program
     {
         using var f = new Fixture(); PathOfValheimRepair.HoldFrames = 2;
         f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request);
-        f.Plugin.HandleCommand(FreshWorldCommandAction.Status, f.Request); HasReply(f.Request, "Running PoV altar repair");
+        f.Plugin.HandleCommand(FreshWorldCommandAction.Status, f.Request); HasReply(f.Request, "Running PoV repair");
         f.Plugin.HandleCommand(FreshWorldCommandAction.Pov, f.Request); f.Run();
         Equal(1, PathOfValheimRepair.Created, "duplicate repair admitted"); Equal(0, MaintenancePipeline.Created.Count, "reset overlapped repair");
         var before = f.GetField<FreshWorld.Configuration.RuntimeSettings>("settings");

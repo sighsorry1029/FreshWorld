@@ -44,10 +44,11 @@ internal sealed class OperationTracker
     private readonly ZoneSystem _worldZones;
     private readonly long _worldUid;
     private readonly int _loadTimeoutMilliseconds;
+    private readonly Func<ZDO, bool>? _retainObject;
     public OperationResult Result { get; } = new();
 
     public OperationTracker(Func<Vector2s, bool>? canProcess, int maxZonesPerFrame, double frameBudgetMilliseconds,
-        Action<string>? warn = null, int loadTimeoutMilliseconds = DefaultLoadTimeoutMilliseconds)
+        Action<string>? warn = null, int loadTimeoutMilliseconds = DefaultLoadTimeoutMilliseconds, Func<ZDO, bool>? retainObject = null)
     {
         if (maxZonesPerFrame < 1) throw new ArgumentOutOfRangeException(nameof(maxZonesPerFrame));
         if (frameBudgetMilliseconds <= 0 || double.IsNaN(frameBudgetMilliseconds) || double.IsInfinity(frameBudgetMilliseconds))
@@ -58,6 +59,7 @@ internal sealed class OperationTracker
         _maxZonesPerFrame = maxZonesPerFrame;
         _frameBudgetMilliseconds = frameBudgetMilliseconds;
         _loadTimeoutMilliseconds = loadTimeoutMilliseconds;
+        _retainObject = retainObject;
         _worldNet = ZNet.instance;
         _worldZones = ZoneSystem.instance;
         _worldUid = _worldNet.GetWorldUID();
@@ -98,6 +100,12 @@ internal sealed class OperationTracker
     {
         Result.SkippedZones.Add(zone);
         Release(zone);
+    }
+
+    public void SkipDungeon(Vector2s zone, DungeonResetBlockedException reason)
+    {
+        _warn?.Invoke(reason.Message);
+        Skip(zone);
     }
 
     // Called immediately before an generation operation may poke this zone, never for a zone already loaded.
@@ -174,7 +182,7 @@ internal sealed class OperationTracker
     {
         if (!_pendingLoads.Remove(zone)) return;
         if (IsSameWorld && ZNetScene.instance != null && ZDOMan.instance != null)
-            GameWorld.ReleaseZone(zone);
+            GameWorld.ReleaseZone(zone, _retainObject);
     }
 
     public void Cleanup()
@@ -201,7 +209,7 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
         int maxZonesPerFrame = 64,
         double frameBudgetMilliseconds = 8, Action<string>? warn = null) : base(log, args, candidates)
     {
-        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn);
+        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn, retainObject: args.RetainObject);
     }
 
     protected override string OnInit()
@@ -220,7 +228,9 @@ internal sealed class TrackedResetZones : ResetZones, ITrackedOperation
             _tracker.Skip(zone);
             return true;
         }
-        var success = base.ExecuteZone(zone);
+        bool success;
+        try { success = base.ExecuteZone(zone); }
+        catch (DungeonResetBlockedException reason) { _tracker.SkipDungeon(zone, reason); return true; }
         if (success)
         {
             if (Args.ZoneGroups != null && Args.ZoneGroups.TryGetValue(zone, out var group))
@@ -269,7 +279,7 @@ internal sealed class TrackedResetVegetation : ResetVegetation, ITrackedOperatio
         int maxZonesPerFrame = 64,
         double frameBudgetMilliseconds = 8, Action<string>? warn = null) : base(log, RequireIds(ids), args, candidates)
     {
-        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn);
+        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn, retainObject: args.RetainObject);
     }
 
     private static HashSet<string> RequireIds(HashSet<string> ids)
@@ -347,7 +357,7 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         double frameBudgetMilliseconds = 8, Action<string>? warn = null) : base(log, RequireIds(ids), args, candidates)
     {
         _ids = new HashSet<string>(ids);
-        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn);
+        _tracker = new OperationTracker(canProcess, maxZonesPerFrame, frameBudgetMilliseconds, warn, retainObject: args.RetainObject);
     }
 
     private static HashSet<string> RequireIds(HashSet<string> ids)
@@ -393,6 +403,11 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         try
         {
             return base.ExecuteZone(zone);
+        }
+        catch (DungeonResetBlockedException reason)
+        {
+            _tracker.SkipDungeon(zone, reason);
+            return true;
         }
         catch (Exception error)
         {

@@ -21,7 +21,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.2.0";
+        public const string ModVersion = "1.2.1";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -344,7 +344,7 @@ namespace FreshWorld
                     return;
                 }
                 if (runner != null || activeRunId != null)
-                { context.Reply("Maintenance is already running: " + (activePovRepair ? "PoV altar repair" : activeRunId) + ". " + progress); return; }
+                { context.Reply("Maintenance is already running: " + (activePovRepair ? "PoV repair" : activeRunId) + ". " + progress); return; }
                 if (MaintenanceCoordination.HasExternalLease)
                 { context.Reply("Another mod holds the maintenance lease. Try again after it finishes."); return; }
                 if (pendingManual != null)
@@ -386,13 +386,13 @@ namespace FreshWorld
             // This operation has no scheduled run ID and must not consume the reset schedule.
             if (runner != null || activeRunId != null || pendingManual != null || scheduler?.PendingRun != null ||
                 !MaintenanceGate.IsAvailable || GameWorld.HasPendingMaintenanceCleanup)
-            { context.Reply("PoV altar repair is unavailable while maintenance is running, pending, or cleaning up."); return; }
+            { context.Reply("PoV repair is unavailable while maintenance is running, pending, or cleaning up."); return; }
             AttachHost(context.Network);
             if (sessionFaulted || settings == null)
-            { context.Reply("PoV altar repair is unavailable: maintenance is faulted or the host cfg is invalid."); return; }
+            { context.Reply("PoV repair is unavailable: maintenance is faulted or the host cfg is invalid."); return; }
             if (Time.realtimeSinceStartup - attachedAt < settings.StartupDelaySeconds ||
                 Time.timeScale <= 0f || context.Network.IsSaving())
-            { context.Reply("PoV altar repair is unavailable during startup, pause, or a world save; try again afterward."); return; }
+            { context.Reply("PoV repair is unavailable during startup, pause, or a world save; try again afterward."); return; }
             if (EmptyChunkSaveCompatibility.Check() == EmptyChunkSaveCompatibility.Strategy.Unsupported)
             { DrainDisabledMaintenance(); context.Reply(DisabledStatus()); return; }
 
@@ -415,10 +415,10 @@ namespace FreshWorld
                     message => { progress = message; Logger.LogInfo(message); context.Reply(message); });
                 backendLease = AcquireMaintenanceLease();
                 activePovRepair = true;
-                progress = "Checking recorded PoV altars.";
+                progress = "Checking recorded PoV altars and Halls entrances.";
                 Exception? failure = null;
                 runner = new GuardedCoroutine(repair.Run(), CanContinue,
-                    error => { failure = error; Logger.LogError("PoV altar repair failed: " + error); },
+                    error => { failure = error; Logger.LogError("PoV repair failed: " + error); },
                     success =>
                     {
                         try
@@ -434,14 +434,14 @@ namespace FreshWorld
                             backendLease?.Dispose(); backendLease = null; activePovRepair = false;
                         }
                     });
-                context.Reply("Starting PoV altar repair. Only missing Warden and Power altars with recorded coordinates will be restored.");
+                context.Reply("Starting PoV repair. Only missing Warden/Power altars and Halls entrances with valid placement records will be restored.");
             }
             catch (Exception error)
             {
                 runner?.Dispose(); runner = null;
                 backendLease?.Dispose(); backendLease = null; activePovRepair = false;
-                Logger.LogWarning("PoV altar repair could not start: " + error);
-                context.Reply("PoV altar repair could not start: " + error.Message);
+                Logger.LogWarning("PoV repair could not start: " + error);
+                context.Reply("PoV repair could not start: " + error.Message);
             }
         }
 
@@ -449,7 +449,7 @@ namespace FreshWorld
         {
             if (EmptyChunkSaveCompatibility.DisabledReason != null) return DisabledStatus();
             if (sessionFaulted) return "Maintenance is faulted for this world session. " + progress;
-            if (runner != null) return "Running " + (activePovRepair ? "PoV altar repair" : activeRunId) + ": " + progress;
+            if (runner != null) return "Running " + (activePovRepair ? "PoV repair" : activeRunId) + ": " + progress;
             if (MaintenanceCoordination.HasExternalLease)
                 return "Another mod holds the maintenance lease. Automatic resets and configuration application are waiting for its completion or verified cleanup.";
             if (pendingManual != null) return "Pending " + pendingManual.Run.Id + ": " + (pendingManual.LastWait ?? "waiting to start");

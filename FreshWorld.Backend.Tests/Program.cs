@@ -5,6 +5,9 @@ using FreshWorld.Engine;
 
 var tests = new (string Name, Action Body)[]
 {
+    ("PoV dungeon retention reaches all stages while allowing ground terrain resets", PovDungeonStages),
+    ("PoV merchant-only and treasure-only options reach all reset stages", PovMerchantTreasureStages),
+    ("PoV malformed dungeon records fail before the first reset mutation", PovDungeonInvalid),
     ("PoV objectives override empty absolute lists and SafeZones zero across all reset stages", PovStages),
     ("PoV snapshot follows saving and late linked objectives stop loading retries", PovArrival),
     ("orphan Blight links share one controller scan per frame and detect a later event", PovIndexCost),
@@ -2208,6 +2211,45 @@ static void PovStages()
     }
 }
 
+static void PovDungeonStages()
+{
+    foreach (var zoneReset in new[] { true, false })
+    foreach (var enabled in new[] { true, false })
+    {
+        Fake.Reset();
+        foreach (var zone in new[] { 0, 3, 20, 30 }) Fake.AddZone(zone, marker: !zoneReset);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        var root = AddPov("PoV_HallMapRun", 20);
+        root.Ints["hm.v".GetStableHashCode()] = 1; root.Ints["hm.status".GetStableHashCode()] = 3;
+        root.Vectors["hm.slot".GetStableHashCode()] = new(0, 4400, 0);
+        root.Strings["hm.run".GetStableHashCode()] = "map";
+        var options = new RunOptions { ZonesEnabled = zoneReset, ZoneSafeZones = 0, VegetationSafeZones = 0,
+            LocationSafeZones = 0, AlwaysProtectedPrefabs = [], EpicLootProtectionEnabled = false,
+            PathOfValheimAltarProtectionEnabled = false, PathOfValheimBlightProtectionEnabled = false,
+            PathOfValheimDungeonProtectionEnabled = enabled };
+        True(Run(options).Success);
+        foreach (var zone in new[] { 0, 3, 20 })
+            True(Fake.Calls.Any(call => call.EndsWith("change:" + zone)));
+        True(Fake.Calls.Any(call => call.EndsWith("change:30")));
+        foreach (var args in Fake.Arguments.Values)
+        {
+            True(args.CanResetTerrain!(new(3, 0)));
+            True(args.CanResetTerrain!(new(30, 0)));
+            True(!args.AlwaysProtected!.IsProtectedObject(root)); Equal(enabled, args.RetainObject?.Invoke(root) == true);
+        }
+    }
+}
+
+static void PovDungeonInvalid()
+{
+    Fake.AddZone(0); Fake.AddZone(20);
+    AddPov("PoV_HallMapRun", 20); // Prefab present, no valid slot/schema yet.
+    var result = Run(new() { AlwaysProtectedPrefabs = [] });
+    True(!result.Success);
+    True(!Fake.Calls.Any(call => call.Contains("change:")));
+    True(result.Errors.Any(error => error.ToString().Contains("PoV_HallMapRun")));
+}
+
 static void PovIndexCost()
 {
     for (var i = 0; i < 500; i++) AddPov("PT_RuneMonolith", i, "orphan-" + i);
@@ -2224,6 +2266,26 @@ static void PovIndexCost()
     Equal(before + 3, GameWorld.AllSnapshotCount);
 }
 
+static void PovMerchantTreasureStages()
+{
+    foreach (var treasure in new[] { false, true })
+    foreach (var enabled in new[] { false, true })
+    for (var stage = 0; stage < 3; stage++)
+    {
+        Fake.Reset(); Fake.AddZone(0); Fake.AddZone(1);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        if (treasure) AddPov("PoV_TreasureCache", 0, "map", "pt.tmap.cache"); else AddPov("PoV_Ragn", 0);
+        var options = new RunOptions { ZonesEnabled = stage == 0, VegetationEnabled = stage == 1, LocationsEnabled = stage == 2,
+            ZoneSafeZones = 1, VegetationSafeZones = 0, LocationSafeZones = 0, AlwaysProtectedPrefabs = [],
+            PathOfValheimAltarProtectionEnabled = false, PathOfValheimBlightProtectionEnabled = false,
+            PathOfValheimDungeonProtectionEnabled = false, PathOfValheimMerchantProtectionEnabled = !treasure && enabled,
+            PathOfValheimTreasureProtectionEnabled = treasure && enabled };
+        True(Run(options).Success);
+        var kind = stage == 0 ? "zones" : stage == 1 ? "vegetation" : "locations";
+        Equal(!enabled, Changed(kind).Contains(0)); True(Changed(kind).Contains(1));
+    }
+}
+
 static void PovOptions()
 {
     foreach (var altars in new[] { true, false })
@@ -2238,7 +2300,7 @@ static void PovOptions()
     }
     Fake.Reset();
     var controller = AddPov("PT_CorruptionZone", 0, "active", "pt_blight_uid");
-    var disabled = new PathOfValheimProtection(false, false);
+    var disabled = new PathOfValheimProtection(false, false, false);
     var scans = GameWorld.AllSnapshotCount;
     disabled.CaptureControllers(); True(!disabled.IsProtectedObject(controller));
     Equal(scans, GameWorld.AllSnapshotCount);

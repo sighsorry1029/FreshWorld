@@ -20,10 +20,17 @@ internal sealed class AlwaysProtectedObjects
     public bool IsProtectedObject(ZDO zdo) => zdo.IsValid() &&
         (_prefabs.Contains(zdo.GetPrefab()) || _additionalProtection?.Invoke(zdo) == true);
 
-    public int Capture()
+    public int Capture(Func<ZDO, bool>? snapshotProtection = null)
     {
         if (_prefabs.Count == 0 && _additionalProtection == null) return 0;
-        foreach (var zdo in GameWorld.AllZDOs()) Observe(zdo);
+        foreach (var zdo in GameWorld.AllZDOs())
+        {
+            // The caller may have just indexed its saved snapshot. This synchronous scan does
+            // not load objects or yield, so it need not repeat live area queries for every ZDO.
+            if (snapshotProtection == null) Observe(zdo);
+            else if (zdo.IsValid() && (_prefabs.Contains(zdo.GetPrefab()) || snapshotProtection(zdo)))
+                _observed.Add(ZoneSystem.GetZone(zdo.GetPosition()));
+        }
         return _observed.Count;
     }
 

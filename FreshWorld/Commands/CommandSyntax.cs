@@ -7,7 +7,7 @@ internal enum FreshWorldCommandAction { Run, Status, Invasions, Pov }
 internal static class CommandSyntax
 {
     public const string Name = "freshworld";
-    public const string Usage = "freshworld — run the host cfg; freshworld status — show status; freshworld invasions — inspect Jotun invasions; freshworld pov — restore missing PoV altars.";
+    public const string Usage = "freshworld — run the host cfg; freshworld status — show status; freshworld invasions — inspect Jotun invasions; freshworld pov — restore recorded PoV altars and Halls entrances.";
     public const int MaximumLength = 64;
 
     // Match the entire command token. Invalid arguments to our command must still be intercepted

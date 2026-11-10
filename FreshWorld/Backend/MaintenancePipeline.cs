@@ -30,6 +30,7 @@ internal sealed class MaintenancePipeline
     private readonly EpicLootProtection _epicLoot;
     private readonly JotunInvasionProtection _invasions = new();
     private readonly PathOfValheimProtection _pathOfValheim;
+    private readonly OdinsHollowDungeons _odinsHollow = new();
     private readonly AlwaysProtectedObjects _alwaysProtected;
     private ITrackedOperation? _activeOperation;
     private readonly Dictionary<Vector2s, LocationFootprint> _locationFootprints = new();
@@ -56,9 +57,11 @@ internal sealed class MaintenancePipeline
         _runId = runId;
         _options = options;
         _resourceExcludedZones = new HashSet<Vector2s>(options.ResourceExcludedZones.Select(zone => new Vector2s(zone.X, zone.Z)));
-        _pathOfValheim = new PathOfValheimProtection(options.PathOfValheimAltarProtectionEnabled, options.PathOfValheimBlightProtectionEnabled);
+        _pathOfValheim = new PathOfValheimProtection(options.PathOfValheimAltarProtectionEnabled, options.PathOfValheimBlightProtectionEnabled,
+            options.PathOfValheimDungeonProtectionEnabled, options.PathOfValheimMerchantProtectionEnabled, options.PathOfValheimTreasureProtectionEnabled);
         _alwaysProtected = new AlwaysProtectedObjects(options.AlwaysProtectedPrefabs,
-            options.PathOfValheimAltarProtectionEnabled || options.PathOfValheimBlightProtectionEnabled
+            options.PathOfValheimAltarProtectionEnabled || options.PathOfValheimBlightProtectionEnabled || options.PathOfValheimDungeonProtectionEnabled ||
+            options.PathOfValheimMerchantProtectionEnabled || options.PathOfValheimTreasureProtectionEnabled
                 ? _pathOfValheim.IsProtectedObject : null);
         _epicLoot = new EpicLootProtection(options.EpicLootProtectionEnabled, options.EpicLootBountyProtectionEnabled);
         _includeVegetation = includeVegetation;
@@ -80,6 +83,7 @@ internal sealed class MaintenancePipeline
             BaseProtection.Configure(_options.PieceBlacklist, _options.ProtectedObjects);
             yield return MaintenanceSave.Run(_network, _zones, RequireWorld, _log, "before maintenance", _options.SaveTimeoutSeconds);
             yield return PlanLocations();
+            yield return _odinsHollow.Initialize(RequireWorld);
 
             RequireWorld();
             _playerZones.Clear();
@@ -89,7 +93,8 @@ internal sealed class MaintenancePipeline
             var epicLootZones = _epicLoot.Capture();
             var invasionZones = _invasions.Capture();
             _pathOfValheim.CaptureControllers();
-            var alwaysProtectedZones = _alwaysProtected.Capture();
+            _odinsHollow.Capture();
+            var alwaysProtectedZones = _alwaysProtected.Capture(_pathOfValheim.IsProtectedSnapshotObject);
             _log($"Maintenance plan: {generated.Count} generated zones; {protectedZones.Count} protected by base markers; {_playerZones.Count} observed player zones with 3x3 protection; {epicLootZones} EpicLoot zones with 1x1 protection; {invasionZones} Jotun objective zones with 1x1 protection; {alwaysProtectedZones} zones protected by AlwaysProtectedPrefabs or Path of Valheiman objectives.");
 
             // The default and manual path retain the existing live supplemental scope.
@@ -650,7 +655,8 @@ internal sealed class MaintenancePipeline
 
     // Only these policies also protect terrain tiles. Keep ordinary base/player/EpicLoot rules separate.
     private bool CanResetTerrain(Vector2s zone) =>
-        !_planningExcludedZones.Contains(zone) && _invasions.CanResetZone(zone) && _alwaysProtected.CanResetZone(zone);
+        !_planningExcludedZones.Contains(zone) &&
+        _invasions.CanResetZone(zone) && _alwaysProtected.CanResetZone(zone);
 
     private OperationParameters Parameters(int safeZones) =>
         new()
@@ -663,8 +669,14 @@ internal sealed class MaintenancePipeline
             CanResetTerrain = zone => !_reservedLocationZones.Contains(zone) && CanResetTerrain(zone),
             CanDeleteObject = zdo => !_reservedLocationZones.Contains(ZoneSystem.GetZone(zdo.GetPosition())) &&
                 !_planningExcludedZones.Contains(ZoneSystem.GetZone(zdo.GetPosition())),
-            AlwaysProtected = _alwaysProtected
+            AlwaysProtected = _alwaysProtected,
+            RetainObject = HasDungeonScopes ? RetainDungeonObject : null,
+            PrepareDungeonReset = HasDungeonScopes ? anchors => _odinsHollow.Prepare(anchors,
+                zone => CanResetZone(zone, safeZones), _pathOfValheim.IsRetainedDungeonObject) : null
         };
+
+    private bool HasDungeonScopes => _pathOfValheim.HasDungeons || _odinsHollow.IsAvailable;
+    private bool RetainDungeonObject(ZDO zdo) => _pathOfValheim.IsRetainedDungeonObject(zdo) || _odinsHollow.IsRetainedObject(zdo);
 
     private HashSet<string> ResolveIds(string kind, IEnumerable<string> configured, IEnumerable<string> available)
     {
