@@ -101,7 +101,7 @@ internal static class GameWorld
         var manager = ZDOMan.instance;
         var pending = new HashSet<ZDOID>(PendingDestruction(manager));
         var objects = zones.SelectMany(GetZDOs).Concat(plan?.Remaining() ?? Enumerable.Empty<ZDO>()).Distinct().ToArray();
-        if (objects.Any(zdo => IsDeletionProtected(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected)))
+        if (objects.Any(zdo => DeletionProtectionReason(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected) != null))
             throw new InvalidOperationException("A protected object remains in a location zone group; regeneration was not enabled.");
         if (plan != null && objects.Any(zdo => !plan.Matches(zdo)))
             throw new InvalidOperationException("An unplanned or changed object remains in a location zone group; regeneration was not enabled.");
@@ -116,7 +116,7 @@ internal static class GameWorld
                 (!(plan?.InScope(current) ?? zones.Contains(ZoneSystem.GetZone(current.GetPosition()))) ||
                  (plan != null && !plan.Matches(current)) ||
                   plan?.MustRetain(current) == true ||
-                 IsDeletionProtected(current, protectEpicLoot, protectEpicLootBounties, alwaysProtected)))
+                 DeletionProtectionReason(current, protectEpicLoot, protectEpicLootBounties, alwaysProtected) != null))
                 throw new InvalidOperationException("An object changed during location zone group deletion; regeneration was not enabled.");
             HandleDestroyed(manager, id);
         }
@@ -211,7 +211,7 @@ internal static class GameWorld
             var manager = ObjectsById(ZDOMan.instance);
             foreach (var entry in entries.Values)
                 if (!manager.TryGetValue(entry.Id, out var current) || !current.IsValid() || !entry.Matches(current) ||
-                    Protection(current) != "none" || (entry.Retained ? !IsRetained(current) : MustRetain(current)))
+                    ProtectionReason(current) != null || (entry.Retained ? !IsRetained(current) : MustRetain(current)))
                     throw new InvalidOperationException("A location zone group object changed or is protected before deletion.");
             foreach (var zone in zones)
                 foreach (var zdo in GetZDOs(zone))
@@ -225,7 +225,7 @@ internal static class GameWorld
             bool WithinPlan(ZDO zdo) => InScope(zdo) && Matches(zdo) && !IsRetained(zdo) && retain?.Invoke(zdo) != true;
             void Deleting(ZDO zdo, string path)
             {
-                if (!WithinPlan(zdo) || Protection(zdo) != "none")
+                if (!WithinPlan(zdo) || ProtectionReason(zdo) != null)
                     throw new InvalidOperationException("A planned object changed during location zone group deletion.");
                 entries[zdo.m_uid].DeletePath = path;
             }
@@ -241,14 +241,7 @@ internal static class GameWorld
             CompleteZoneDeletions(zones, epicLoot, bounties, absolute, this);
         }
 
-        private string Protection(ZDO zdo)
-        {
-            if (IsPlayer(zdo)) return "player";
-            if (absolute?.IsProtectedObject(zdo) == true) return "absolute-or-PoV";
-            if (JotunInvasionProtection.IsProtectedObject(zdo)) return "jotun-objective";
-            if (EpicLootProtection.IsProtectedObject(zdo, epicLoot, bounties)) return "epicloot";
-            return "none";
-        }
+        private string? ProtectionReason(ZDO zdo) => DeletionProtectionReason(zdo, epicLoot, bounties, absolute);
 
         internal void ReportFailure(Action<string> warn, string runId, Vector2s anchor, Exception error)
         {
@@ -268,7 +261,7 @@ internal static class GameWorld
                     $"sectors={zones.Count} [{string.Join(",", zones.Take(16))}]; omittedSectors={Math.Max(0, zones.Count - 16)}; plannedUtc={plannedUtc:O}; executionUtc={(executionUtc == default ? "not-started" : executionUtc.ToString("O"))}; " +
                     $"planned={entries.Count}; residual={current.Count}; plannedAbsentOrInvalid={entries.Keys.Count(id => !manager.TryGetValue(id, out var item) || !item.IsValid())}; detailLimit={limit}");
                 var suspects = current.Where(pair => !entries.TryGetValue(pair.Key, out var entry) || !entry.Matches(pair.Value) ||
-                    Protection(pair.Value) != "none" || !pending.Contains(pair.Key)).ToArray();
+                    ProtectionReason(pair.Value) != null || !pending.Contains(pair.Key)).ToArray();
                 var shown = suspects.Length > 0 ? suspects : current.ToArray();
                 foreach (var pair in shown.Take(limit))
                 {
@@ -278,11 +271,11 @@ internal static class GameWorld
                     var name = ZNetScene.instance.GetPrefab(hash)?.name ?? "unknown";
                     var inDictionary = manager.TryGetValue(pair.Key, out var resolved) && ReferenceEquals(resolved, zdo);
                     var inScene = SceneInstances(ZNetScene.instance).TryGetValue(zdo, out var view) && view != null;
-                    var protection = Protection(zdo);
-                    var exclusion = entry == null ? "unplanned" : !entry.Matches(zdo) ? "changed" : protection != "none" ? "protected" :
+                    var protection = ProtectionReason(zdo);
+                    var exclusion = entry == null ? "unplanned" : !entry.Matches(zdo) ? "changed" : protection != null ? "protected" :
                         !pending.Contains(pair.Key) ? "not-queued" : "queued-native-deletion";
                     warn($"Location group object: id={pair.Key}; prefab={name}; hash={hash}; position={zdo.GetPosition()}; zone={ZoneSystem.GetZone(zdo.GetPosition())}; " +
-                        $"valid={zdo.IsValid()}; dictionary={inDictionary}; scene={inScene}; planned={entry != null}; inScope={zones.Contains(ZoneSystem.GetZone(zdo.GetPosition()))}; protection={protection}; exclusion={exclusion}; " +
+                        $"valid={zdo.IsValid()}; dictionary={inDictionary}; scene={inScene}; planned={entry != null}; inScope={zones.Contains(ZoneSystem.GetZone(zdo.GetPosition()))}; protection={protection ?? "none"}; exclusion={exclusion}; " +
                         $"spawned={zdo.GetConnectionZDOID(ZDOExtraData.ConnectionType.Spawned)}; deletePath={entry?.DeletePath ?? "not-planned"}; " +
                         $"pendingBefore={entry?.PendingBefore.ToString() ?? "unknown"}; pendingNow={pending.Contains(pair.Key)}; newSincePlan={entry == null}");
                 }
@@ -348,7 +341,7 @@ internal static class GameWorld
         Func<ZDO, bool>? withinScope, Action<ZDO, string>? deleting = null)
     {
         if (zdo == null || !zdo.IsValid() || (withinScope != null && !withinScope(zdo)) ||
-            IsDeletionProtected(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected)) return;
+            DeletionProtectionReason(zdo, protectEpicLoot, protectEpicLootBounties, alwaysProtected) != null) return;
         if (visited != null && !visited.Add(zdo.m_uid)) return;
         var manager = ZDOMan.instance;
         zdo.SetOwner(ZDOMan.GetSessionID());
@@ -373,10 +366,15 @@ internal static class GameWorld
         }
     }
 
-    private static bool IsDeletionProtected(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties,
-        AlwaysProtectedObjects? alwaysProtected) => IsPlayer(zdo) || alwaysProtected?.IsProtectedObject(zdo) == true ||
-        JotunInvasionProtection.IsProtectedObject(zdo) ||
-        EpicLootProtection.IsProtectedObject(zdo, protectEpicLoot, protectEpicLootBounties);
+    private static string? DeletionProtectionReason(ZDO zdo, bool protectEpicLoot, bool protectEpicLootBounties,
+        AlwaysProtectedObjects? alwaysProtected)
+    {
+        if (IsPlayer(zdo)) return "player";
+        if (alwaysProtected?.IsProtectedObject(zdo) == true) return "absolute-or-PoV";
+        if (JotunInvasionProtection.IsProtectedObject(zdo)) return "jotun-objective";
+        if (EpicLootProtection.IsProtectedObject(zdo, protectEpicLoot, protectEpicLootBounties)) return "epicloot";
+        return null;
+    }
 
     private static bool IsPlayer(ZDO zdo)
     {
