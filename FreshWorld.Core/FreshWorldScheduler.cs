@@ -70,17 +70,21 @@ namespace FreshWorld.Core
             lock (gate)
             {
                 EnsureUsable();
-                var next = state.Copy();
-                var candidate = !settings.AutomaticEnabled ? null : settings.Mode == ScheduleMode.DailyTimes ? LatestDaily(next, now)
-                    : LatestGameDay(next, now);
-                if (!settings.AutomaticEnabled && next.Pending?.IsManual != true) next.Pending = null;
-                Advance(next, now);
+                var pending = state.Pending;
+                var candidate = !settings.AutomaticEnabled ? null : settings.Mode == ScheduleMode.DailyTimes ? LatestDaily(state, now)
+                    : LatestGameDay(state, now);
+                if (!settings.AutomaticEnabled && pending?.IsManual != true) pending = null;
                 // A user's manual request retains its policy while awaiting backend readiness.
                 // Automatic deadlines observed meanwhile are covered by that pending maintenance.
-                if (candidate != null && next.Pending?.IsManual != true && !next.Attempts.Any(a => a.Run.Id == candidate.Id))
-                    next.Pending = candidate;
-                if (next.Pending?.Id != state.Pending?.Id) Persist(next);
-                else state = next;
+                if (candidate != null && pending?.IsManual != true && !state.Attempts.Any(a => a.Run.Id == candidate.Id))
+                    pending = candidate;
+
+                // Cursor-only polls stay in memory. Publish a new reservation only after its write succeeds.
+                var requiresWrite = pending?.Id != state.Pending?.Id;
+                var next = requiresWrite ? state.Copy() : state;
+                next.Pending = pending;
+                Advance(next, now);
+                if (requiresWrite) Persist(next);
                 return state.Attempts.Any(a => a.Status == RunStatus.Running) ? null : state.Pending;
             }
         }
@@ -146,7 +150,7 @@ namespace FreshWorld.Core
             {
                 EnsureUsable();
                 GetDue(now);
-                Persist(state.Copy());
+                Persist(state);
             }
         }
 
