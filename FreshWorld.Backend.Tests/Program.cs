@@ -5,6 +5,7 @@ using FreshWorld.Engine;
 
 var tests = new (string Name, Action Body)[]
 {
+    ("optional dungeon adapters run only for their plugin or saved evidence", OptionalDungeons),
     ("PoV dungeon retention reaches all stages while allowing ground terrain resets", PovDungeonStages),
     ("PoV merchant-only and treasure-only options reach all reset stages", PovMerchantTreasureStages),
     ("PoV malformed dungeon records fail before the first reset mutation", PovDungeonInvalid),
@@ -2211,6 +2212,25 @@ static void PovStages()
     }
 }
 
+static void OptionalDungeons()
+{
+    foreach (var installed in new[] { false, true })
+    foreach (var residue in new[] { false, true })
+    {
+        Fake.Reset();
+        Fake.AddZone(0);
+        if (installed) BepInEx.Bootstrap.Chainloader.PluginInfos["org.bepinex.plugins.odinshollow"] = new();
+        if (residue) AddPov("chest", 0).Ints["OH_DG_Id".GetStableHashCode()] = 42;
+        var scans = GameWorld.AllSnapshotCount;
+        True(Run(new() { VegetationEnabled = false, LocationsEnabled = false, EpicLootProtectionEnabled = false,
+            EpicLootBountyProtectionEnabled = false }).Success);
+        Equal(installed ? 1 : 0, OdinsHollowDungeons.Initializations);
+        Equal(installed || residue, Fake.Arguments["zones"].PrepareDungeonReset != null);
+        Equal(installed || residue, Fake.Arguments["zones"].RetainObject != null);
+        Equal(scans + 1, GameWorld.AllSnapshotCount);
+    }
+}
+
 static void PovDungeonStages()
 {
     foreach (var zoneReset in new[] { true, false })
@@ -2236,6 +2256,7 @@ static void PovDungeonStages()
             True(args.CanResetTerrain!(new(3, 0)));
             True(args.CanResetTerrain!(new(30, 0)));
             True(!args.AlwaysProtected!.IsProtectedObject(root)); Equal(enabled, args.RetainObject?.Invoke(root) == true);
+            True(args.PrepareDungeonReset == null);
         }
     }
 }
@@ -2311,6 +2332,7 @@ static void PovArrival()
     foreach (var resources in new[] { true, false })
     {
         Fake.Reset(); Fake.AddZone(0); ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        BepInEx.Bootstrap.Chainloader.PluginInfos["treextr.pathofvalheiman"] = new();
         using var lease = MaintenanceGate.Acquire(); var completed = new List<bool>();
         using var runner = NewRunner(new() { ZonesEnabled = false, VegetationEnabled = resources,
             LocationsEnabled = !resources, AlwaysProtectedPrefabs = [] }, completed);

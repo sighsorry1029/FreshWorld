@@ -16,5 +16,7 @@ internal sealed class JotunInvasionProtection
     // Reuse the exact-prefab policy: capture unloaded objectives after saving, see arrivals on
     // target retries, and retain observed zones until this run ends. No event/ice ownership guess.
     public int Capture() => _zones.Capture();
+    public void Observe(ZDO zdo) => _zones.Observe(zdo);
+    public int ZoneCount => _zones.ObservedZoneCount;
     public bool CanResetZone(Vector2s zone) => _zones.CanResetZone(zone);
 }

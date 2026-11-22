@@ -16,7 +16,7 @@ internal static class DungeonScopeRegressions
         BepInEx.Bootstrap.Chainloader.PluginInfos["org.bepinex.plugins.odinshollow"] = new();
         var prefab = new GameObject(); prefab.AddComponent(new OdinsHollow.DungeonGen.OHDungeon());
         var definition = new ZoneSystem.ZoneLocation { m_prefab = new() { Name = "OdinsHollowDungeon", Asset = prefab } };
-        ZoneSystem.instance.m_locations.Add(definition);
+        ZoneSystem.instance.AddLocation(definition);
         ZoneSystem.instance.m_locationInstances[new(0, 0)] = new() { m_placed = true, m_location = definition };
         ZoneSystem.instance.AddGenerated(new(0, 0)); ZoneSystem.instance.AddGenerated(new(1, 0));
         var root = Add(10, "LocationProxy", new()); root.Rotation = Quaternion.Euler(0, yaw, 0);
@@ -32,6 +32,63 @@ internal static class DungeonScopeRegressions
         RetainObject = policy.IsRetainedObject,
         PrepareDungeonReset = anchors => policy.Prepare(anchors, allowed ?? (_ => true), _ => false)
     };
+
+    public static void OhInvalidRegistration()
+    {
+        var registry = ZoneSystem.instance.m_locations;
+        registry.Add(new() { m_prefab = new() { IsValid = false } });
+        registry.Add(null!);
+        var absent = new OdinsHollowDungeons();
+        var init = absent.Initialize(() => {});
+        while (init.MoveNext()) { }
+        Check(!absent.IsAvailable, "unrelated entries activated OH");
+
+        var (policy, _, chest) = Setup();
+        Check(policy.IsAvailable && policy.IsRetainedObject(chest), "unrelated entries hid a valid OH entrance");
+    }
+
+    public static void OhInvalidPlacedLocation()
+    {
+        var (policy, root, chest) = Setup();
+        var neighbor = new Vector2s(1, 0);
+        ZoneSystem.instance.m_locationInstances[neighbor] = new()
+        {
+            m_placed = true, m_location = new() { m_prefab = new() { IsValid = false } }
+        };
+        var ground = Add(12, "stone", new(90, 0, 0));
+        new ProbeReset(Args(policy)).Run(neighbor);
+        Check(!ground.Valid && root.Valid && chest.Valid && chest.Owner == 0, "neighbor reset changed the OH interior");
+    }
+
+    public static void OhUnreadableEntrance()
+    {
+        BepInEx.Bootstrap.Chainloader.PluginInfos["org.bepinex.plugins.odinshollow"] = new();
+        ZoneSystem.instance.m_locations.Add(new() { m_prefab = new() { Name = "OdinsHollowDungeon", IsValid = false } });
+        var init = new OdinsHollowDungeons().Initialize(() => {});
+        try { while (init.MoveNext()) { } }
+        catch (InvalidOperationException error) when (error.Message.Contains("readable registered location prefab")) { return; }
+        throw new Exception("a known OH entrance with an unreadable prefab was skipped");
+    }
+
+    public static void OhMissingOwner()
+    {
+        var world = ZoneSystem.instance;
+        Check(!OdinsHollowDungeons.IsInstalled, "unexpected plugin");
+        var chest = Add(10, "chest", new()); chest.Ints[H("OH_DG_Id")] = 500;
+        var policy = new OdinsHollowDungeons();
+        Check(OdinsHollowDungeons.HasSavedData(chest), "missed tagged content");
+        policy.Capture();
+        Check(policy.IsAvailable && policy.IsRetainedObject(chest), "orphan chest lost its protection");
+        var definition = new ZoneSystem.ZoneLocation { m_prefab = new() { Name = "OdinsHollowDungeon" } };
+        world.AddLocation(definition);
+        OdinsHollowDungeons.CheckMissingOwner(world);
+        world.m_locationInstances[new(0, 0)] = new() { m_placed = true, m_location = definition };
+        Reject(() => OdinsHollowDungeons.CheckMissingOwner(world));
+        var root = Add(11, "LocationProxy", new()); root.Ints[H("location")] = H("OdinsHollowDungeon");
+        Check(OdinsHollowDungeons.HasSavedData(root), "missed saved native entrance");
+        Reject(() => policy.Capture());
+        Check(chest.Valid && root.Valid && ZDOMan.instance.Destroyed.Count == 0, "missing mod changed saved data");
+    }
 
     public static void OhReset()
     {
@@ -67,6 +124,23 @@ internal static class DungeonScopeRegressions
         var corner = Add(20,"foreign",center+new Vector3(19,0,19));
         var inside = Add(21,"drop",center);
         Check(!policy.IsRetainedObject(corner) && policy.IsRetainedObject(inside), "AABB treated as ownership");
+    }
+    public static void OhPovOverlap()
+    {
+        var (hollow, entrance, chest) = Setup();
+        BepInEx.Bootstrap.Chainloader.PluginInfos["treextr.pathofvalheiman"] = new();
+        var map = PovDungeonRegressions.Root(100, true, 3, new(640, 4400, 0));
+        chest.Strings[H("pt.hmap.run")] = "map-100";
+        var pov = new PathOfValheimProtection(false, false);
+        pov.CaptureControllers();
+        try { hollow.Prepare(new() { new(0, 0) }, _ => true, pov.IsRetainedDungeonObject); }
+        catch (DungeonResetBlockedException)
+        {
+            Check(entrance.Valid && chest.Valid && map.Valid && chest.Owner == 0 &&
+                ZDOMan.instance.Destroyed.Count == 0 && GameWorld.IsGenerated(new(0, 0)), "overlap changed ownership or placement");
+            return;
+        }
+        throw new Exception("OH selected PoV-linked content for deletion");
     }
     public static void OhBlocked()
     {

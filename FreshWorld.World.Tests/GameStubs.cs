@@ -245,13 +245,24 @@ public class ZoneSystem
     private Dictionary<Vector2s, List<ZDO>> m_loadingObjectsInZones = new();
     private readonly HashSet<Vector2s> _loaded = new();
     public Dictionary<Vector2s, LocationInstance> m_locationInstances = new();
+    private readonly Dictionary<int, ZoneLocation> m_locationsByHash = new();
+    public void AddLocation(ZoneLocation definition)
+    {
+        m_locations.Add(definition);
+        m_locationsByHash.Add(definition.m_prefab.Name.GetStableHashCode(), definition);
+    }
     public List<ZoneLocation> m_locations = new();
     public GameObject m_locationProxyPrefab = new() { name = "LocationProxy" };
     public int Pokes;
     public class ZoneLocation { public LocationPrefab m_prefab = new(); }
     public class LocationPrefab
     {
-        public string Name = "test-location";
+        public string? CachedName { get; private set; }
+        public string Name
+        {
+            get => CachedName ?? (IsValid ? "test-location" : throw new KeyNotFoundException("Unknown asset ID."));
+            set => CachedName = value;
+        }
         public bool IsValid = true, IsLoaded = true;
         public GameObject Asset = new();
         public void LoadAsync() { }
@@ -444,6 +455,12 @@ namespace HarmonyLib
 }
 namespace FreshWorld.Engine
 {
+    internal static class NativePlacement
+    {
+        public static bool IsValidLocationPrefab(ZoneSystem.ZoneLocation location) =>
+            location != null && (location.m_prefab.IsValid || !string.IsNullOrWhiteSpace(location.m_prefab.CachedName));
+    }
+
     internal sealed class OperationParameters
     {
         public string RunId { get; set; } = "test";

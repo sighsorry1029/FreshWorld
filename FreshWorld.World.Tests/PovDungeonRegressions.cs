@@ -7,12 +7,17 @@ internal static class PovDungeonRegressions
     {
         var gate = Add(100, "PoV_HallsGate", new(6400, 0, 0));
         var session = Add(101, "PoV_HallMapSession", new(6528, 0, 0));
+        var pad = Add(102, "PoV_HallsPad", new(6433, 0, 0));
+        var edge = Add(103, "PoV_HallsPadEdge", new(6400, 0, 33));
         var policy = new PathOfValheimProtection(false, false, true); policy.CaptureControllers();
         var absolute = new AlwaysProtectedObjects([], policy.IsProtectedObject); absolute.Capture();
         Check(!absolute.CanResetZone(new(100, 0)) && !absolute.CanResetZone(new(102, 0)), "entry/session zones");
+        Check(!absolute.CanResetZone(new(101, 0)) && !absolute.CanResetZone(new(100, 1)) &&
+            absolute.CanResetZone(new(101, 1)), "pad sectors should protect only their own zone");
         GameWorld.RemoveZDO(session, false, false, absolute);
         Check(session.Valid && session.Owner == 0, "session changed");
-        Check(!new PathOfValheimProtection(false, false, false).IsProtectedObject(gate), "disabled option");
+        var disabled = new PathOfValheimProtection(false, false, false);
+        Check(!disabled.IsProtectedObject(gate) && !disabled.IsProtectedObject(pad) && !disabled.IsProtectedObject(edge), "disabled option");
     }
 
     public static void Footprints()

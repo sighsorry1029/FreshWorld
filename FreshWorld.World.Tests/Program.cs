@@ -9,8 +9,13 @@ using UnityEngine;
 var tests = new (string Name, Action Body)[]
 {
     ("single-zone retention plans preserve existing deletion exclusions", DungeonScopeRegressions.SingleExclusion),
+    ("OH discovery skips unnamed invalid registrations and still finds a later entrance", DungeonScopeRegressions.OhInvalidRegistration),
+    ("OH skips an unnamed placed location while preserving the nearby dungeon", DungeonScopeRegressions.OhInvalidPlacedLocation),
+    ("OH rejects a named entrance with an unreadable prefab", DungeonScopeRegressions.OhUnreadableEntrance),
+    ("removed OH preserves tagged content and stops before an unresolved placed entrance", DungeonScopeRegressions.OhMissingOwner),
     ("OH resets full sky contents without releasing neighboring ground", DungeonScopeRegressions.OhReset),
     ("OH foreign interiors and outlying pack members survive ground resets", DungeonScopeRegressions.OhRetain),
+    ("OH skips an interior containing a PoV run's linked chest", DungeonScopeRegressions.OhPovOverlap),
     ("OH rotated room corners do not own unrelated elevated objects", DungeonScopeRegressions.OhRotation),
     ("OH protection and invalid metadata reject before mutations", DungeonScopeRegressions.OhBlocked),
     ("OH new extra-sector residue prevents regeneration", DungeonScopeRegressions.OhResidue),
@@ -31,6 +36,7 @@ var tests = new (string Name, Action Body)[]
     ("PoV merchants protect only their current sectors and native departure remains available", PovMerchants),
     ("PoV treasure protection tracks dispensing and retains observations only for this run", PovTreasure),
     ("PoV Halls repair preserves entrance identity metadata and existing sessions", PovGateRepair),
+    ("PoV handles seated gates while FreshWorld still restores a missing altar", PovSeatedGateRepair),
     ("PoV Halls repair refuses incomplete duplicate conflicting or unplaced records", PovGateInvalid),
     ("PoV Halls repair rechecks identity and metadata after saving and placement hooks", PovGateRaces),
     ("PoV Halls metadata failure removes only the newly created entrance", PovGateFailure),
@@ -1265,6 +1271,18 @@ static void PovGateRepair()
     True(repair!.Summary.Contains("restored=2, existing=1"));
     (repair, error) = RepairPov(); if (error != null) throw error;
     True(repair!.Summary.Contains("restored=0, existing=3")); Equal(1, ZNet.instance.SaveCalls);
+}
+
+static void PovSeatedGateRepair()
+{
+    PreparePov("pov_hallssites 10_0_8_0", "pov_hallsgate_10_0 640_0_10", "pov_power_at_256_0");
+    ZNetScene.instance.RegisterPrefab("PoV_HallsPadEdge", new GameObject());
+    var survivor = PovObject(1, "PoV_HallsPadEdge", 10);
+    var keys = PassiveTree.WorldKeys.Records.ToArray();
+    var (repair, error) = RepairPov(); if (error != null) throw error;
+    Equal("PT_PowerAltar".GetStableHashCode(), ZDOMan.instance.Created.Single().GetPrefab());
+    True(repair!.Summary.Contains("restored=1, existing=0, skipped=1"));
+    True(survivor.Valid && survivor.Owner == 0 && keys.SequenceEqual(PassiveTree.WorldKeys.Records));
 }
 
 static void PovGateInvalid()

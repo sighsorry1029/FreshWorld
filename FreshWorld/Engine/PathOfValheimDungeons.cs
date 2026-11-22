@@ -12,6 +12,8 @@ namespace FreshWorld.Engine;
 internal sealed class PathOfValheimDungeons
 {
     private static readonly int Gate = "PoV_HallsGate".GetStableHashCode();
+    internal static readonly int GatePad = "PoV_HallsPad".GetStableHashCode();
+    internal static readonly int GateEdge = "PoV_HallsPadEdge".GetStableHashCode();
     private static readonly int Session = "PoV_HallMapSession".GetStableHashCode();
     private static readonly int MapRun = "PoV_HallMapRun".GetStableHashCode();
     private static readonly int LegacyRun = "PoV_HallsRun".GetStableHashCode();
@@ -37,22 +39,16 @@ internal sealed class PathOfValheimDungeons
     public PathOfValheimDungeons() { observeRoot = RememberRoot; }
     public bool IsAvailable => roots.Count > 0 || live.Count > 0;
 
-    public void Capture(IEnumerable<ZDO> objects)
+    public void CaptureIndexed(IEnumerable<ZDO> objects)
     {
-        BindLiveRuns();
-        var snapshot = objects as ZDO[] ?? objects.ToArray();
-        foreach (var zdo in snapshot) RememberRoot(zdo);
         Refresh();
+        if (retainedSlots.Count == 0) return;
         // Remember loose rewards before physics or another mod moves them outside the slot.
-        foreach (var zdo in snapshot) ObserveObject(zdo);
+        foreach (var zdo in objects) ObserveObject(zdo);
     }
-    public bool IsProtectedObject(ZDO zdo, bool refresh = true)
-    {
-        if (!zdo.IsValid()) return false;
-        var prefab = zdo.GetPrefab();
-        // Ground entrances and personal session records still protect their small anchor sector.
-        return prefab == Gate || prefab == Session;
-    }
+    public static bool ProtectsSurfaceZone(int prefab) =>
+        prefab == Gate || prefab == GatePad || prefab == GateEdge || prefab == Session;
+    public static bool IsRunPrefab(int prefab) => prefab == MapRun || prefab == LegacyRun;
 
     public bool IsRetainedObject(ZDO zdo)
     {
@@ -65,7 +61,7 @@ internal sealed class PathOfValheimDungeons
     private bool ObserveObject(ZDO zdo)
     {
         if (!zdo.IsValid()) return false;
-        if (IsProtectedObject(zdo) || retainedRoots.Contains(zdo.m_uid) || retainedObjects.Contains(zdo.m_uid)) return true;
+        if (ProtectsSurfaceZone(zdo.GetPrefab()) || retainedRoots.Contains(zdo.m_uid) || retainedObjects.Contains(zdo.m_uid)) return true;
         foreach (var key in Links)
             if (runIds.Contains(zdo.GetString(key))) { retainedObjects.Add(zdo.m_uid); return true; }
         foreach (var slot in retainedSlots)
@@ -90,12 +86,12 @@ internal sealed class PathOfValheimDungeons
         }
     }
 
-    private void RememberRoot(ZDO zdo)
+    public void RememberRoot(ZDO zdo)
     {
         if (IsRoot(zdo)) roots[zdo.m_uid] = zdo;
     }
 
-    private static bool IsRoot(ZDO zdo) => zdo.IsValid() && (zdo.GetPrefab() == MapRun || zdo.GetPrefab() == LegacyRun);
+    private static bool IsRoot(ZDO zdo) => zdo.IsValid() && IsRunPrefab(zdo.GetPrefab());
 
 
     private static Vector3 ReadSlot(ZDO root, out bool map)

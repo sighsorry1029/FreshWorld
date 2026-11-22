@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2
+
+- Fixed a maintenance failure during Odin's Hollow detection when another location had an empty prefab reference.
+- FreshWorld skips dungeon processing for an absent mod when its saved objects are also absent. After mod removal, recognized objects keep their protection. A placed Odin's Hollow entrance that needs the missing mod to resolve its interior stops the run before any reset.
+- Path of Valheiman's `DungeonProtection` now covers Halls entrance terrain pads, including pads across a zone boundary. Each pad protects its own zone.
+- On PoV versions that use terrain pads, `freshworld pov` leaves missing Halls gates to PoV. Visit the original site and keep it loaded so PoV can place the entrance. The command still restores missing Warden and Power altars.
+
 ## 1.2.1
 
 - Added server-synced `DungeonProtection`, `MerchantProtection`, and `TreasureProtection` under `[Path of Valheiman]`, all enabled by default. Settings support host cfg hot reload and apply to the next run.

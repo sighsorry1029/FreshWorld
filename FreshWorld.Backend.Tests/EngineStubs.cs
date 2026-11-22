@@ -164,6 +164,8 @@ internal static class Fake
     public static void Reset()
     {
         Calls = new(); Arguments = new(); Candidates = new(); MarkerZones = new(); PlayerZones = new(); VegetationPasses = new();
+        BepInEx.Bootstrap.Chainloader.PluginInfos.Clear();
+        FreshWorld.Engine.OdinsHollowDungeons.Initializations = 0;
         OnStart = null; OnResolve = null; MetadataReady = true; MetadataReferences = 0; OnMetadataLoad = null; ThrowOnZone = null; ThrowOnStart = null;
         OnMetadataReady = null; OnMetadataRelease = null; NamedMetadata = false;
         TrustedMetadata.Clear();
@@ -467,10 +469,15 @@ namespace FreshWorld.Engine
 {
     internal sealed class OdinsHollowDungeons
     {
-        public bool IsAvailable => false;
-        public System.Collections.IEnumerator Initialize(Action require) { yield break; }
-        public void Capture() { }
-        public bool IsRetainedObject(ZDO zdo) => false;
-        public DungeonResetPlan Prepare(HashSet<Vector2s> anchors, Func<Vector2s, bool> allow, Func<ZDO, bool> retain) => new(retain, Array.Empty<ZDO>(), () => {});
+        public static int Initializations;
+        public static bool IsInstalled => BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey("org.bepinex.plugins.odinshollow");
+        public static void CheckMissingOwner(ZoneSystem world) { }
+        public static bool HasSavedData(ZDO zdo) => zdo.GetInt("OH_DG_Id".GetStableHashCode()) != 0;
+        public bool IsAvailable { get; private set; }
+        public System.Collections.IEnumerator Initialize(Action require) { Initializations++; yield break; }
+        public void Capture(IEnumerable<ZDO> objects) => IsAvailable = IsInstalled || objects.Any(HasSavedData);
+        public bool IsRetainedObject(ZDO zdo) => HasSavedData(zdo);
+        public DungeonResetPlan Prepare(HashSet<Vector2s> anchors, Func<Vector2s, bool> allow, Func<ZDO, bool>? retain) =>
+            new(zdo => IsRetainedObject(zdo) || retain?.Invoke(zdo) == true, Array.Empty<ZDO>(), () => {});
     }
 }

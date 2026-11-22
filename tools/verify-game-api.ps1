@@ -36,6 +36,7 @@ try {
     $zone = $game.GetType('ZoneSystem')
     $zdo = $game.GetType('ZDOMan')
     Require-Field $zone 'm_generatedZones' 'System.Collections.Generic.HashSet`1<Vector2s>'
+    Require-Field $zone 'm_locationsByHash' 'System.Collections.Generic.Dictionary`2<System.Int32,ZoneSystem/ZoneLocation>'
     Require-Field $zone 'm_altBiomeLists' 'System.Collections.Generic.List`1<AltBiomeList>'
     Require-Field ($game.GetType('AltBiomeList')) 'm_alts' 'System.Collections.Generic.List`1<AltBiome>'
     Require-Field ($game.GetType('AltBiome')) 'm_addLocations' 'System.Collections.Generic.List`1<ZoneSystem/ZoneLocation>'

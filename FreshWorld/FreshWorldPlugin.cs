@@ -21,7 +21,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.2.1";
+        public const string ModVersion = "1.2.2";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -434,7 +434,7 @@ namespace FreshWorld
                             backendLease?.Dispose(); backendLease = null; activePovRepair = false;
                         }
                     });
-                context.Reply("Starting PoV repair. Only missing Warden/Power altars and Halls entrances with valid placement records will be restored.");
+                context.Reply("Checking PoV records for missing Warden/Power altars and Halls entrances. PoV handles entrances that require terrain pads.");
             }
             catch (Exception error)
             {

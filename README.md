@@ -67,7 +67,7 @@ Players protect their zone and its eight neighbors from direct resets. Once reco
 ## Compatibility
 
 - **Epic Loot** treasure hunts are protected by default. Enable `EpicLootBountyProtection` to protect bounties too.
-- **Path of Valheiman** altars, active Blight objectives, Halls dungeons, merchants, and active treasure caches are protected by default. Use `freshworld pov` to restore missing altars and Halls entrances from PoV's saved records. [Recovery guide](https://github.com/sighsorry1029/FreshWorld/blob/main/docs/path-of-valheim-compatibility.md)
+- **Path of Valheiman** altars, active Blight objectives, Halls dungeons, merchants, and active treasure caches are protected by default. Use `freshworld pov` to restore missing altars and check Halls entrances. For entrances with terrain pads, visit the original site so PoV can restore the gate. [Recovery guide](https://github.com/sighsorry1029/FreshWorld/blob/main/docs/path-of-valheim-compatibility.md)
 - **Odin's Hollow** sky dungeons reset with their entrance. Clearing a sky dungeon preserves the ground below neighboring zones.
 - **Expand World Data** vegetation keeps its custom placement settings. Use one prefab per entry for resources FreshWorld should restore individually.
 - **Upgrade World** is optional. If its save patches conflict with FreshWorld, `freshworld status` reports why maintenance is disabled.

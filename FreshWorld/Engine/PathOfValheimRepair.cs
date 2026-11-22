@@ -41,6 +41,7 @@ internal sealed class PathOfValheimRepair
     private readonly long worldUid = ZNet.instance.GetWorldUID();
     private readonly MethodInfo lines;
     private readonly MethodInfo synced;
+    private readonly bool hasEntranceSeating;
     private readonly Action requireAuthority;
     private readonly Action<string> log;
     private int restored, existing, skipped, invalid;
@@ -53,7 +54,9 @@ internal sealed class PathOfValheimRepair
         this.log = log;
         if (!Chainloader.PluginInfos.TryGetValue("treextr.pathofvalheiman", out var plugin))
             throw new InvalidOperationException("Path of Valheiman is not installed on this host.");
-        var type = plugin.Instance.GetType().Assembly.GetType("PassiveTree.WorldKeys");
+        var assembly = plugin.Instance.GetType().Assembly;
+        hasEntranceSeating = assembly.GetType("PassiveTree.Encounters.Halls.HallsSeat") != null;
+        var type = assembly.GetType("PassiveTree.WorldKeys");
         var read = type?.GetMethod("Lines", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
         var ready = type?.GetProperty("Synced", BindingFlags.Public | BindingFlags.Static)?.GetGetMethod();
         if (read?.ReturnType != typeof(IReadOnlyList<string>) || ready?.ReturnType != typeof(bool) ||
@@ -181,6 +184,10 @@ internal sealed class PathOfValheimRepair
         // with the same identity (which is also part of per-character session keys).
         if (record.Prefab == HallsGate && GameWorld.AllZDOs().Any(obj => obj.IsValid() &&
             obj.GetPrefab() == hash && obj.GetString(GateSite) == record.Site)) return "already exists";
+        // Placement records omit the fitted heading. Only PoV can seat this kind of gate and its terrain pads.
+        if (record.Prefab == HallsGate && (hasEntranceSeating || scene.GetPrefab(PathOfValheimDungeons.GatePad) != null ||
+            scene.GetPrefab(PathOfValheimDungeons.GateEdge) != null))
+            return "this entrance needs PoV terrain placement; visit the original site so PoV can check it";
         var nearby = false;
         // 30m ambiguity radius is smaller than a 64m sector. Include inactive sector ZDOs.
         for (var x = center.x - 1; x <= center.x + 1; x++)

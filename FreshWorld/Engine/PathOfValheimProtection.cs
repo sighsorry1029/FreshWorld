@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using BepInEx.Bootstrap;
 using UnityEngine;
 
 namespace FreshWorld.Engine;
@@ -29,7 +30,9 @@ internal sealed class PathOfValheimProtection
     private readonly bool _protectBlight;
     private readonly bool _protectMerchants;
     private readonly bool _protectTreasure;
-    private readonly PathOfValheimDungeons? _dungeons;
+    private readonly bool _protectDungeons;
+    private PathOfValheimDungeons? _dungeons;
+    public bool HasObjectiveProtection { get; private set; }
     private int _lastScanFrame = -1;
 
     public PathOfValheimProtection(bool protectAltars = true, bool protectBlight = true, bool protectDungeons = true,
@@ -37,7 +40,12 @@ internal sealed class PathOfValheimProtection
     {
         _protectAltars = protectAltars; _protectBlight = protectBlight;
         _protectMerchants = protectMerchants; _protectTreasure = protectTreasure;
-        if (protectDungeons) _dungeons = new PathOfValheimDungeons();
+        _protectDungeons = protectDungeons;
+        if (Chainloader.PluginInfos.ContainsKey("treextr.pathofvalheiman"))
+        {
+            HasObjectiveProtection = protectAltars || protectBlight || protectMerchants || protectTreasure || protectDungeons;
+            if (protectDungeons) _dungeons = new PathOfValheimDungeons();
+        }
     }
 
     public bool IsRetainedDungeonObject(ZDO zdo) => _dungeons?.IsRetainedObject(zdo) == true;
@@ -46,14 +54,38 @@ internal sealed class PathOfValheimProtection
     // Index before classifying objectives: their ZDO enumeration order is unrelated to the controller.
     public void CaptureControllers()
     {
-        if (!_protectBlight && _dungeons == null) return;
-        _lastScanFrame = Time.frameCount;
+        if (!_protectBlight && !_protectDungeons) return;
         _controllers.Clear();
         var objects = GameWorld.AllZDOs();
-        _dungeons?.Capture(objects);
-        if (_protectBlight)
-            foreach (var zdo in objects) RememberController(zdo);
+        foreach (var zdo in objects)
+            if (zdo.IsValid()) IndexSavedObject(zdo);
+        FinishCapture(objects);
     }
+
+    public void IndexSavedObject(ZDO zdo)
+    {
+        var prefab = zdo.GetPrefab();
+        if (_protectDungeons && PathOfValheimDungeons.IsRunPrefab(prefab))
+            (_dungeons ??= new PathOfValheimDungeons()).RememberRoot(zdo);
+        if (_protectBlight && prefab == Controller)
+        {
+            HasObjectiveProtection = true;
+            RememberController(zdo);
+        }
+        if (!HasObjectiveProtection && (IsFixedObjective(prefab) || (_protectTreasure && prefab == TreasureCache)))
+            HasObjectiveProtection = true;
+    }
+
+    public void FinishCapture(IEnumerable<ZDO> objects)
+    {
+        _lastScanFrame = Time.frameCount;
+        _dungeons?.CaptureIndexed(objects);
+    }
+
+    private bool IsFixedObjective(int prefab) =>
+        (_protectDungeons && PathOfValheimDungeons.ProtectsSurfaceZone(prefab)) ||
+        (_protectAltars && (prefab == WardenAltar || prefab == PowerAltar)) ||
+        (_protectMerchants && (prefab == Ragn || prefab == Sigrid || prefab == Wanderer));
 
     public bool IsProtectedObject(ZDO zdo) => IsProtectedObject(zdo, true);
 
@@ -62,10 +94,8 @@ internal sealed class PathOfValheimProtection
     private bool IsProtectedObject(ZDO zdo, bool refresh)
     {
         if (!zdo.IsValid()) return false;
-        if (_dungeons?.IsProtectedObject(zdo, refresh) == true) return true;
         var prefab = zdo.GetPrefab();
-        if (_protectAltars && (prefab == WardenAltar || prefab == PowerAltar)) return true;
-        if (_protectMerchants && (prefab == Ragn || prefab == Sigrid || prefab == Wanderer)) return true;
+        if (IsFixedObjective(prefab)) return true;
         if (_protectedObjects.Contains(zdo.m_uid)) return true;
         if (_protectTreasure && prefab == TreasureCache && !string.IsNullOrEmpty(zdo.GetString(TreasureId)))
         {
@@ -97,7 +127,7 @@ internal sealed class PathOfValheimProtection
         // Events can appear while a zone is loading, with the objective in a different sector.
         // Share misses for this frame only, not for the run. Otherwise each orphan objective
         // would allocate and scan the entire world again. Known controllers are read live above.
-        if (_lastScanFrame != Time.frameCount) CaptureControllers();
+        if (refresh && _lastScanFrame != Time.frameCount) CaptureControllers();
         return Retain(zdo, _active.Contains(uid));
     }
 

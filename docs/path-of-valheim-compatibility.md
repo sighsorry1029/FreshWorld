@@ -1,6 +1,6 @@
 # Path of Valheiman compatibility and recovery
 
-FreshWorld protects PoV objectives and provides manual recovery of missing Warden/Power altars and recorded Halls entrances. Optional azurite vegetation changes natural resource placement only. FreshWorld does not change progression or discovery keys, repair map pins, or reset an event.
+FreshWorld protects PoV objectives. The manual `freshworld pov` command restores missing Warden and Power altars and checks recorded Halls entrances. PoV handles gates that need terrain pads. Optional azurite vegetation changes natural resource placement only.
 
 ## Protection
 
@@ -25,7 +25,7 @@ Only FreshWorld's own deletion path is guarded. PoV can still close events, remo
 
 ## Halls dungeon protection
 
-`DungeonProtection=true` preserves `PoV_HallsGate` and `PoV_HallMapSession` without requiring Piece creator metadata or configured prefab lists. Sessions contain each character's map board, invested rooms and runes, pending room refunds, transaction history, and run reference. FreshWorld never rewrites these records or claims their network ownership.
+`DungeonProtection=true` protects the zone of each `PoV_HallsGate`, `PoV_HallsPad`, `PoV_HallsPadEdge`, and `PoV_HallMapSession`. A pad across a zone boundary protects that neighboring zone. A surviving pad keeps its zone protected even if the gate is gone. Sessions contain each character's map board, invested rooms and runes, pending room refunds, transaction history, and run reference.
 
 Both `PoV_HallMapRun` and `PoV_HallsRun` are read from saved ZDOs, including unloaded sectors. Their controllers can follow players, so FreshWorld reads the immutable `hm.slot` or `h.slot` as the interior origin. Map runs use X ±320m, Z −130m to +360m; legacy Halls use X/Z ±145m. Both include Y ±60m around the slot. Linked mobs, chests, and pickables are retained independently of position. Initially observed loose rewards retain their identity for the maintenance run even if they later move out of the slot.
 
@@ -34,6 +34,8 @@ This is object retention, not a reservation of every ground sector below the dun
 All saved run controllers remain under PoV ownership, including completed runs. FreshWorld does not rewrite sessions, reward claims, room investments, or pending refunds. PoV still completes runs, grants rewards, deletes its content, and reuses slots normally. FreshWorld adds no expiry timer or patch to PoV's own deletion calls.
 
 Initial discovery shares the saved-object snapshot. During maintenance, cached accessors read PoV's small loaded-run lists and native data revisions refresh parsed state, including same-frame relaunches. Cached map and legacy layouts are checked by placement role against the known slot envelope. Missing optional layouts cached as null are allowed. Unsupported part or anchor coordinates stop maintenance before the affected deletion. Arbitrary third-party in-place edits to layout caches, runtime DLL replacement, and untagged objects outside the verified slot envelope are unsupported.
+
+If PoV or Odin's Hollow is absent, FreshWorld looks for saved evidence during its normal world scan. A clean world skips that mod's dungeon handling. Recognized PoV objectives and runs still follow their configured protections after mod removal. Tagged Odin's Hollow content stays intact. A saved native Odin's Hollow entrance that requires the missing mod to resolve its rooms stops maintenance before any reset.
 
 Zone cleanup records explicitly retained survivors and requires all planned deletions to finish before releasing generation state. Unknown residual objects, changed ownership, or newly retained content stop regeneration. Manually loaded zones with retained dungeon content are handed back to normal streaming rather than forcing their controllers to unload. Interrupted cleanup can leave completed changes; this is not a transaction or rollback.
 
@@ -47,11 +49,13 @@ Source-linked tests exercise same-sector ground/native-sky deletion with PoV pre
 
 Run `freshworld pov` from an authorized local host, server administrator client, or dedicated console/RCON. There is no additional `repair` argument. The operation is manual: neither automatic resets nor the plain `freshworld` command invoke it. PoV must be installed and ready on the host.
 
+**Halls entrances with terrain pads.** On PoV 6.0.15, visit the original site and leave its zone loaded so PoV can detect a missing natural entrance and choose a suitable position and heading. Its saved coordinates omit the original heading. FreshWorld reports the missing gate and leaves the gate, terrain pads, and site record to PoV. Recovery may place the entrance nearby. The command can still restore both types of altar in the same run. Older Halls implementations without seating use the recorded-entrance recovery below.
+
 The host reads PoV's recorded coordinates and checks saved ZDOs in active and inactive sectors. It does not generate or load zones. A world save must finish successfully before any creation; a no-op does not request a save. Each missing candidate is checked again after saving and immediately before creation. New objects are persistent, server-owned ZDOs. Results and skipped positions appear in the requesting console and the host log.
 
 Matching rules:
 
-- `PT_WardenAltar`, `PT_PowerAltar`, and recorded natural `PoV_HallsGate` entrances are eligible. Coordinates must come from PoV world records; no X/Z positions are inferred from terrain or player map data.
+- `PT_WardenAltar`, `PT_PowerAltar`, and recorded natural `PoV_HallsGate` entrances without terrain seating are eligible for direct restoration. Coordinates must come from PoV world records.
 - For altars, an existing object of the same prefab within 2m horizontally counts as present, regardless of height. This tolerates PoV's rounded coordinate storage and includes inactive objects. A same-prefab object farther than 2m but within 30m is ambiguous and is skipped. Exact duplicate altar records are deduplicated.
 - For Halls, any saved gate with the same `h.gsite` anywhere in the world counts as present, including a moved gate. A gate with a different or missing identity within 30m is ambiguous. Distinct nearby coordinate records for the same prefab also block creation.
 - Malformed or out-of-range records are skipped. Missing PoV read contracts, unready data, or unavailable persistent prefabs stop repair. Save refusal or save failure prevents creation.
@@ -104,6 +108,8 @@ EWD placement does not adopt PoV's existing objects, restore its original altar 
 Original binaries inspected:
 
 - PoV plugin 5.1.2, SHA-256 `E72B03AD5896B484560D4DE3ADD0EEA307E1566D1F274A8847B38F22D8869F03`.
+- PoV 6.0.15, SHA-256 `6F4870DBE545AE94D99518BB18FB8F969CF180C3BD113861DFF5670301EF5A6A`. Its gate placement creates persistent terrain pads. Its missing-gate check runs on loaded, generated sites. The saved run schemas, live registries, objective keys, altar records, and natural and Blight azurite paths still match the integration. All 87,021 part and anchor positions in the 209 embedded interior layouts checked fit the existing protection bounds. Entrance and kit templates were outside that coordinate check.
+- Valheim 1.0.21 original Windows client and dedicated-server assemblies. Both contain the location hash index used to recognize a placed Odin's Hollow entrance after removal.
 - EWD 1.79, SHA-256 `1058952168312C0D1DE76D641CA3B38A5F4E44CC84B069D4F007B63226D0DB5D`.
 - Valheim 1.0.20 original managed assemblies. No publicized game reference or new runtime mod dependency was added.
 

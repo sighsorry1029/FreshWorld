@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using BepInEx.Bootstrap;
+using HarmonyLib;
 using UnityEngine;
 
 namespace FreshWorld.Engine;
@@ -14,6 +15,10 @@ namespace FreshWorld.Engine;
 internal sealed class OdinsHollowDungeons
 {
     private const string LocationName = "OdinsHollowDungeon";
+    private const string PluginGuid = "org.bepinex.plugins.odinshollow";
+    private static readonly int LocationHash = LocationName.GetStableHashCode();
+    private static readonly AccessTools.FieldRef<ZoneSystem, Dictionary<int, ZoneSystem.ZoneLocation>> LocationsByHash =
+        AccessTools.FieldRefAccess<ZoneSystem, Dictionary<int, ZoneSystem.ZoneLocation>>("m_locationsByHash");
     private static readonly int LayoutKey = "OH_DG_Layout".GetStableHashCode();
     private static readonly int IdKey = "OH_DG_Id".GetStableHashCode();
     private static readonly int PackKey = "OH_Pack".GetStableHashCode();
@@ -26,11 +31,24 @@ internal sealed class OdinsHollowDungeons
     private LayoutContract? contract;
     private object? startRoom;
     private int refreshedFrame = -1;
-    public bool IsAvailable => contract != null || roots.Count > 0;
+    private bool hasTaggedObjects;
+    public static bool IsInstalled => Chainloader.PluginInfos.ContainsKey(PluginGuid);
+    public bool IsAvailable => contract != null || roots.Count > 0 || hasTaggedObjects;
+
+    public static void CheckMissingOwner(ZoneSystem world)
+    {
+        // Vanilla restores saved location instances through this hash index. Usually this is a single miss.
+        if (LocationsByHash(world).TryGetValue(LocationHash, out var definition) && IsDungeonLocation(definition) &&
+            world.m_locationInstances.Values.Any(instance => instance.m_placed && ReferenceEquals(instance.m_location, definition)))
+            throw new InvalidOperationException("A placed Odin's Hollow entrance requires the owning mod before reset.");
+    }
+
+    private static bool IsDungeonLocation(ZoneSystem.ZoneLocation location) =>
+        NativePlacement.IsValidLocationPrefab(location) && location.m_prefab.Name == LocationName;
 
     public IEnumerator Initialize(Action requireWorld)
     {
-        var definition = ZoneSystem.instance.m_locations.FirstOrDefault(location => location.m_prefab.Name == LocationName);
+        var definition = ZoneSystem.instance.m_locations.FirstOrDefault(IsDungeonLocation);
         if (definition == null) yield break;
         contract = new LayoutContract();
         var reference = definition.m_prefab;
@@ -54,18 +72,25 @@ internal sealed class OdinsHollowDungeons
         finally { if (acquired) reference.Release(); }
     }
 
-    public void Capture()
+    public static bool HasSavedData(ZDO zdo) => IsRoot(zdo) || zdo.GetInt(IdKey) != 0;
+
+    public void Capture(IEnumerable<ZDO>? snapshot = null)
     {
-        var objects = GameWorld.AllZDOs().Where(zdo => zdo.IsValid()).ToArray();
+        var objects = snapshot ?? GameWorld.AllZDOs();
         foreach (var zdo in objects)
-            if (IsRoot(zdo)) Remember(zdo);
+            if (zdo.IsValid() && IsRoot(zdo)) Remember(zdo);
         Reindex();
         foreach (var zdo in objects)
-            if (owners.TryGetValue(zdo.GetInt(IdKey), out var owner)) RememberLinks(zdo, owner);
+        {
+            if (!zdo.IsValid()) continue;
+            var id = zdo.GetInt(IdKey);
+            if (id != 0) hasTaggedObjects = true;
+            if (owners.TryGetValue(id, out var owner)) RememberLinks(zdo, owner);
+        }
     }
 
-    private static bool IsWorldRoot(ZDO zdo) => ZoneSystem.instance.m_locationProxyPrefab != null &&
-        zdo.GetPrefab() == ZoneSystem.instance.m_locationProxyPrefab.name.GetStableHashCode() && zdo.GetInt(LocationKey) == LocationName.GetStableHashCode();
+    private static bool IsWorldRoot(ZDO zdo) => zdo.GetInt(LocationKey) == LocationHash &&
+        ZoneSystem.instance.m_locationProxyPrefab != null && zdo.GetPrefab() == ZoneSystem.instance.m_locationProxyPrefab.name.GetStableHashCode();
     private static bool IsRoot(ZDO zdo) => IsWorldRoot(zdo) || !string.IsNullOrEmpty(zdo.GetString(LayoutKey));
 
     private bool Remember(ZDO zdo)
@@ -169,7 +194,7 @@ internal sealed class OdinsHollowDungeons
     public bool IsRetainedObject(ZDO zdo) => zdo.IsValid() && (Owner(zdo) != null || zdo.GetInt(IdKey) != 0);
 
     public DungeonResetPlan Prepare(HashSet<Vector2s> resetAnchors, Func<Vector2s, bool> canReset,
-        Func<ZDO, bool> retainForeign)
+        Func<ZDO, bool>? retainForeign)
     {
         Refresh();
         // A proxy can have appeared during native loading since the initial snapshot.
@@ -181,7 +206,7 @@ internal sealed class OdinsHollowDungeons
         var selected = roots.Values.Where(interior => IsWorldRoot(interior.Root) && resetAnchors.Contains(interior.Anchor)).ToArray();
         foreach (var anchor in resetAnchors)
             if (ZoneSystem.instance.m_locationInstances.TryGetValue(anchor, out var location) && location.m_placed &&
-                location.m_location != null && location.m_location.m_prefab.Name == LocationName && selected.Count(interior => interior.Anchor == anchor) != 1)
+                location.m_location != null && IsDungeonLocation(location.m_location) && selected.Count(interior => interior.Anchor == anchor) != 1)
                 throw new InvalidOperationException($"Odin's Hollow at {anchor}: a unique saved location proxy is required before reset.");
 
         var chosen = new HashSet<ZDOID>(selected.Select(interior => interior.RootId));
@@ -199,7 +224,7 @@ internal sealed class OdinsHollowDungeons
             {
                 var owner = Owner(zdo);
                 if (owner == null || !chosen.Contains(owner.RootId)) continue;
-                if (retainForeign(zdo)) throw new DungeonResetBlockedException($"Odin's Hollow {owner.RootId}: protected foreign dungeon content overlaps this reset; skipped.");
+                if (retainForeign?.Invoke(zdo) == true) throw new DungeonResetBlockedException($"Odin's Hollow {owner.RootId}: protected foreign dungeon content overlaps this reset; skipped.");
                 extras.Add(zdo);
             }
         }
@@ -216,7 +241,7 @@ internal sealed class OdinsHollowDungeons
         Validate();
         bool Retain(ZDO zdo)
         {
-            if (retainForeign(zdo)) return true;
+            if (retainForeign?.Invoke(zdo) == true) return true;
             var owner = Owner(zdo);
             return owner != null ? !chosen.Contains(owner.RootId) : zdo.GetInt(IdKey) != 0;
         }
@@ -281,7 +306,7 @@ internal sealed class OdinsHollowDungeons
         private readonly FieldInfo room, position, rotation, bounds, center, half, boxRotation;
         public LayoutContract()
         {
-            if (!Chainloader.PluginInfos.TryGetValue("org.bepinex.plugins.odinshollow", out var plugin))
+            if (!Chainloader.PluginInfos.TryGetValue(PluginGuid, out var plugin))
                 throw new InvalidOperationException("Saved Odin's Hollow dungeons require the owning mod to resolve their interior before reset.");
             var assembly = plugin.Instance.GetType().Assembly;
             Type Require(string name) => assembly.GetType("OdinsHollow.DungeonGen." + name) ?? throw new InvalidOperationException("Odin's Hollow layout contract is missing: " + name);
