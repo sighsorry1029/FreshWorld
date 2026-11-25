@@ -57,14 +57,14 @@ namespace ExpandWorldData.Vegetation
         public static Dictionary<ZoneSystem.ZoneVegetation, string> Extra = new();
     }
 }
-public struct PrefabReference(bool valid, string? name, GameObject? asset = null)
+public struct PrefabReference(bool valid, string? cachedName, GameObject? asset = null)
 {
     public static int AssetReads;
-    private readonly string? m_name = name;
+    private readonly string? m_name = cachedName;
     public bool IsValid => valid;
     public bool IsLoaded => valid && asset != null;
     public GameObject Asset { get { AssetReads++; return asset ?? throw new InvalidOperationException("Asset access must not cause an extra load."); } }
-    public string Name => m_name ?? throw new InvalidOperationException("An unnamed invalid asset must not resolve its Name.");
+    public string name => m_name ?? throw new InvalidOperationException("An unnamed invalid asset must not resolve its Name.");
 }
 public sealed class ZoneSystem
 {

@@ -19,7 +19,7 @@ internal sealed class LocationFootprint
         Anchor = anchor;
         Center = location.m_position;
         _definition = location.m_location;
-        _id = _definition.m_prefab.Name;
+        _id = _definition.m_prefab.name;
         Radius = Math.Max(minimumRadius, _definition.m_exteriorRadius);
         Zones = Sectors(Center, Radius);
         // The native proxy and elevated dungeon belong to the registered anchor.
@@ -27,8 +27,8 @@ internal sealed class LocationFootprint
     }
 
     public bool Matches(ZoneSystem.LocationInstance location, bool allowGroundHeightChange = false) =>
-        ReferenceEquals(_definition, location.m_location) &&
-        string.Equals(_id, location.m_location.m_prefab.Name, StringComparison.Ordinal) &&
+        ReferenceEquals(_definition, location.m_location) && NativePlacement.IsValidLocationPrefab(location.m_location) &&
+        string.Equals(_id, location.m_location.m_prefab.name, StringComparison.Ordinal) &&
         Center.x == location.m_position.x && Center.z == location.m_position.z &&
         (Center.y == location.m_position.y || allowGroundHeightChange &&
             !float.IsNaN(location.m_position.y) && !float.IsInfinity(location.m_position.y)) &&

@@ -373,19 +373,20 @@ internal sealed class TrackedRegenerateLocations : RegenerateLocations, ITracked
         _tracker.Selected(ZonesToUpgrade);
         foreach (var zone in ZonesToUpgrade)
         {
-            if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out var location))
+            if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out var location) &&
+                NativePlacement.IsValidLocationPrefab(location.m_location))
             {
-                var name = location.m_location?.m_prefab.Name;
-                if (name != null && _ids.Contains(name)) _selectedIds[zone] = name;
+                var name = location.m_location.m_prefab.name;
+                if (_ids.Contains(name)) _selectedIds[zone] = name;
             }
         }
         return text;
     }
 
     private bool IsStillSelected(Vector2s zone, ZoneSystem.LocationInstance location) =>
-        location.m_placed && location.m_location?.m_prefab != null &&
+        location.m_placed && NativePlacement.IsValidLocationPrefab(location.m_location) &&
         _selectedIds.TryGetValue(zone, out var expected) &&
-        string.Equals(expected, location.m_location.m_prefab.Name, StringComparison.Ordinal);
+        string.Equals(expected, location.m_location.m_prefab.name, StringComparison.Ordinal);
 
     protected override bool ExecuteZone(Vector2s zone)
     {

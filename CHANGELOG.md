@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.3
+
+- Fixed a Valheim 1.0.30 error that stopped maintenance after the world save when FreshWorld looked up location prefab names. Custom locations with a registered name remain eligible.
+- Updated terrain restoration for Valheim 1.0.30. Resource and zone-border resets now preserve the snow timer in the new terrain save format and still support terrain saved in the previous format.
+
 ## 1.2.2
 
 - Fixed a maintenance failure during Odin's Hollow detection when another location had an empty prefab reference.

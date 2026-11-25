@@ -44,7 +44,7 @@ internal sealed class OdinsHollowDungeons
     }
 
     private static bool IsDungeonLocation(ZoneSystem.ZoneLocation location) =>
-        NativePlacement.IsValidLocationPrefab(location) && location.m_prefab.Name == LocationName;
+        NativePlacement.IsValidLocationPrefab(location) && location.m_prefab.name == LocationName;
 
     public IEnumerator Initialize(Action requireWorld)
     {

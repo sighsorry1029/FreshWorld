@@ -210,7 +210,7 @@ static void PlanningPartialStages()
         ZoneSystem.instance.m_vegetation.Add(new("copper"));
         Fake.OnResolve = definition =>
         {
-            if (definition.m_prefab.Name == "broken") throw new Exception("A timed-out asset must not be resolved synchronously.");
+            if (definition.m_prefab.name == "broken") throw new Exception("A timed-out asset must not be resolved synchronously.");
         };
         using var time = Stopwatch.UseManualTime();
         Fake.OnMetadataReady = () =>
@@ -594,7 +594,7 @@ static void PlanningProgressDiagnostics()
 static void HiddenNeighborLocation()
 {
     Fake.AddZone(0); Fake.AddZone(2, location: "other"); Fake.AddZone(3, location: null); Fake.AddZone(6, location: null);
-    Fake.OnResolve = definition => { if (definition.m_prefab.Name == "other") definition.m_exteriorRadius = 100; };
+    Fake.OnResolve = definition => { if (definition.m_prefab.name == "other") definition.m_exteriorRadius = 100; };
     var run = Run(MultiZoneOptions()); True(run.Success); Equal(0, Fake.MetadataReferences);
     Sequence([0, 6], Changed("zones")); Equal(0, Changed("locations").Count);
     True(!GameWorld.IsGenerated(new(3, 0)));
@@ -789,8 +789,8 @@ static void NeighborLocationResolution()
     var resolved = new List<string>();
     Fake.OnResolve = definition =>
     {
-        resolved.Add(definition.m_prefab.Name);
-        if (definition.m_prefab.Name == "other") definition.m_exteriorRadius = 110;
+        resolved.Add(definition.m_prefab.name);
+        if (definition.m_prefab.name == "other") definition.m_exteriorRadius = 110;
     };
     var run = Run(MultiZoneOptions()); True(run.Success);
     Sequence(new[] { "cave", "other" }, resolved);

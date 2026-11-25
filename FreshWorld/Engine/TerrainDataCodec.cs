@@ -19,7 +19,7 @@ namespace FreshWorld.Engine
     }
 
     /// <summary>
-    /// Edits the uncompressed version-1 TCData package without touching its input buffer.
+    /// Edits uncompressed TCData versions 1 and 2 without touching the input buffer.
     /// Layout verified against TerrainComp.Save/Load in the installed Valheim assembly:
     /// 65x65 heights, and either current 65x65 or legacy 64x64 paint. Unknown formats fail closed.
     /// Radius/border reset behavior was informed by Upgrade World's ResetTerrain/ResetBorder;
@@ -71,9 +71,10 @@ namespace FreshWorld.Engine
             float operationX, float operationZ, float operationRadius)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
-            if (data.Length > MaximumBytes) throw Invalid("TCData exceeds the known version-1 size limit.");
+            if (data.Length > MaximumBytes) throw Invalid("TCData exceeds the supported size limit.");
             var reader = new Cursor(data);
-            if (reader.ReadInt() != 1) throw Invalid("Unsupported TCData version; the original terrain data was left untouched.");
+            var version = reader.ReadInt();
+            if (version != 1 && version != 2) throw Invalid("Unsupported TCData version; the original terrain data was left untouched.");
             var operations = reader.ReadInt();
             if (operations < 0) throw Invalid("TCData has a negative operation count.");
             reader.ReadFinite(); var operationY = reader.ReadFinite(); reader.ReadFinite();
@@ -90,9 +91,12 @@ namespace FreshWorld.Engine
                     throw Invalid("Unsupported TCData paint-grid dimensions.");
                 output.Write(data, paintHeader, sizeof(int));
                 changed += RewriteCells(reader, output, paintCount, paintCount == LegacyPaintCells ? 64 : VertexWidth, 4, resetPaint);
-                if (reader.Position != data.Length) throw Invalid("TCData contains an unknown trailing payload.");
+                // TerrainComp.Save v2 appends the time of its last snow update after the paint grid.
+                var trailerBytes = version == 2 ? sizeof(double) : 0;
+                if (data.Length - reader.Position != trailerBytes) throw Invalid("TCData has an invalid trailing payload.");
                 if (changed == 0) return new TerrainEdit(data, 0);
                 if (operations == int.MaxValue) throw Invalid("TCData operation count cannot be incremented safely.");
+                output.Write(data, reader.Position, trailerBytes);
 
                 // Update operation metadata as the native compiler does, so loaded clients refresh grass
                 // around the edited terrain rather than around an unrelated previous player operation.

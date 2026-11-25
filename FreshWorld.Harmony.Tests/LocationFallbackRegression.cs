@@ -107,6 +107,7 @@ internal static class LocationFallbackRegression
         var slots = Array.CreateInstance(slotType, 1);
         var slot = Activator.CreateInstance(slotType)!;
         slotType.GetField("m_assetID", All)!.SetValue(slot, asset);
+        slotType.GetField("m_assetName", All)!.SetValue(slot, "FixtureLocation");
         var callbacksField = slotType.GetField("m_loadedCallbacks", All)!;
         var callbacks = (IList)Activator.CreateInstance(callbacksField.FieldType)!;
         callbacksField.SetValue(slot, callbacks); slots.SetValue(slot, 0);
@@ -134,7 +135,6 @@ internal static class LocationFallbackRegression
             var source = Activator.CreateInstance(definitionType)!;
             var prefabField = definitionType.GetField("m_prefab")!;
             var prefab = Activator.CreateInstance(prefabField.FieldType, new[] { asset })!;
-            prefabField.FieldType.GetField("m_name", All)!.SetValue(prefab, "FixtureLocation");
             foreach (var target in new[] { definition, source })
             {
                 prefabField.SetValue(target, prefab);
@@ -143,6 +143,11 @@ internal static class LocationFallbackRegression
             var snapshot = Activator.CreateInstance(fallback, All, null, new[] { definition, source }, null)!;
             var current = fallback.GetMethod("IsCurrent", All)!;
             Check((bool)current.Invoke(snapshot, null)!, "original serialized definitions support a run-local bound snapshot without asset loading");
+            var named = Activator.CreateInstance(prefabField.FieldType, new[] { asset })!;
+            prefabField.FieldType.GetField("m_name", All)!.SetValue(named, "CustomLocation");
+            prefabField.SetValue(source, named);
+            Check(!(bool)current.Invoke(snapshot, null)!, "a custom name differing from the native loader name invalidates the snapshot");
+            prefabField.SetValue(source, prefab);
             definitionType.GetField("m_exteriorRadius")!.SetValue(definition, 50f);
             Check(!(bool)current.Invoke(snapshot, null)!, "changing registered radius invalidates the snapshot");
             definitionType.GetField("m_exteriorRadius")!.SetValue(definition, 40f);

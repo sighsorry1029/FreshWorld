@@ -249,7 +249,7 @@ public class ZoneSystem
     public void AddLocation(ZoneLocation definition)
     {
         m_locations.Add(definition);
-        m_locationsByHash.Add(definition.m_prefab.Name.GetStableHashCode(), definition);
+        m_locationsByHash.Add(definition.m_prefab.name.GetStableHashCode(), definition);
     }
     public List<ZoneLocation> m_locations = new();
     public GameObject m_locationProxyPrefab = new() { name = "LocationProxy" };
@@ -258,7 +258,7 @@ public class ZoneSystem
     public class LocationPrefab
     {
         public string? CachedName { get; private set; }
-        public string Name
+        public string name
         {
             get => CachedName ?? (IsValid ? "test-location" : throw new KeyNotFoundException("Unknown asset ID."));
             set => CachedName = value;

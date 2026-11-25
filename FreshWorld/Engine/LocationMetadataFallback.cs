@@ -21,13 +21,13 @@ internal sealed class LocationMetadataFallback
     private LocationMetadataFallback(ZoneSystem.ZoneLocation definition, ZoneSystem.ZoneLocation source)
     {
         _definition = definition; _source = source; _asset = definition.m_prefab.m_assetID;
-        _name = definition.m_prefab.Name; _exterior = definition.m_exteriorRadius; _interior = definition.m_interiorRadius;
+        _name = definition.m_prefab.name; _exterior = definition.m_exteriorRadius; _interior = definition.m_interiorRadius;
     }
 
     internal bool IsCurrent() => Matches(_definition) && Matches(_source);
     internal bool Revalidate() => IsCurrent() && LoaderHasStableMetadata(_asset, out _);
     private bool Matches(ZoneSystem.ZoneLocation definition) => definition.m_prefab.m_assetID.Equals(_asset) &&
-        definition.m_prefab.Name == _name && definition.m_exteriorRadius == _exterior && definition.m_interiorRadius == _interior;
+        definition.m_prefab.name == _name && definition.m_exteriorRadius == _exterior && definition.m_interiorRadius == _interior;
 
     internal static bool TryCapture(ZoneSystem zones, ZoneSystem.ZoneLocation definition, float beforeLoad,
         out LocationMetadataFallback? bounds, out string reason)

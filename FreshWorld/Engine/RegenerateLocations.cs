@@ -30,7 +30,7 @@ internal class RegenerateLocations : ZoneOperation
 
     private bool IsSelected(ZoneSystem.LocationInstance location) =>
         location.m_placed && NativePlacement.IsValidLocationPrefab(location.m_location) &&
-        _ids.Contains(location.m_location.m_prefab.Name);
+        _ids.Contains(location.m_location.m_prefab.name);
 
     protected override bool ExecuteZone(Vector2s zone)
     {

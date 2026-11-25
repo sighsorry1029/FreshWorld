@@ -15,7 +15,7 @@ internal static class DungeonScopeRegressions
     {
         BepInEx.Bootstrap.Chainloader.PluginInfos["org.bepinex.plugins.odinshollow"] = new();
         var prefab = new GameObject(); prefab.AddComponent(new OdinsHollow.DungeonGen.OHDungeon());
-        var definition = new ZoneSystem.ZoneLocation { m_prefab = new() { Name = "OdinsHollowDungeon", Asset = prefab } };
+        var definition = new ZoneSystem.ZoneLocation { m_prefab = new() { name = "OdinsHollowDungeon", Asset = prefab } };
         ZoneSystem.instance.AddLocation(definition);
         ZoneSystem.instance.m_locationInstances[new(0, 0)] = new() { m_placed = true, m_location = definition };
         ZoneSystem.instance.AddGenerated(new(0, 0)); ZoneSystem.instance.AddGenerated(new(1, 0));
@@ -63,7 +63,7 @@ internal static class DungeonScopeRegressions
     public static void OhUnreadableEntrance()
     {
         BepInEx.Bootstrap.Chainloader.PluginInfos["org.bepinex.plugins.odinshollow"] = new();
-        ZoneSystem.instance.m_locations.Add(new() { m_prefab = new() { Name = "OdinsHollowDungeon", IsValid = false } });
+        ZoneSystem.instance.m_locations.Add(new() { m_prefab = new() { name = "OdinsHollowDungeon", IsValid = false } });
         var init = new OdinsHollowDungeons().Initialize(() => {});
         try { while (init.MoveNext()) { } }
         catch (InvalidOperationException error) when (error.Message.Contains("readable registered location prefab")) { return; }
@@ -79,7 +79,7 @@ internal static class DungeonScopeRegressions
         Check(OdinsHollowDungeons.HasSavedData(chest), "missed tagged content");
         policy.Capture();
         Check(policy.IsAvailable && policy.IsRetainedObject(chest), "orphan chest lost its protection");
-        var definition = new ZoneSystem.ZoneLocation { m_prefab = new() { Name = "OdinsHollowDungeon" } };
+        var definition = new ZoneSystem.ZoneLocation { m_prefab = new() { name = "OdinsHollowDungeon" } };
         world.AddLocation(definition);
         OdinsHollowDungeons.CheckMissingOwner(world);
         world.m_locationInstances[new(0, 0)] = new() { m_placed = true, m_location = definition };

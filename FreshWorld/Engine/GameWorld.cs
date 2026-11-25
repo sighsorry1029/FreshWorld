@@ -256,7 +256,8 @@ internal static class GameWorld
                 foreach (var entry in entries.Values)
                     if (manager.TryGetValue(entry.Id, out var zdo)) current[entry.Id] = zdo;
                 var locations = zones.Where(zone => ZoneSystem.instance.m_locationInstances.ContainsKey(zone)).Take(limit)
-                    .Select(zone => ZoneSystem.instance.m_locationInstances[zone].m_location?.m_prefab.Name ?? "unknown");
+                    .Select(zone => ZoneSystem.instance.m_locationInstances[zone].m_location)
+                    .Select(location => location != null && NativePlacement.IsValidLocationPrefab(location) ? location.m_prefab.name : "unknown");
                 warn($"Location group state: locations={string.Join(",", locations)}; " +
                     $"sectors={zones.Count} [{string.Join(",", zones.Take(16))}]; omittedSectors={Math.Max(0, zones.Count - 16)}; plannedUtc={plannedUtc:O}; executionUtc={(executionUtc == default ? "not-started" : executionUtc.ToString("O"))}; " +
                     $"planned={entries.Count}; residual={current.Count}; plannedAbsentOrInvalid={entries.Keys.Count(id => !manager.TryGetValue(id, out var item) || !item.IsValid())}; detailLimit={limit}");

@@ -147,7 +147,7 @@ internal sealed class MaintenancePipeline
                 RequireWorld();
                 var ids = ResolveIds("location", _options.LocationIds,
                     _zones.m_locations.Where(location => location != null && NativePlacement.IsValidLocationPrefab(location))
-                        .Select(location => location.m_prefab.Name));
+                        .Select(location => location.m_prefab.name));
                 if (ids.Count > 0)
                 {
                     var candidates = LocationCandidates(protectedZones);
@@ -315,7 +315,7 @@ internal sealed class MaintenancePipeline
                 .Where(location => location.m_location != null && NativePlacement.IsValidLocationPrefab(location.m_location))
                 .Select(location => location.m_location).Distinct().ToArray();
             progress.Definitions = definitions.Length;
-            if (!definitions.Any(definition => managedIds.Contains(definition.m_prefab.Name)))
+            if (!definitions.Any(definition => managedIds.Contains(definition.m_prefab.name)))
             {
                 completed = true;
                 yield break;
@@ -331,7 +331,7 @@ internal sealed class MaintenancePipeline
                     frameTime.Restart();
                 }
                 var reference = definition.m_prefab;
-                var id = reference.Name;
+                var id = reference.name;
                 var acquired = false;
                 var metadataResolved = false;
                 var skipped = false;
@@ -402,7 +402,7 @@ internal sealed class MaintenancePipeline
                 progress.Prefab = null;
                 var definition = location.m_location;
                 if (definition == null || !NativePlacement.IsValidLocationPrefab(definition)) continue;
-                progress.Prefab = definition.m_prefab.Name;
+                progress.Prefab = definition.m_prefab.name;
                 if (!resolved.TryGetValue(definition, out var id) || !string.Equals(id, progress.Prefab, StringComparison.Ordinal))
                     throw new InvalidOperationException("Location definitions changed during planning; retry maintenance: " + progress.Prefab);
             }
@@ -413,7 +413,7 @@ internal sealed class MaintenancePipeline
             if (!_options.ZonesEnabled && _overlappingLocations.Count > 0)
             {
                 var examples = _overlappingLocations.Take(8).Select(anchor =>
-                    _zones.m_locationInstances[anchor].m_location.m_prefab.Name + " at " + anchor);
+                    _zones.m_locationInstances[anchor].m_location.m_prefab.name + " at " + anchor);
                 _warn($"Location reset: {_overlappingLocations.Count} overlapping location footprints preserved ({string.Join(", ", examples)}). Their zones are reserved; review location placement and LocationResetRadii before retrying.");
             }
             _log($"Location plan: {_managedLocations.Count} managed locations; {_reservedLocationZones.Count} sectors excluded from individual resets; {_locationZoneGroups.Count} zone groups; {progress.Definitions} definitions in {progress.Timer.Elapsed.TotalSeconds:F1}s.");
@@ -441,7 +441,7 @@ internal sealed class MaintenancePipeline
             progress.Prefab = null;
             var location = pair.Value;
             if (location.m_location == null || !NativePlacement.IsValidLocationPrefab(location.m_location)) continue;
-            var id = location.m_location.m_prefab.Name;
+            var id = location.m_location.m_prefab.name;
             progress.Prefab = id;
             overrides.TryGetValue(id, out var minimumRadius);
             var footprint = new LocationFootprint(pair.Key, location, minimumRadius);
@@ -455,7 +455,7 @@ internal sealed class MaintenancePipeline
         foreach (var footprint in _locationFootprints.Values)
         {
             if (!_zones.m_locationInstances.TryGetValue(footprint.Anchor, out var instance) ||
-                !_skippedLocationPrefabs.Contains(instance.m_location.m_prefab.Name)) continue;
+                !_skippedLocationPrefabs.Contains(instance.m_location.m_prefab.name)) continue;
             _skippedLocationInstances++;
             excludedSeeds.UnionWith(footprint.Zones);
             for (var x = Math.Max(short.MinValue, footprint.Anchor.x - 1); x <= Math.Min(short.MaxValue, footprint.Anchor.x + 1); x++)
@@ -567,13 +567,13 @@ internal sealed class MaintenancePipeline
         if (_locationGroupAnchors.TryGetValue(anchor, out var representative) &&
             !HasUnchangedGroupLocations(_locationZoneGroups[representative])) return false;
         if (_overlappingLocations.Contains(anchor) ||
-            !_zones.m_locationInstances.TryGetValue(anchor, out var location) || !location.m_placed || location.m_location == null ||
-            _skippedLocationPrefabs.Contains(location.m_location.m_prefab.Name)) return false;
+            !_zones.m_locationInstances.TryGetValue(anchor, out var location) || !location.m_placed || !NativePlacement.IsValidLocationPrefab(location.m_location) ||
+            _skippedLocationPrefabs.Contains(location.m_location.m_prefab.name)) return false;
         if (!_locationFootprints.TryGetValue(anchor, out var footprint))
         {
             // Full runs retain live single-zone supplements. A newly introduced multi-zone
             // location must wait for the next reservation plan, never expand this run's scope.
-            if (_options.LocationResetRadii.ContainsKey(location.m_location.m_prefab.Name)) return false;
+            if (_options.LocationResetRadii.ContainsKey(location.m_location.m_prefab.name)) return false;
             footprint = new LocationFootprint(anchor, location);
             if (footprint.Zones.Count != 1 || _reservedLocationZones.Contains(anchor)) return false;
             _locationFootprints.Add(anchor, footprint);
@@ -618,14 +618,14 @@ internal sealed class MaintenancePipeline
             var locationIds = new HashSet<string>(_options.LocationIds, StringComparer.Ordinal);
             locationIds.IntersectWith(_zones.m_locations
                 .Where(location => location != null && NativePlacement.IsValidLocationPrefab(location))
-                .Select(location => location.m_prefab.Name));
+                .Select(location => location.m_prefab.name));
             var locationCandidates = new HashSet<Vector2s>(supplements);
             locationCandidates.ExceptWith(_reservedLocationZones);
             locationCandidates.UnionWith(_options.ZonesEnabled ? (IEnumerable<Vector2s>)_locationGroupAnchors.Keys : _managedLocations);
             foreach (var zone in locationCandidates)
                 if (generated.Contains(zone) && _zones.m_locationInstances.TryGetValue(zone, out var location) && location.m_placed &&
                     NativePlacement.IsValidLocationPrefab(location.m_location) &&
-                    locationIds.Contains(location.m_location.m_prefab.Name) && CanResetLocation(zone))
+                    locationIds.Contains(location.m_location.m_prefab.name) && CanResetLocation(zone))
                     eligible.Add(LocationSelectionKey(zone));
         }
 

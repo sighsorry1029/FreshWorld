@@ -82,18 +82,18 @@ public class DungeonDB
     public bool SkipSaving() => false;
 }
 public sealed class Prefab(string id) { public string name = id; }
-public readonly record struct LocationPrefab(string Name)
+public readonly record struct LocationPrefab(string name)
 {
     public bool IsValid => !Fake.NamedMetadata;
     public bool IsLoaded { get { Fake.OnMetadataReady?.Invoke(); return Fake.MetadataReady; } }
-    public void LoadAsync() { Fake.LoadingMetadata = Name; Fake.MetadataReferences++; Fake.OnMetadataLoad?.Invoke(); }
+    public void LoadAsync() { Fake.LoadingMetadata = name; Fake.MetadataReferences++; Fake.OnMetadataLoad?.Invoke(); }
     public void Release() { Fake.MetadataReferences--; Fake.OnMetadataRelease?.Invoke(); }
     public UnityEngine.GameObject Asset
     {
         get
         {
-            var name = Name;
-            var definition = ZoneSystem.instance.m_locationInstances.Values.First(location => location.m_location.m_prefab.Name == name).m_location;
+            var prefabName = name;
+            var definition = ZoneSystem.instance.m_locationInstances.Values.First(location => location.m_location.m_prefab.name == prefabName).m_location;
             Fake.OnResolve?.Invoke(definition);
             return new();
         }
@@ -197,7 +197,7 @@ internal static class Fake
         if (marker) MarkerZones.Add(zone);
         if (location == null) return;
         var prefab = new ZoneSystem.ZoneLocation(location);
-        if (!ZoneSystem.instance.m_locations.Any(loc => loc.m_prefab.Name == location))
+        if (!ZoneSystem.instance.m_locations.Any(loc => loc.m_prefab.name == location))
             ZoneSystem.instance.m_locations.Add(prefab);
         ZoneSystem.instance.m_locationInstances[zone] = new()
         {
@@ -297,8 +297,8 @@ namespace FreshWorld.Engine
         private readonly ZoneSystem.ZoneLocation definition;
         private readonly string id;
         private readonly float radius;
-        private LocationMetadataFallback(ZoneSystem.ZoneLocation value) { definition = value; id = value.m_prefab.Name; radius = value.m_exteriorRadius; }
-        internal bool IsCurrent() => definition.m_prefab.Name == id && definition.m_exteriorRadius == radius;
+        private LocationMetadataFallback(ZoneSystem.ZoneLocation value) { definition = value; id = value.m_prefab.name; radius = value.m_exteriorRadius; }
+        internal bool IsCurrent() => definition.m_prefab.name == id && definition.m_exteriorRadius == radius;
         internal bool Revalidate() => IsCurrent();
         internal static void ReadLoadState(ZoneSystem.ZoneLocation definition, out bool? isLoading, out float? progress)
         {
@@ -311,7 +311,7 @@ namespace FreshWorld.Engine
             out LocationMetadataFallback? bounds, out string reason)
         {
             reason = "unverified fixture metadata";
-            bounds = Fake.TrustedMetadata.Contains(value.m_prefab.Name) && beforeLoad > 0 &&
+            bounds = Fake.TrustedMetadata.Contains(value.m_prefab.name) && beforeLoad > 0 &&
                 value.m_exteriorRadius == beforeLoad ? new(value) : null;
             return bounds != null;
         }
@@ -319,7 +319,7 @@ namespace FreshWorld.Engine
     public static class NativePlacement
     {
         public static bool CanSpawnLocation(ZoneSystem zones, ZoneSystem.ZoneLocation location) { Fake.OnMetadataReady?.Invoke(); Fake.OnResolve?.Invoke(location); return Fake.MetadataReady; }
-        public static bool IsValidLocationPrefab(ZoneSystem.ZoneLocation location) => !string.IsNullOrWhiteSpace(location.m_prefab.Name);
+        public static bool IsValidLocationPrefab(ZoneSystem.ZoneLocation location) => !string.IsNullOrWhiteSpace(location.m_prefab.name);
         public static List<UnityEngine.GameObject> TemporaryObjects(ZoneSystem zones) => zones.m_tempSpawnedObjects;
     }
     public static class GameWorld
@@ -379,7 +379,7 @@ namespace FreshWorld.Engine
         {
             if (LocationIds != null)
                 ZonesToUpgrade = ZonesToUpgrade.Where(zone => ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out var location) &&
-                    LocationIds.Contains(location.m_location.m_prefab.Name)).ToArray();
+                    LocationIds.Contains(location.m_location.m_prefab.name)).ToArray();
             return base.OnInit();
         }
         protected override void OnStart()

@@ -15,12 +15,13 @@ internal static class Program
         catch (InvalidDataException) { return; }
         throw new Exception("Malformed TCData was not rejected");
     }
-    private static byte[] Create(IEnumerable<int>? heights = null, IEnumerable<int>? paint = null, int paintWidth = 65, int operations = 41)
+    private static byte[] Create(IEnumerable<int>? heights = null, IEnumerable<int>? paint = null, int paintWidth = 65, int operations = 41,
+        double? snowTime = null)
     {
         var heightCells = new HashSet<int>(heights ?? Array.Empty<int>());
         var paintCells = new HashSet<int>(paint ?? Array.Empty<int>());
         using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
-        writer.Write(1); writer.Write(operations); writer.Write(123f); writer.Write(456f); writer.Write(789f); writer.Write(4f);
+        writer.Write(snowTime.HasValue ? 2 : 1); writer.Write(operations); writer.Write(123f); writer.Write(456f); writer.Write(789f); writer.Write(4f);
         writer.Write(65 * 65);
         for (var i = 0; i < 65 * 65; i++)
         {
@@ -33,18 +34,20 @@ internal static class Program
             writer.Write(paintCells.Contains(i));
             if (paintCells.Contains(i)) { writer.Write(0.1f); writer.Write(0.2f); writer.Write(0.3f); writer.Write(0.4f); }
         }
+        if (snowTime.HasValue) writer.Write(snowTime.Value);
         return stream.ToArray();
     }
-    private static (int Operations, Dictionary<int, float[]> Height, Dictionary<int, float[]> Paint, int PaintCount, float X, float Y, float Z, float Radius) Read(byte[] data)
+    private static (int Operations, Dictionary<int, float[]> Height, Dictionary<int, float[]> Paint, int PaintCount, float X, float Y, float Z, float Radius) Read(byte[] data, double? snowTime = null)
     {
         using var stream = new MemoryStream(data); using var reader = new BinaryReader(stream);
-        Assert(reader.ReadInt32() == 1, "version changed"); var operations = reader.ReadInt32();
+        Assert(reader.ReadInt32() == (snowTime.HasValue ? 2 : 1), "version changed"); var operations = reader.ReadInt32();
         var x = reader.ReadSingle(); var y = reader.ReadSingle(); var z = reader.ReadSingle(); var radius = reader.ReadSingle();
         var heights = new Dictionary<int, float[]>(); var paints = new Dictionary<int, float[]>();
         var heightCount = reader.ReadInt32();
         for (var i = 0; i < heightCount; i++) if (reader.ReadBoolean()) heights[i] = new[] { reader.ReadSingle(), reader.ReadSingle() };
         var paintCount = reader.ReadInt32();
         for (var i = 0; i < paintCount; i++) if (reader.ReadBoolean()) paints[i] = new[] { reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle() };
+        if (snowTime.HasValue) Assert(reader.ReadDouble() == snowTime.Value, "snow timer changed");
         Assert(stream.Position == stream.Length, "trailing output bytes");
         return (operations, heights, paints, paintCount, x, y, z, radius);
     }
@@ -132,10 +135,33 @@ internal static class Program
                     Assert(truncated.SequenceEqual(before), "malformed input was mutated");
                 }
             });
+            Test("version 2 keeps the snow timer through radius and border repair", () =>
+            {
+                const double snowTime = 1234567.89012345;
+                const int center = 32 * 65 + 32, corner = 0;
+                var source = Create(new[] { center, corner }, new[] { center, corner }, snowTime: snowTime);
+                var circle = TerrainDataCodec.ResetCircle(source, 0, 0, 0, 0, 1);
+                var first = Read(circle.Data, snowTime);
+                Assert(circle.ChangedCells == 2 && first.Operations == 42 && first.Height.Keys.Single() == corner &&
+                    first.Paint.Keys.Single() == corner, "radius changed the wrong cells");
+                var border = TerrainDataCodec.ResetBorders(circle.Data, BorderDirection.West);
+                var second = Read(border.Data, snowTime);
+                Assert(border.ChangedCells == 1 && second.Operations == 43 && second.Height.Count == 0 &&
+                    second.Paint.Keys.Single() == corner, "border repair must keep the neighboring paint cell");
+                var noop = TerrainDataCodec.ResetBorders(border.Data, BorderDirection.West);
+                Assert(!noop.Changed && ReferenceEquals(noop.Data, border.Data), "no-op rewrote saved data");
+            });
+            Test("version 2 refuses truncated or oversized timers even on untouched tiles", () =>
+            {
+                var source = Create(snowTime: 123.5);
+                for (var missing = 1; missing <= sizeof(double); missing++)
+                    Reject(() => TerrainDataCodec.ResetBorders(source.Take(source.Length - missing).ToArray(), BorderDirection.West));
+                Reject(() => TerrainDataCodec.ResetBorders(source.Concat(new byte[] { 0 }).ToArray(), BorderDirection.West));
+            });
             Test("unknown versions, dimensions, flags, trailing data and nonfinite payloads reject", () =>
             {
                 var source = Create(new[] { 0 });
-                var version = (byte[])source.Clone(); SetInt(version, 0, 2); Reject(() => TerrainDataCodec.ResetCircle(version, 0, 0, 0, 0, 20));
+                var version = (byte[])source.Clone(); SetInt(version, 0, 3); Reject(() => TerrainDataCodec.ResetCircle(version, 0, 0, 0, 0, 20));
                 var heights = (byte[])source.Clone(); SetInt(heights, 24, 4096); Reject(() => TerrainDataCodec.ResetBorders(heights, BorderDirection.West));
                 var paint = Create(); SetInt(paint, 28 + 4225, 4000); Reject(() => TerrainDataCodec.ResetBorders(paint, BorderDirection.West));
                 var flag = (byte[])source.Clone(); flag[28] = 2; Reject(() => TerrainDataCodec.ResetBorders(flag, BorderDirection.West));
