@@ -19,13 +19,13 @@ internal static class ConfigRegressions
             throw new Exception("Invalid config should throw ArgumentException");
         }
 
-        Check("exact twenty-five bindings in five sections and game-day defaults", () =>
+        Check("exact bindings in five sections and game-day defaults", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var snapshot = cfg.Capture();
             var keys = new[] { "General.Enabled", "General.AutomaticResetPercent", "General.Mode", "General.GameDayInterval", "General.DailyTimes",
                 "Reset.Zones", "Reset.Resources", "Reset.Locations", "Reset.ResourceIds", "Reset.TerrainResourceIds", "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius",
                 "Protection.ZoneSafeZones", "Protection.ResourceSafeZones", "Protection.ResourceExcludedZones", "Protection.LocationSafeZones", "Protection.AlwaysProtectedPrefabs", "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.PieceBlacklist",
-                "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.DungeonProtection", "Path of Valheiman.MerchantProtection", "Path of Valheiman.TreasureProtection", "Path of Valheiman.AzuriteVegetation" };
+                "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.DungeonProtection", "Path of Valheiman.MerchantProtection", "Path of Valheiman.TreasureProtection", "Path of Valheiman.AzuriteVegetation", "Path of Valheiman.RunicVeinVegetation" };
             Assert(file.BoundKeys.OrderBy(x => x).SequenceEqual(keys.OrderBy(x => x)), "exposed cfg does not match the expected keys");
             Assert(snapshot.Options.AutomaticResetPercent == 100, "default must preserve full reset scope");
             Assert(snapshot.Options.ResourceExcludedZones.Length == 0, "default must not exclude resource zones");
@@ -135,16 +135,18 @@ internal static class ConfigRegressions
                 original.Options.PathOfValheimMerchantProtectionEnabled && original.Options.PathOfValheimTreasureProtectionEnabled && file.SaveCount == 0,
                 "edits mutated the existing run or Capture wrote the cfg");
         });
-        Check("PoV vegetation is opt-in and independent of reset switches", () =>
+        Check("PoV ores renew by default and can be disabled independently", () =>
         {
             var file = new ConfigFile(); var cfg = new FreshWorldConfig(file); var original = cfg.Capture();
-            Assert(!original.PathOfValheimAzuriteVegetationEnabled, "regeneration defaults");
+            Assert(original.PathOfValheimAzuriteVegetationEnabled && original.RunicVeinVegetation, "regeneration defaults");
             file.Set("General", "Enabled", "false"); file.Set("Reset", "Resources", "false");
-            file.Set("Path of Valheiman", "AzuriteVegetation", "true");
+            file.Set("Path of Valheiman", "AzuriteVegetation", "false");
             var current = cfg.Capture();
-            Assert(current.PathOfValheimAzuriteVegetationEnabled, "independent regeneration");
+            Assert(!current.PathOfValheimAzuriteVegetationEnabled && current.RunicVeinVegetation, "independent regeneration");
+            file.Set("Path of Valheiman", "RunicVeinVegetation", "false");
+            Assert(!cfg.Capture().RunicVeinVegetation && current.RunicVeinVegetation, "captured runic policy changed");
             file.Set("Path of Valheiman", "AzuriteVegetation", "maybe"); Invalid(() => cfg.Capture());
-            Assert(!original.PathOfValheimAzuriteVegetationEnabled && file.SaveCount == 0, "old snapshot or file changed");
+            Assert(original.PathOfValheimAzuriteVegetationEnabled && original.RunicVeinVegetation && file.SaveCount == 0, "old snapshot or file changed");
         });
         Check("startup and performance remain fixed and removed keys stay unbound", () =>
         {

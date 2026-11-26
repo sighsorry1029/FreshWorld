@@ -102,7 +102,7 @@ internal sealed class MaintenancePipeline
 
             if (_options.ZonesEnabled)
             {
-                var args = Parameters(_options.ZoneSafeZones);
+                var args = Parameters(_options.ZoneSafeZones, fullZoneReset: true);
                 args.ZoneGroups = _locationZoneGroups;
                 // Retain the initial protection set, and recheck the current set as the batch advances.
                 var candidates = _selectedZones == null ? generated : new HashSet<Vector2s>(generated);
@@ -127,6 +127,13 @@ internal sealed class MaintenancePipeline
                     .Select(vegetation => vegetation.m_prefab.name).ToArray();
                 var terrainIds = ResolveIds("terrain vegetation", _options.TerrainVegetationIds, registry);
                 var vegetationIds = ResolveIds("vegetation", _options.VegetationIds, registry);
+                // Full zone generation owns natural runic deposits. Replaying EWD entries for a
+                // retained deposit in either supplemental pass would create a second copy.
+                if (_pathOfValheim.HasRunicVeins)
+                {
+                    terrainIds.ExceptWith(PathOfValheimProtection.RunicPrefabs);
+                    vegetationIds.ExceptWith(PathOfValheimProtection.RunicPrefabs);
+                }
                 // A duplicated prefab follows the terrain group's policy and is regenerated only once.
                 vegetationIds.ExceptWith(terrainIds);
                 yield return ResetVegetationGroup("Vegetation and terrain reset", terrainIds,
@@ -678,10 +685,14 @@ internal sealed class MaintenancePipeline
         !_planningExcludedZones.Contains(zone) &&
         _invasions.CanResetZone(zone) && _alwaysProtected.CanResetZone(zone);
 
-    private OperationParameters Parameters(int safeZones)
+    private OperationParameters Parameters(int safeZones, bool fullZoneReset = false)
     {
         var hollow = _odinsHollow;
-        Func<ZDO, bool>? pov = _pathOfValheim.HasDungeons ? _pathOfValheim.IsRetainedDungeonObject : null;
+        bool KeepForeign(ZDO zdo) =>
+            (_pathOfValheim.HasDungeons && _pathOfValheim.IsRetainedDungeonObject(zdo)) ||
+            (_pathOfValheim.HasRunicVeins && (!fullZoneReset || !RunicVeinGeneration.Renewing) &&
+             PathOfValheimProtection.IsNaturalRunicVein(zdo));
+        Func<ZDO, bool>? pov = _pathOfValheim.HasDungeons || _pathOfValheim.HasRunicVeins ? KeepForeign : null;
         Func<ZDO, bool>? retain = pov;
         if (hollow != null)
             retain = pov == null ? hollow.IsRetainedObject : zdo => pov(zdo) || hollow.IsRetainedObject(zdo);
@@ -698,7 +709,8 @@ internal sealed class MaintenancePipeline
             AlwaysProtected = _alwaysProtected,
             RetainObject = retain,
             PrepareDungeonReset = hollow == null ? null : anchors => hollow.Prepare(anchors,
-                zone => CanResetZone(zone, safeZones), pov)
+                zone => CanResetZone(zone, safeZones), zdo => pov?.Invoke(zdo) == true ||
+                    (PathOfValheimProtection.IsNaturalRunicVein(zdo) && !anchors.Contains(ZoneSystem.GetZone(zdo.GetPosition()))))
         };
     }
 

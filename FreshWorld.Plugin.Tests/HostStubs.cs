@@ -144,6 +144,14 @@ public sealed class EnvMan
 
 namespace FreshWorld.Engine
 {
+    internal sealed class RunicVeinGeneration : IDisposable
+    {
+        internal static RunicVeinGeneration? TryCreate(Action<string> warn) => null;
+        internal void Configure(bool enabled) { }
+        internal void CheckBeforeMaintenance() { }
+        internal void EndSession() { }
+        public void Dispose() { }
+    }
     internal sealed class PathOfValheimAzurite : IDisposable
     {
         internal static int Cancellations;

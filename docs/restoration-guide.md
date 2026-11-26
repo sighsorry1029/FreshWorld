@@ -249,7 +249,8 @@ BlightProtection = true
 DungeonProtection = true
 MerchantProtection = true
 TreasureProtection = true
-AzuriteVegetation = false
+AzuriteVegetation = true
+RunicVeinVegetation = true
 ```
 
 These options are synchronized by ServerSync and support host cfg hot reload. Protection changes apply to the next run. Disabling a protection option removes only that PoV protection; other protection rules still apply.
@@ -270,9 +271,11 @@ Run `freshworld pov` to restore missing `PT_WardenAltar`, `PT_PowerAltar`, and p
 
 Lost Warden offerings and personal dungeon sessions cannot be recovered. Stored X/Z coordinates are rounded; original height and direction are absent. FreshWorld reconstructs height and uses a stable direction, so inspect repaired entrances and their return positions. Protection does not prevent native placement from extending across a zone boundary. See [PoV compatibility and recovery](path-of-valheim-compatibility.md) for matching rules and validation limits.
 
-### Azurite vegetation
+### Runic ore and azurite
 
-Enable `AzuriteVegetation` to place natural `PT_AzuriteVein` through the game's vegetation system. EWD is optional: existing definitions take priority, including disabled entries; otherwise FreshWorld supplies defaults for Mountains and the other PoV resource biomes. Zone resets can then replenish veins when the zones generate again. To replenish them in retained zones through resource reset, add `PT_AzuriteVein` to `ResourceIds`. It is not added to resource lists automatically.
+With the default `RunicVeinVegetation=true`, the host can place a runic deposit when a zone first generates or generates again after a full reset. Resource and location resets keep surviving natural deposits. Set this option to `false` to keep PoV's one-time placement and preserve surviving deposits during full zone resets as well.
+
+With the default `AzuriteVegetation=true`, the host places natural `PT_AzuriteVein` through the game's vegetation system. Existing definitions take priority, including disabled EWD entries. FreshWorld supplies defaults for Mountains and the other PoV resource biomes when needed. Zone resets can replenish veins when those zones generate again. To replenish azurite during resource resets in retained zones, add `PT_AzuriteVein` to `ResourceIds`.
 
 PoV's initial world-wide natural placement and timed natural regeneration are disabled while this option is on. The original vein prefab, Divine promotion, mining, and Blight's own vein creation remain in use. New veins start plain and can qualify for promotion again; previous grades are not restored. Blight replenishment pauses during FreshWorld maintenance and resumes after cleanup.
 

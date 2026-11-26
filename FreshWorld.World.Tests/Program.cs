@@ -51,6 +51,7 @@ var tests = new (string Name, Action Body)[]
     ("PoV Blight protects linked objectives and fallback wardens only with an active controller", PovBlight),
     ("PoV protection observes late controllers and retains completion only until the next run", PovBlightLifetime),
     ("PoV guards recursive and group deletion without blocking native event cleanup", PovDeletion),
+    ("zone reset preserves a natural runic deposit and its damage while deleting its neighbors", RunicVeinRetention),
     ("PoV vegetation checks saved sectors and borders but excludes queued deletions", PovVegetationNeighbors),
     ("sector and world enumeration return snapshots", Snapshots),
     ("native sector query includes portals and isolates shared out-of-map buckets", SectorPortals),
@@ -1500,6 +1501,23 @@ static void PovDeletion()
     catch (InvalidOperationException) { }
     // PoV's normal cleanup calls the game, never FreshWorld's deletion helper.
     ZDOMan.instance.DestroyZDO(child); True(!child.Valid);
+}
+
+static void RunicVeinRetention()
+{
+    var zone = new Vector2s(0, 0);
+    ZoneSystem.instance.AddGenerated(zone);
+    var natural = new ZDO(2, "PT_VeinHotIron", new()) { Owner = 42 };
+    natural.Bools[PathOfValheimProtection.RunicSeeded] = true;
+    natural.Ints["health".GetStableHashCode()] = 17;
+    var ordinary = new ZDO(1, "rock4_copper", new()) { Spawned = natural.m_uid };
+    var unseeded = new ZDO(3, "PT_VeinHotIron", new());
+    foreach (var item in new[] { ordinary, natural, unseeded }) ZDOMan.instance.Add(item);
+    var reset = new ProbeReset(new() { RetainObject = PathOfValheimProtection.IsNaturalRunicVein });
+    True(reset.Run(zone));
+    True(!GameWorld.IsGenerated(zone) && !ordinary.Valid && !unseeded.Valid);
+    True(ReferenceEquals(natural, GameWorld.GetZDOs(zone).Single()) && natural.Owner == 42);
+    Equal(17, natural.GetInt("health".GetStableHashCode()));
 }
 
 static void PovVegetationNeighbors()

@@ -17,7 +17,7 @@ internal static class ConfigBindingRegression
         "Reset.LocationIds", "Reset.LocationResetRadii", "Reset.ResourceTerrainRadius", "Protection.ZoneSafeZones",
         "Protection.ResourceSafeZones", "Protection.ResourceExcludedZones", "Protection.LocationSafeZones", "Protection.PieceBlacklist",
         "EpicLoot.EpicLootProtection", "EpicLoot.EpicLootBountyProtection", "Protection.AlwaysProtectedPrefabs",
-        "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.DungeonProtection", "Path of Valheiman.MerchantProtection", "Path of Valheiman.TreasureProtection", "Path of Valheiman.AzuriteVegetation"
+        "Path of Valheiman.AltarProtection", "Path of Valheiman.BlightProtection", "Path of Valheiman.DungeonProtection", "Path of Valheiman.MerchantProtection", "Path of Valheiman.TreasureProtection", "Path of Valheiman.AzuriteVegetation", "Path of Valheiman.RunicVeinVegetation"
     };
 
     internal static int Run()
@@ -26,8 +26,9 @@ internal static class ConfigBindingRegression
         var checks = new List<(string Name, Action Body)>
         {
             ("existing cfg values survive Bind and explicit Save", ValidBinding),
+            ("an upgraded cfg keeps disabled azurite and enables the missing runic setting", UpgradeOreDefaults),
             ("changed cfg values survive Reload and produce the new snapshot", ValidReload),
-            ("all 25 lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
+            ("all lossless entries expose native choice metadata without clamping rules", PresentationMetadata)
         };
         var malformed = new (string Key, string Value)[]
         {
@@ -41,6 +42,7 @@ internal static class ConfigBindingRegression
             ("Path of Valheiman.MerchantProtection", "maybe"),
             ("Path of Valheiman.TreasureProtection", "maybe"),
             ("Path of Valheiman.AzuriteVegetation", "maybe"),
+            ("Path of Valheiman.RunicVeinVegetation", "maybe"),
             ("General.Mode", "ManualOnly"),
             ("General.Mode", "1"),
             ("General.Mode", @"GameDays\nDailyTimes"),
@@ -163,6 +165,22 @@ internal static class ConfigBindingRegression
         AssertSavedValues(fixture.Path, values);
     }
 
+    private static void UpgradeOreDefaults()
+    {
+        var values = ValidValues();
+        const string runic = "Path of Valheiman.RunicVeinVegetation";
+        values.Remove(runic);
+        using var fixture = new Fixture(values);
+        values.Add(runic, "true");
+        AssertRawValues(fixture.File, values);
+        fixture.File.Save();
+        AssertSavedValues(fixture.Path, values);
+        fixture.File.Reload();
+        var settings = fixture.Settings.Capture();
+        Require(!settings.PathOfValheimAzuriteVegetationEnabled && settings.RunicVeinVegetation,
+            "Upgrading the cfg lost the saved azurite policy or failed to enable runic renewal.");
+    }
+
     private static void PresentationMetadata()
     {
         using var fixture = new Fixture(ValidValues());
@@ -186,7 +204,7 @@ internal static class ConfigBindingRegression
             var expectsDrawer = key == "General.Enabled" || key == "General.GameDayInterval" || key == "General.AutomaticResetPercent" ||
                 key == "Reset.Zones" || key == "Reset.Resources" || key == "Reset.Locations" ||
                 key == "Reset.ResourceTerrainRadius" || key == "EpicLoot.EpicLootProtection" ||
-                key == "EpicLoot.EpicLootBountyProtection" || key == "Path of Valheiman.AltarProtection" || key == "Path of Valheiman.BlightProtection" || key == "Path of Valheiman.DungeonProtection" || key == "Path of Valheiman.MerchantProtection" || key == "Path of Valheiman.TreasureProtection" || key == "Path of Valheiman.AzuriteVegetation";
+                key == "EpicLoot.EpicLootBountyProtection" || key == "Path of Valheiman.AltarProtection" || key == "Path of Valheiman.BlightProtection" || key == "Path of Valheiman.DungeonProtection" || key == "Path of Valheiman.MerchantProtection" || key == "Path of Valheiman.TreasureProtection" || key == "Path of Valheiman.AzuriteVegetation" || key == "Path of Valheiman.RunicVeinVegetation";
             Require(expectsDrawer ? drawer is Action<ConfigEntryBase> : drawer == null,
                 key + " has an unexpected custom drawer contract.");
             if (IsChoiceKey(key)) AssertChoices(entry, choices, key);
@@ -358,6 +376,7 @@ internal static class ConfigBindingRegression
         ["Path of Valheiman.MerchantProtection"] = "true",
         ["Path of Valheiman.TreasureProtection"] = "true",
         ["Path of Valheiman.AzuriteVegetation"] = "false",
+        ["Path of Valheiman.RunicVeinVegetation"] = "false",
     };
 
     private static void Require(bool condition, string message)
@@ -394,7 +413,8 @@ internal static class ConfigBindingRegression
             {
                 text.Append('[').Append(section).AppendLine("]");
                 foreach (var key in ExpectedKeys.Where(key => key.StartsWith(section + ".", StringComparison.Ordinal)))
-                    text.Append(key.Substring(section.Length + 1)).Append(" = ").AppendLine(values[key]);
+                    if (values.TryGetValue(key, out var value))
+                        text.Append(key.Substring(section.Length + 1)).Append(" = ").AppendLine(value);
                 text.AppendLine();
             }
             System.IO.File.WriteAllText(Path, text.ToString(), new UTF8Encoding(false));

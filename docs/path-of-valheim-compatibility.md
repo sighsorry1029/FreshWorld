@@ -1,6 +1,6 @@
 # Path of Valheiman compatibility and recovery
 
-FreshWorld protects PoV objectives. The manual `freshworld pov` command restores missing Warden and Power altars and checks recorded Halls entrances. PoV handles gates that need terrain pads. Optional azurite vegetation changes natural resource placement only.
+FreshWorld protects PoV objectives. The manual `freshworld pov` command restores missing Warden and Power altars and checks recorded Halls entrances. PoV handles gates that need terrain pads. Natural azurite and runic ore deposits can renew when a fully reset zone generates again.
 
 ## Protection
 
@@ -77,9 +77,19 @@ This command does not create `PoV_HallMapSession`, runs, merchants, treasure cac
 
 Isolated regressions cover independent merchant/treasure settings in all reset stages, closed/dispensing/empty cache states, recursive deletion and native cleanup, original entrance identity and level, moved entrances, ambiguous records, record changes during save/height lookup, initialization failure, and repeat repair. ServerSync checks cover admin edits, invalid values, and host cfg reload. Debug compilation and original Valheim 1.0.21 metadata checks pass. These are not actual gameplay tests: still verify entry, return placement, existing personal-session reconnection, treasure dispensing, merchant departure, and save/restart with PoV in a host or dedicated session.
 
-## Optional azurite vegetation
+## Runic ore deposits
 
-`[Path of Valheiman] AzuriteVegetation=false` is opt-in, server-synced, and supports host cfg hot reload after maintenance finishes. It replaces the proposed timed-regeneration settings; there is no additional respawn timer or timer-record preservation. The manual repair command does not restore azurite.
+The default `[Path of Valheiman] RunicVeinVegetation=true` covers PoV's ten natural runic ore deposits. Scarlet Tin comes from tin drops and has no deposit of its own.
+
+The host can place a deposit when it first generates a zone or generates it again after a full reset. PoV's biome-weighted choice selects up to one deposit per 128 m cell. Only the zone containing its candidate can place it. Nearby saved deposits, buildings and registered locations can prevent placement. The new deposit follows PoV's normal ground settling and mining rules. Location-only and resource-only resets keep natural deposits. FreshWorld skips these deposit IDs in both resource lists.
+
+Set `RunicVeinVegetation=false` to use PoV's one-time placement. Surviving natural deposits keep their saved mining damage even if their zones reset. Fully mined deposits stay depleted.
+
+Changing the setting leaves existing deposits and PoV's world completion key alone. Enabling it does not refill explored zones immediately. While enabled, FreshWorld handles new zone placement and suppresses PoV's initial worldwide placement. Disabling it in a world without PoV's completion key can start that native pass. Explicit third-party spawners can independently add deposits. This option is separate from azurite and Blight.
+
+## Azurite vegetation
+
+`[Path of Valheiman] AzuriteVegetation` defaults to `true`. An existing cfg with an explicit `false` keeps PoV's native placement and timed regeneration. Both ore options sync from the server and support host cfg hot reload after maintenance finishes.
 
 When enabled on the host, FreshWorld blocks only PoV's natural `AzuriteVeins.ServerTick` and `RespawnTick`. It detaches and disposes a suspended native scan before changing policy or admitting maintenance. No PoV placement-complete keys or tunable dictionaries are changed. PoV's prefab registration, `AzuriteState` promotion, `Runecarver.DivineTouch`, Blight initial creation, adoption of nearby veins, and event cleanup remain intact. Periodic `BlightMist.Veins` is paused only during FreshWorld maintenance and its deferred cleanup; ordinary deletion queues do not stop it outside that boundary.
 

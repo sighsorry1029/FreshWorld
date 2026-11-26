@@ -163,6 +163,7 @@ internal static class Fake
 
     public static void Reset()
     {
+        FreshWorld.Engine.RunicVeinGeneration.Renewing = false;
         Calls = new(); Arguments = new(); Candidates = new(); MarkerZones = new(); PlayerZones = new(); VegetationPasses = new();
         BepInEx.Bootstrap.Chainloader.PluginInfos.Clear();
         FreshWorld.Engine.OdinsHollowDungeons.Initializations = 0;
@@ -481,3 +482,4 @@ namespace FreshWorld.Engine
             new(zdo => IsRetainedObject(zdo) || retain?.Invoke(zdo) == true, Array.Empty<ZDO>(), () => {});
     }
 }
+namespace FreshWorld.Engine { internal static class RunicVeinGeneration { internal static bool Renewing { get; set; } } }

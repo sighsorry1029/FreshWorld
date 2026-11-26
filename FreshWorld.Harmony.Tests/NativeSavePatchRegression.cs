@@ -7,7 +7,7 @@ using HarmonyLib;
 
 internal static class NativeSavePatchRegression
 {
-    internal static void RunPov(string managedDirectory, string pluginPath, string povPath)
+    internal static void RunPov(string managedDirectory, string pluginPath, string povPath, bool runicOnly = false)
     {
         ResolveEventHandler resolve = (_, request) =>
         {
@@ -26,6 +26,11 @@ internal static class NativeSavePatchRegression
             var game = Assembly.LoadFrom(Path.Combine(managedDirectory, "assembly_valheim.dll"));
             var plugin = Assembly.LoadFrom(Path.GetFullPath(pluginPath));
             var pov = Assembly.LoadFrom(Path.GetFullPath(povPath));
+            if (runicOnly)
+            {
+                CheckRunic(game, plugin, pov);
+                return;
+            }
             var type = plugin.GetType("FreshWorld.Engine.PathOfValheimAzurite", true)!;
             type.GetMethod("Install", BindingFlags.NonPublic | BindingFlags.Static)!
                 .Invoke(null, new object[] { pov, (Action<string>)System.Console.WriteLine });
@@ -43,6 +48,20 @@ internal static class NativeSavePatchRegression
             harmony.UnpatchSelf();
             AppDomain.CurrentDomain.AssemblyResolve -= resolve;
         }
+    }
+
+    private static void CheckRunic(Assembly game, Assembly plugin, Assembly pov)
+    {
+        var runic = plugin.GetType("FreshWorld.Engine.RunicVeinGeneration", true)!;
+        using ((IDisposable)runic.GetMethod("Install", BindingFlags.NonPublic | BindingFlags.Static)!
+                   .Invoke(null, new object[] { pov, (Action<string>)System.Console.WriteLine })!)
+        {
+            var hooks = Harmony.GetAllPatchedMethods().Where(m => Harmony.GetPatchInfo(m).Owners.Contains("sighsorry.FreshWorld.PoVRunicVeins")).ToArray();
+            if (hooks.Length != 2 || !hooks.Any(m => m.DeclaringType?.Assembly == pov && m.Name == "ServerTick") ||
+                !hooks.Any(m => m.DeclaringType?.Assembly == game && m.Name == "SpawnZone"))
+                throw new Exception("Unexpected runic vein hook scope.");
+        }
+        System.Console.WriteLine("PASS runic seed and full-zone hooks install and dispose on original assemblies.");
     }
 
     // Apply the built plugin's actual patch against an original game assembly with installed

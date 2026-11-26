@@ -21,7 +21,7 @@ namespace FreshWorld
     {
         public const string Author = "sighsorry";
         public const string ModName = "FreshWorld";
-        public const string ModVersion = "1.2.3";
+        public const string ModVersion = "1.2.4";
         public const string ModGUID = Author + "." + ModName;
         public const string PluginGuid = ModGUID;
         public const string PluginName = ModName;
@@ -32,6 +32,7 @@ namespace FreshWorld
         private FreshWorldConfig configuration = null!;
         private ConfigSynchronization? configSync;
         private PathOfValheimAzurite? povAzurite;
+        private RunicVeinGeneration? runicVeins;
         private RuntimeSettings? settings;
         private Harmony? harmony;
         private Harmony? commandHarmony;
@@ -106,6 +107,7 @@ namespace FreshWorld
                 configSync = new ConfigSynchronization(Config, configuration, harmony,
                     () => Interlocked.Exchange(ref configValuesChanged, 1), message => Logger.LogWarning(message));
                 povAzurite = PathOfValheimAzurite.TryCreate(message => Logger.LogWarning(message));
+                runicVeins = RunicVeinGeneration.TryCreate(message => Logger.LogWarning(message));
                 ReloadSettings(false);
                 watcher = new FileSystemWatcher(Path.GetDirectoryName(Config.ConfigFilePath)!, Path.GetFileName(Config.ConfigFilePath));
                 watcher.Changed += OnConfigChanged;
@@ -155,6 +157,7 @@ namespace FreshWorld
                 }
                 settings = next;
                 povAzurite?.Configure(next.PathOfValheimAzuriteVegetationEnabled);
+                runicVeins?.Configure(next.RunicVeinVegetation);
                 if (reloadFile) configSync?.Publish();
                 Logger.LogInfo($"Configuration applied: automatic={next.AutomaticEnabled}, schedule={next.Schedule.Mode}, timezone={next.Schedule.TimeZone.Id}, safeZones={next.Options.ZoneSafeZones}/{next.Options.VegetationSafeZones}/{next.Options.LocationSafeZones} (zones/resources/locations).");
                 nextPoll = 0;
@@ -162,6 +165,7 @@ namespace FreshWorld
             catch (Exception error)
             {
                 settings = null;
+                runicVeins?.Configure(false);
                 TryCleanup(() => povAzurite?.Configure(false), "Could not stop PoV azurite vegetation after invalid configuration.");
                 CloseScheduler("The host configuration is invalid.");
                 Logger.LogError("Invalid FreshWorld configuration; new maintenance is disabled until the cfg is corrected. " + error.Message);
@@ -639,6 +643,7 @@ namespace FreshWorld
             if (EmptyChunkSaveCompatibility.Check() == EmptyChunkSaveCompatibility.Strategy.Unsupported)
                 throw new InvalidOperationException(DisabledStatus());
             povAzurite?.BeforeMaintenance();
+            runicVeins?.CheckBeforeMaintenance();
         }
 
         internal void StopSession()
@@ -648,6 +653,7 @@ namespace FreshWorld
             backendLease?.Dispose();
             backendLease = null;
             MaintenanceCoordination.CloseSession();
+            runicVeins?.EndSession();
             TryCleanup(() => povAzurite?.EndSession(), "Could not discard the PoV azurite scan at session end.");
             CloseScheduler("The hosting world session ended.");
             host = null;
@@ -696,6 +702,8 @@ namespace FreshWorld
             configSync = null;
             povAzurite?.Dispose();
             povAzurite = null;
+            runicVeins?.Dispose();
+            runicVeins = null;
             harmony?.UnpatchSelf();
             compatibilityDrained = true;
             Logger.LogWarning("FreshWorld maintenance cleanup finished; operational patches removed. Only authenticated command diagnostics remain.");
@@ -710,6 +718,7 @@ namespace FreshWorld
                 TryCleanup(() => { configSync?.Dispose(); configSync = null; }, "Could not stop configuration synchronization.");
                 TryCleanup(StopSession, "Could not stop the active world session.");
                 TryCleanup(() => { povAzurite?.Dispose(); povAzurite = null; }, "Could not stop PoV azurite compatibility.");
+                TryCleanup(() => { runicVeins?.Dispose(); runicVeins = null; }, "Could not stop PoV runic vein compatibility.");
                 TryCleanup(FreshWorldCommands.Unregister, "Could not unregister the console command.");
                 TryCleanup(() => harmony?.UnpatchSelf(), "Could not remove Harmony patches.");
                 TryCleanup(() => commandHarmony?.UnpatchSelf(), "Could not remove command authentication patches.");

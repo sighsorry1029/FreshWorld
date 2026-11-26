@@ -65,6 +65,8 @@ internal static class GameWorld
         return objects;
     }
 
+    internal static bool IsQueuedForDeletion(ZDO zdo) => PendingDestruction(ZDOMan.instance).Contains(zdo.m_uid);
+
     public static IEnumerable<ZDO> AllZDOs() => ObjectsById(ZDOMan.instance).Values.ToArray();
 
     // Local saved-sector lookup, including unloaded sectors. Queued deletions are being replaced

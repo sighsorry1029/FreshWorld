@@ -114,7 +114,7 @@ public static class Program
         Require(((Array)Call(versionType, null, "GetFailedServer", new ZRpc(new TestSocket("Steam_222")))!).Length == 0,
             "The server requires an unmodded peer to complete FreshWorld's version handshake.");
         Require((bool)syncType.GetProperty("IsLocked")!.GetValue(sync)!, "Administrator-only policy is not fixed.");
-        Require(file.Count == 27, "Integration did not register the expected config keys.");
+        Require(file.Count == 28, "Integration did not register the expected config keys.");
         var broadcast = AccessTools.Method(syncType, "Broadcast", new[] { typeof(long), typeof(ConfigEntryBase[]) });
         // Capture server sends without invoking Unity coroutines; run the real client-send prefix separately.
         harmony.Patch(broadcast, prefix: new HarmonyMethod(typeof(Program), nameof(RecordBroadcast)) { priority = Priority.Last });
@@ -139,7 +139,7 @@ public static class Program
         var povMerchant = file[new ConfigDefinition("Path of Valheiman", "MerchantProtection")];
         var povTreasure = file[new ConfigDefinition("Path of Valheiman", "TreasureProtection")];
         var povVegetation = file[new ConfigDefinition("Path of Valheiman", "AzuriteVegetation")];
-        Require(povVegetation.GetSerializedValue() == "false", "PoV vegetation must be opt-in.");
+        Require(povVegetation.GetSerializedValue() == "true", "Azurite vegetation must be enabled by default.");
         Require(povAltar.GetSerializedValue() == "true" && povBlight.GetSerializedValue() == "true", "PoV defaults changed.");
         Require(epicLoot.GetSerializedValue() == "true", "EpicLoot protection default changed.");
         Require(bounty.GetSerializedValue() == "false", "Bounty protection must default to disabled.");
@@ -171,9 +171,14 @@ public static class Program
         Reject(Edit(epicLoot, "invalid"));
         Reject(Edit(bounty, "invalid"));
         Reject(Edit(povAltar, "invalid")); Reject(Edit(povBlight, "invalid"));
-        Call(adapterType, adapter, "ValidateEdit", Edit(povVegetation, "true"));
-        Require(povVegetation.GetSerializedValue() == "false", "Remote vegetation validation changed live policy.");
+        Call(adapterType, adapter, "ValidateEdit", Edit(povVegetation, "false"));
+        Require(povVegetation.GetSerializedValue() == "true", "Remote vegetation validation changed live policy.");
         Reject(Edit(povVegetation, "invalid"));
+        var runic = file[new ConfigDefinition("Path of Valheiman", "RunicVeinVegetation")];
+        Require(runic.GetSerializedValue() == "true", "Runic vein renewal must be enabled by default.");
+        Call(adapterType, adapter, "ValidateEdit", Edit(runic, "false"));
+        Require(runic.GetSerializedValue() == "true", "Remote runic validation changed live policy.");
+        Reject(Edit(runic, "invalid"));
         Reject(Edit(blacklist, "fire_pit,*")); Reject(Edit(blacklist, "fire_pit,fire_pit"));
         Call(adapterType, adapter, "ValidateEdit", Edit(resourceExcludedZones, "12:-8,13:-8,12:-8"));
         Require(resourceExcludedZones.GetSerializedValue() == "", "Remote validation mutated live resource exclusions.");

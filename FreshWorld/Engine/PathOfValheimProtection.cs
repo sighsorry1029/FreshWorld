@@ -8,6 +8,16 @@ namespace FreshWorld.Engine;
 /// <summary>Read-only PoV objective policy. Only FreshWorld deletion uses it; PoV owns event cleanup.</summary>
 internal sealed class PathOfValheimProtection
 {
+    internal static readonly string[] RunicPrefabs =
+    {
+        "PT_VeinThunderCopper", "PT_VeinHeavyTin", "PT_VeinRunebearingCopper", "PT_VeinHotIron", "PT_VeinBogScrap",
+        "PT_VeinBarrowSilver", "PT_VeinFrostIron", "PT_VeinArrowCopper", "PT_VeinWindTin", "PT_VeinWhisperSilver"
+    };
+    private static readonly HashSet<int> RunicHashes = new(Array.ConvertAll(RunicPrefabs, id => id.GetStableHashCode()));
+    internal static readonly int RunicSeeded = "pt_rvein_seeded".GetStableHashCode();
+    internal static bool IsRunicPrefab(int hash) => RunicHashes.Contains(hash);
+    internal static bool IsNaturalRunicVein(ZDO zdo) => IsRunicPrefab(zdo.GetPrefab()) && zdo.GetBool(RunicSeeded);
+    internal bool HasRunicVeins { get; private set; }
     private static readonly int WardenAltar = "PT_WardenAltar".GetStableHashCode();
     private static readonly int PowerAltar = "PT_PowerAltar".GetStableHashCode();
     private static readonly int Ragn = "PoV_Ragn".GetStableHashCode();
@@ -43,6 +53,7 @@ internal sealed class PathOfValheimProtection
         _protectDungeons = protectDungeons;
         if (Chainloader.PluginInfos.ContainsKey("treextr.pathofvalheiman"))
         {
+            HasRunicVeins = true;
             HasObjectiveProtection = protectAltars || protectBlight || protectMerchants || protectTreasure || protectDungeons;
             if (protectDungeons) _dungeons = new PathOfValheimDungeons();
         }
@@ -65,6 +76,7 @@ internal sealed class PathOfValheimProtection
     public void IndexSavedObject(ZDO zdo)
     {
         var prefab = zdo.GetPrefab();
+        if (!HasRunicVeins && IsNaturalRunicVein(zdo)) HasRunicVeins = true;
         if (_protectDungeons && PathOfValheimDungeons.IsRunPrefab(prefab))
             (_dungeons ??= new PathOfValheimDungeons()).RememberRoot(zdo);
         if (_protectBlight && prefab == Controller)

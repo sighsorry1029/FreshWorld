@@ -9,6 +9,7 @@ var tests = new (string Name, Action Body)[]
     ("PoV dungeon retention reaches all stages while allowing ground terrain resets", PovDungeonStages),
     ("PoV merchant-only and treasure-only options reach all reset stages", PovMerchantTreasureStages),
     ("PoV malformed dungeon records fail before the first reset mutation", PovDungeonInvalid),
+    ("natural runic deposits retain their objects without reserving zones and only renew in full resets", RunicDeposits),
     ("PoV objectives override empty absolute lists and SafeZones zero across all reset stages", PovStages),
     ("PoV snapshot follows saving and late linked objectives stop loading retries", PovArrival),
     ("orphan Blight links share one controller scan per frame and detect a later event", PovIndexCost),
@@ -2183,6 +2184,38 @@ static ZDO AddPov(string prefab, int sector, string? uid = null, string key = "p
     if (uid != null) zdo.Strings[key.GetStableHashCode()] = uid;
     ZDOMan.instance.Objects.Add(zdo);
     return zdo;
+}
+
+static void RunicDeposits()
+{
+    foreach (var renew in new[] { false, true })
+    foreach (var wholeZone in new[] { false, true })
+    {
+        Fake.Reset();
+        for (var i = 0; i < 2; i++) Fake.AddZone(i);
+        ZoneSystem.instance.m_vegetation.Add(new("copper"));
+        ZoneSystem.instance.m_vegetation.Add(new("PT_VeinThunderCopper"));
+        var natural = AddPov("PT_VeinThunderCopper", 0);
+        natural.Bools["pt_rvein_seeded".GetStableHashCode()] = true;
+        var placed = AddPov("PT_VeinHotIron", 0);
+        var ore = AddPov("PT_OreScarletTin", 0);
+        ore.Bools["pt_rvein_seeded".GetStableHashCode()] = true;
+        RunicVeinGeneration.Renewing = renew;
+        var options = new RunOptions { ZonesEnabled = wholeZone, ZoneSafeZones = 0, LocationSafeZones = 0, VegetationSafeZones = 0,
+            TerrainVegetationIds = ["copper", "PT_VeinThunderCopper"], VegetationIds = ["PT_VeinThunderCopper"] };
+        True(Run(options).Success);
+        True(Fake.Calls.Any(call => call.EndsWith("change:0")));
+        foreach (var (stage, args) in Fake.Arguments)
+        {
+            True(args.CanResetTerrain!(new(0, 0)));
+            True(!args.AlwaysProtected!.IsProtectedObject(natural));
+            Equal(stage != "zones" || !renew, args.RetainObject!(natural));
+            True(!args.RetainObject(placed) && !args.RetainObject(ore));
+        }
+        if (!wholeZone) True(Fake.Arguments.ContainsKey("locations") && Fake.Arguments.ContainsKey("vegetation"));
+        True(!Fake.VegetationPasses.Any(pass => pass.Ids.Contains("PT_VeinThunderCopper")));
+    }
+    RunicVeinGeneration.Renewing = false;
 }
 
 static void PovStages()

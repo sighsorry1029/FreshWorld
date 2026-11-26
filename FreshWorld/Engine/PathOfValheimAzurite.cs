@@ -266,7 +266,7 @@ internal sealed class PathOfValheimAzurite : IDisposable
         return method;
     }
 
-    private static List<CodeInstruction> Instructions(MethodInfo method) =>
+    internal static List<CodeInstruction> Instructions(MethodInfo method) =>
         (List<CodeInstruction>)InstructionReader.Invoke(null, new object?[] { method, null })!;
 
     public void Dispose()

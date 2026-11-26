@@ -50,6 +50,8 @@ internal static class NativeSaveTests
             ("transient or pending-delete sector records prevent empty replacements", TransientRecord),
             ("neighboring native entries and their object snapshots are preserved", NeighborPreserved),
             ("failed-save retries retain dirty state and live chunk metadata", Retry),
+            ("each runic cell belongs to one zone regardless of streaming order", RunicCellOrder),
+            ("blocked and settled runic sites respect cell boundaries", RunicCellBounds),
             ("world edge buckets use native sector mapping", WorldEdge),
             ("absent hosts and remote clients cannot modify the save list", HostOnly),
             ("original private deletion access supports an absent ID without consuming queued notifications", NativeDeletionAccess)
@@ -62,6 +64,38 @@ internal static class NativeSaveTests
         }
         System.Console.WriteLine($"{tests.Count - failures}/{tests.Count} original-game save regression checks passed (isolated managed execution, not Unity gameplay).");
         return failures == 0 ? 0 : 1;
+    }
+
+    private static void RunicCellOrder()
+    {
+        var zones = (from x in Enumerable.Range(-5, 11) from z in Enumerable.Range(-5, 11) select new Vector2s(x, z)).ToArray();
+        Dictionary<(int, int), (UnityEngine.Vector3, float)> Collect(IEnumerable<Vector2s> order)
+        {
+            var sites = new Dictionary<(int, int), (UnityEngine.Vector3, float)>();
+            foreach (var zone in order)
+                RunicVeinSites.Visit(17037, zone, (_, _) => Heightmap.Biome.BlackForest,
+                    (_, _) => "vein", (x, z, _) => x + z > -120f ? 45f : null,
+                    (_, p, yaw, x, z) =>
+                    {
+                        Require(ZoneSystem.GetZone(p) == zone, "Wrote beyond the generating zone.");
+                        Require(sites.TryAdd((x, z), (p, yaw)), "Two zones claimed one cell.");
+                    });
+            return sites;
+        }
+        var forward = Collect(zones);
+        var reverse = Collect(zones.Reverse());
+        Require(forward.Count > 4 && forward.Keys.Any(cell => cell.Item1 < 0), "Test map did not cover cells on both sides of the origin.");
+        Require(forward.Count == reverse.Count && forward.All(kv => reverse[kv.Key].Equals(kv.Value)), "Visit order changed the sites.");
+    }
+
+    private static void RunicCellBounds()
+    {
+        Require(RunicVeinSites.CouldBelongToCell(new UnityEngine.Vector3(-15, 500, 140), 0, 0), "Missed a settled deposit in an adjacent sector.");
+        Require(!RunicVeinSites.CouldBelongToCell(new UnityEngine.Vector3(-21, 0, 0), 0, 0), "Reserved a deposit beyond the settle distance.");
+        foreach (var rejectedByBiome in new[] { true, false })
+            RunicVeinSites.Visit(49, new Vector2s(0, 0), (_, _) => Heightmap.Biome.Swamp,
+                (_, _) => rejectedByBiome ? null : "vein", (_, _, _) => null,
+                (_, _, _, _, _) => throw new Exception("An ineligible cell produced a deposit."));
     }
 
     private static void EmptyChunk(byte size)

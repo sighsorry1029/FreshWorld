@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.4
+
+- Added `RunicVeinVegetation`, enabled by default. Path of Valheiman's ten natural runic ore deposits can now return when a fully reset zone generates again. Resource and location resets preserve existing deposits. Set the option to `false` to keep PoV's one-time placement.
+- `AzuriteVegetation` now defaults to `true`. New configurations use zone vegetation for natural azurite while PoV still handles vein upgrades and Blight spawns. Existing cfg values are preserved.
+
 ## 1.2.3
 
 - Fixed a Valheim 1.0.30 error that stopped maintenance after the world save when FreshWorld looked up location prefab names. Custom locations with a registered name remain eligible.

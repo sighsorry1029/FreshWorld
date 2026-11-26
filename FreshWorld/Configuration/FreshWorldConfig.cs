@@ -17,11 +17,13 @@ namespace FreshWorld.Configuration
         public ScheduleSettings Schedule { get; }
         public RunOptions Options { get; }
         public bool PathOfValheimAzuriteVegetationEnabled { get; }
+        public bool RunicVeinVegetation { get; }
         public float StartupDelaySeconds => 30;
-        internal RuntimeSettings(ScheduleSettings schedule, RunOptions options, bool azuriteVegetation)
+        internal RuntimeSettings(ScheduleSettings schedule, RunOptions options, bool azuriteVegetation, bool runicVeinVegetation)
         {
             Schedule = schedule; Options = options;
             PathOfValheimAzuriteVegetationEnabled = azuriteVegetation;
+            RunicVeinVegetation = runicVeinVegetation;
         }
     }
 
@@ -108,7 +110,7 @@ namespace FreshWorld.Configuration
         private readonly ConfigEntry<ConfigChoice<ScheduleMode>> mode;
         private readonly ConfigEntry<string> pieceBlacklist, terrainRadius, epicLootProtection, epicLootBountyProtection, alwaysProtectedPrefabs, resourceExcludedZones;
         private readonly ConfigEntry<string> pathOfValheimAltarProtection, pathOfValheimBlightProtection, pathOfValheimDungeonProtection;
-        private readonly ConfigEntry<string> pathOfValheimAzuriteVegetation;
+        private readonly ConfigEntry<string> pathOfValheimAzuriteVegetation, runicVeinVegetation;
         private readonly ConfigEntry<string> pathOfValheimMerchantProtection, pathOfValheimTreasureProtection;
         private readonly ConfigEntry<ConfigChoice<SafeZoneRange>> zoneSafeZones, vegetationSafeZones, locationSafeZones;
 
@@ -199,9 +201,13 @@ namespace FreshWorld.Configuration
             pathOfValheimDungeonProtection = Bind("Path of Valheiman", "DungeonProtection", "true",
                 "Protect zones containing PoV Halls entrances, entrance terrain pads, or personal sessions. Preserve saved dungeon controllers, linked objects, and sky interiors during all reset stages, even with SafeZones=0. Ground below sky interiors can reset. Normal player, base, and tombstone protection still applies. PoV owns rewards, completion, and cleanup, including completed runs. Does not repair lost sessions or items. Changes apply to the next run. Path of Valheiman is optional.",
                 95, ConfigPresentation.DrawToggle);
-            pathOfValheimAzuriteVegetation = Bind("Path of Valheiman", "AzuriteVegetation", "false",
+            pathOfValheimAzuriteVegetation = Bind("Path of Valheiman", "AzuriteVegetation", "true",
                 "Use vegetation placement for natural PT_AzuriteVein on the host instead of PoV's initial world-wide placement and timed regeneration. Uses existing vegetation definitions, including disabled EWD entries, or adds defaults. Zones create new plain veins when generated again; for selected resource resets add PT_AzuriteVein to ResourceIds. Existing veins in or within 6m of a zone suppress its azurite placement. PoV promotion and Blight generation remain active. Existing veins are not moved or removed by enabling this option. PoV's original coordinates, respawn delay and 12m building avoidance are not reproduced. False restores PoV policy; on a world without its placement-complete key this can start native world-wide placement. Changes apply after current maintenance. Path of Valheiman is optional; EWD is not required.",
                 90, ConfigPresentation.DrawToggle);
+
+            runicVeinVegetation = Bind("Path of Valheiman", "RunicVeinVegetation", "true",
+                "Place natural runic ore deposits when a zone first generates or generates again after a full reset. Resource and location resets keep existing deposits. Set to false to use PoV's one-time placement and keep surviving deposits during full zone resets. Changes apply after maintenance.",
+                85, ConfigPresentation.DrawToggle);
 
             ConfigEntry<T> Bind<T>(string section, string key, T value, string description, int order,
                 Action<ConfigEntryBase>? drawer = null, string? displayName = null, object[]? choices = null) =>
@@ -258,7 +264,8 @@ namespace FreshWorld.Configuration
                 ReadBool(Value(pathOfValheimMerchantProtection), "Path of Valheiman.MerchantProtection"),
                 ReadBool(Value(pathOfValheimTreasureProtection), "Path of Valheiman.TreasureProtection"));
             return new RuntimeSettings(schedule, options,
-                ReadBool(Value(pathOfValheimAzuriteVegetation), "Path of Valheiman.AzuriteVegetation"));
+                ReadBool(Value(pathOfValheimAzuriteVegetation), "Path of Valheiman.AzuriteVegetation"),
+                ReadBool(Value(runicVeinVegetation), "Path of Valheiman.RunicVeinVegetation"));
         }
         private static (short X, short Z)[] ParseResourceExcludedZones(string text)
         {

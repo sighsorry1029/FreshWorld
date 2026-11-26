@@ -15,6 +15,7 @@
     <BepInExDir Condition="'$(BepInExDir)' == ''">$(GameDir)/BepInEx/core</BepInExDir>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../FreshWorld/Engine/RunicVeinSites.cs" Link="Production/RunicVeinSites.cs" />
     <Compile Include="../FreshWorld/Engine/EmptyChunkSavePatch.cs" Link="Production/EmptyChunkSavePatch.cs" />
     <AssemblyMetadata Include="ManagedDir" Value="$(ManagedDir)" />
     <AssemblyMetadata Include="BepInExDir" Value="$(BepInExDir)" />

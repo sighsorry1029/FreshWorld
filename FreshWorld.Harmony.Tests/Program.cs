@@ -16,9 +16,9 @@ internal static class Program
                 LocationFallbackRegression.Run(args[1], args[2], args[3]);
                 return 0;
             }
-            if (args.Length == 4 && args[0] == "--pov-vegetation")
+            if (args.Length == 4 && (args[0] == "--pov-vegetation" || args[0] == "--pov-runic"))
             {
-                NativeSavePatchRegression.RunPov(args[1], args[2], args[3]);
+                NativeSavePatchRegression.RunPov(args[1], args[2], args[3], runicOnly: args[0] == "--pov-runic");
                 return 0;
             }
             if (args.Length == 4 && args[0] == "--chunk-compatibility")
